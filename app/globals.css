@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Geist", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  
+  --radius-none: 0;
+  --radius-sm: 0.125rem;
+  --radius-md: 0.125rem;
+  --radius-lg: 0.125rem;
+  --radius-xl: 0.125rem;
+}
+
+@layer base {
+  body {
+    @apply bg-white text-zinc-950 font-sans selection:bg-zinc-200;
+  }
+}
