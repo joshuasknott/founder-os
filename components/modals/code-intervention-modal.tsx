@@ -79,7 +79,7 @@ export function CodeInterventionModal({ onClose }: CodeInterventionModalProps) {
             {/* View Port (Essential: flex-1 min-h-0 on parent, height="100%" on Editor) */}
             <div className="flex-1 min-h-0 flex flex-col relative w-full overflow-hidden">
               {showIDE ? (
-                <div className="flex-1 min-h-0 w-full relative bg-[#1e1e1e]">
+                <div className="flex-1 min-h-0 w-full relative bg-[#1e1e1e] overflow-hidden">
                   <Editor
                     height="100%"
                     language="typescript"
@@ -95,6 +95,8 @@ export function CodeInterventionModal({ onClose }: CodeInterventionModalProps) {
                       scrollBeyondLastLine: false,
                       smoothScrolling: true,
                       cursorBlinking: "smooth",
+                      wordWrap: "on",
+                      automaticLayout: true,
                     }}
                   />
                 </div>
@@ -145,12 +147,12 @@ export function CodeInterventionModal({ onClose }: CodeInterventionModalProps) {
             
             {/* Context-bound Input Dock */}
             <div className="p-4 border-t border-zinc-200 bg-zinc-50 shrink-0">
-              <div className="flex flex-col gap-2 rounded-xl border border-zinc-200 bg-white p-3 shadow-sm focus-within:ring-2 focus-within:ring-black focus-within:border-transparent transition-all">
+              <div className="flex flex-col gap-2 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm focus-within:ring-2 focus-within:ring-black focus-within:border-transparent transition-all">
                 <textarea
                   value={revisionText}
                   onChange={(e) => setRevisionText(e.target.value)}
                   placeholder="Request a revision from Cipher..."
-                  className="w-full resize-none bg-transparent text-sm text-black placeholder:text-zinc-400 focus:outline-none min-h-[60px]"
+                  className="w-full resize-none bg-transparent text-base text-black placeholder:text-zinc-400 focus:outline-none min-h-[60px]"
                   rows={2}
                 />
                 <div className="flex items-center justify-between pt-2">

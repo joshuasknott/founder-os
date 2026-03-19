@@ -28,18 +28,22 @@ export default function BoardroomPage() {
   return (
     <div className="flex h-full flex-col relative w-full bg-white">
       {/* Empty State Area */}
-      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center gap-3">
-        <h2 className="text-2xl font-light tracking-tight text-zinc-800">Good morning. Let's build.</h2>
+      <div className="flex-1 flex flex-col items-center justify-center p-12 text-center gap-4">
+        <h2 className="text-3xl font-light tracking-tight text-zinc-800">Good morning. Let's build.</h2>
         {selectedMode === "Chat" ? (
-          <p className="text-sm font-mono text-zinc-500 max-w-md">Chat Mode: Brainstorming with agents. No system changes will be executed.</p>
+          <p className="text-base font-mono text-zinc-500 max-w-md">
+            <span className="font-semibold text-black">Chat Mode:</span> Brainstorming with agents. No system changes will be executed.
+          </p>
         ) : (
-          <p className="text-sm font-mono text-black font-medium max-w-md">Task Mode: Issuing directives. Agents will generate actionable specifications for approval.</p>
+          <p className="text-base font-mono text-zinc-500 max-w-md">
+            <span className="font-semibold text-black">Task Mode:</span> Issuing directives. Agents will generate actionable specifications for approval.
+          </p>
         )}
       </div>
 
       {/* Input Dock (Floating) */}
       <div className="mx-auto w-full max-w-4xl mb-6 px-4 md:px-6">
-        <div className="bg-white border border-zinc-200 rounded-2xl shadow-sm flex flex-col p-4 md:p-6 gap-2">
+        <div className="bg-white border border-zinc-200 rounded-2xl shadow-sm flex flex-col p-6 md:p-8 gap-3">
           
           {/* Attachments Area */}
           {attachments.length > 0 && (
@@ -64,7 +68,7 @@ export default function BoardroomPage() {
             value={directive}
             onChange={(e) => setDirective(e.target.value)}
             placeholder="Give a directive..."
-            className="w-full resize-none bg-transparent text-sm text-black placeholder:text-zinc-400 focus:outline-none min-h-[44px]"
+            className="w-full resize-none bg-transparent text-base text-black placeholder:text-zinc-400 focus:outline-none min-h-[44px]"
             rows={1}
           />
 

@@ -8,22 +8,22 @@ export default function IntelligenceHubPage() {
   const [searchQuery, setSearchQuery] = useState("");
 
   return (
-    <div className="flex h-full flex-col w-full p-6 md:p-10 max-w-6xl mx-auto">
+    <div className="flex h-full flex-col w-full p-8 md:p-12 max-w-6xl mx-auto">
       {/* Universal Header & Search */}
-      <div className="mb-6 flex flex-col gap-6">
+      <div className="mb-8 flex flex-col gap-6">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-black">Intelligence</h1>
-          <p className="text-sm text-zinc-500">The digital brain of FounderOS.</p>
+          <h1 className="text-4xl font-semibold tracking-tight text-black">Intelligence</h1>
+          <p className="text-base text-zinc-500">The digital brain of FounderOS.</p>
         </div>
         
         <div className="relative w-full">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-black" />
+          <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-black" />
           <input 
             type="text" 
             placeholder="Search across all contexts..." 
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-sm border border-zinc-200 py-3 pl-10 pr-4 text-sm font-medium text-black focus:border-black focus:outline-none transition-colors"
+            className="w-full rounded-sm border border-zinc-200 py-4 pl-12 pr-4 text-base font-medium text-black focus:border-black focus:outline-none transition-colors"
           />
         </div>
       </div>
@@ -257,7 +257,7 @@ function KnowledgeView() {
       <div className="flex items-center justify-end mb-6">
         <button 
           onClick={() => setIsAddFolderModalOpen(true)}
-          className="flex items-center gap-2 rounded-sm border border-zinc-200 bg-white px-4 py-2 text-xs font-semibold text-black hover:bg-zinc-50 transition-colors"
+          className="flex items-center gap-2 rounded-sm bg-black px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-800 transition-colors"
         >
           <Plus size={14} /> Add Folder
         </button>
