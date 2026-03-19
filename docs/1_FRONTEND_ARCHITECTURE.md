@@ -30,6 +30,7 @@ The application utilizes a fixed-height (`h-screen`), flex-row layout implemente
 
 - **Dimensions**: Fixed width (`w-64`), bordered on the right (`border-r border-zinc-200`).
 - **Header**: High-contrast FounderOS branding (logo + bold text).
+  - **Global Context Switcher**: A headless dropdown at the very top left (above the routing zones) used to switch between isolated Workspaces (e.g., "FounderOS Meta" vs "Memvella").
 - **Zones**:
   - **Zone 1 (Top)**: Primary routing (Boardroom, Intelligence, Team, Settings). Active states use `bg-zinc-100`, `font-semibold`, and a solid black left-border (`border-l-4 border-black`).
   - **Zone 2 (Middle)**: "Recent Sessions" feed. A scrolling list of active or past chat/task states.
@@ -69,12 +70,14 @@ The digital brain and repository for all system knowledge and past executions.
 - **Knowledge Tab**: A stateful file explorer structure. Features grid lists of Folders and Files. Clicking a file opens a full-screen, typography-rich **Document Viewer** overlay (markdown/prose format).
 - **Blueprints Tab**: A grid of operational SOPs (Standard Operating Procedures) used by agents.
 - **History Tab**: A tabular ledger of all executed tasks. Clicking a row opens an **In-Depth Artifact Modal** to review exactly what the agent did, complete with time, agent identity, and the raw code/output payload.
+- **Codebase Map Tab**: A visual explorer showing the extracted skeleton (file paths and exported functions) of connected GitHub repositories, allowing the user to see what context the agents have access to.
 - **Universal Actions**: Every item utilizes a normalized `⋮` context menu for Edit/Download/Delete functions.
 
 ### Corporate Settings (`app/settings/page.tsx`)
 
 A dense, form-heavy interface for system governance.
 
+- **Human Workspace Members**: A dedicated table and invite interface for managing human collaborators and their BetterAuth RBAC roles (Owner/Contributor), parallel to the Agent Team roster.
 - **Cost Controls**: Hard inputs for GBP (£) daily spending limits and warning thresholds.
 - **External Connections**: Inputs for API keys (OpenAI, Anthropic, GitHub) with inline `Copy` and `Trash` actions.
 - **Danger Zone**: High-contrast, red-accented area for emergency system halts (circuit breakers).
@@ -86,7 +89,7 @@ A dense, form-heavy interface for system governance.
 The most sophisticated component in the application, triggered by clicking an `ApprovalCard` in the Rightnav Inbox. It allows the CEO to deeply review and iterate on an agent's proposed action before executing it.
 
 - **Layout**: `max-w-5xl`, 60/40 visual split.
-- **Left Column (60% - The Spec Editor)**: A simulated dark-mode code editor (`bg-zinc-950 text-zinc-300 font-mono`) displaying the exact JSON or text payload the agent intends to run. It is fully editable by the user.
+- **Left Column (60% - The Spec Editor)**: A full web-IDE integration using `@monaco-editor/react`. It acts as a manual intervention layer, allowing the CEO to physically rewrite the agent's proposed code/JSON payload before executing it.
 - **Right Column (40% - Agent Iteration Chat)**: A mini chat interface bound specifically to the agent proposing the action. It features the agent's avatar, a history of why they proposed the spec, and its own context-bound Input Dock (mirroring the Boardroom's Gemini dock).
 - **Absolute Footer Actions**: Locked to the bottom-right are massive, definitive "Deny" (outline) and "Approve" (solid black) buttons for final authorization.
 

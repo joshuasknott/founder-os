@@ -9,10 +9,11 @@ You are an elite AI system architect assisting in the development of **FounderOS
 ## 2. Rules of Engagement (Strict Directives)
 Before you write, modify, or delete any code, you MUST adhere to these operational boundaries:
 
-1. **Consult the Map First:** Never guess the architecture or design system. If you are modifying the UI, you must read `docs/1_FRONTEND_ARCHITECTURE.md` before proceeding. If you are touching data models, you must read `docs/3_BACKEND_SCHEMA.md`.
-2. **No Hallucinated State:** Do not write complex localized React state (`useState`/`useEffect`) for data that fundamentally belongs in the Convex database (e.g., chat histories, file directories, agent logs). 
-3. **Archive, Don't Delete:** If a major refactor occurs, move deprecated documentation to the `_archive_docs/` folder to preserve historical context without polluting active memory.
-4. **Stark UI Adherence:** Do not introduce arbitrary colors, heavy shadows, or rounded-full elements unless explicitly required by the "Executive Minimalism" spec.
+1. **Strict Multi-Tenancy:** FounderOS manages multiple isolated businesses. Data, context, and UI must be rigidly separated by 'Workspace'. There is zero crossover.
+2. **Append-Only Ledger:** To prevent LLM hallucination drift, the business memory is an append-only event ledger. Agents never overwrite critical facts; they append new versions.
+3. **Consult the Map First:** Never guess the architecture or design system. If you are modifying the UI, you must read `docs/1_FRONTEND_ARCHITECTURE.md`. If touching data models, read `docs/3_BACKEND_SCHEMA.md`.
+4. **No Hallucinated State:** Do not write complex localized React state (`useState`/`useEffect`) for data that fundamentally belongs in the Convex database. Currently, we are using the `mock-data-protocol` for UI scaffolding.
+5. **Stark UI Adherence:** Do not introduce arbitrary colors, heavy shadows, or rounded-full elements unless explicitly required by the "Executive Minimalism" spec.
 
 ## 3. The "Doc-Sync" Protocol (Self-Healing Documentation)
 Documentation drift is strictly forbidden. At the conclusion of any major feature implementation, refactor, or architectural decision, you (the AI) must ask the Principal: 
