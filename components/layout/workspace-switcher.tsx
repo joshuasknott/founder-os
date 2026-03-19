@@ -1,42 +1,31 @@
 "use client";
 
 import * as React from "react";
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import { Check, ChevronDown, Plus, Building2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-// Mock Data
-type Role = "Owner" | "Contributor" | "Viewer";
-
-interface Workspace {
-  id: string;
+interface WorkspaceItem {
+  _id: string;
   name: string;
-  role: Role;
-  icon?: React.ReactNode;
 }
 
-const mockWorkspaces: Workspace[] = [
-  {
-    id: "ws_01",
-    name: "FounderOS",
-    role: "Owner",
-    icon: <Building2 className="w-4 h-4" />,
-  },
-  {
-    id: "ws_02",
-    name: "Memvella",
-    role: "Contributor",
-    icon: <Building2 className="w-4 h-4" />,
-  },
-];
-
 export function WorkspaceSwitcher() {
+  const workspaces = useQuery(api.workspaces.get);
   const [isOpen, setIsOpen] = React.useState(false);
-  const [activeWorkspace, setActiveWorkspace] = React.useState<Workspace>(
-    mockWorkspaces[0]
-  );
+  const [activeWorkspace, setActiveWorkspace] =
+    React.useState<WorkspaceItem | null>(null);
   const containerRef = React.useRef<HTMLDivElement>(null);
 
-  // Close dropdown when outside click
+  // Set the first workspace as active once data loads
+  React.useEffect(() => {
+    if (workspaces && workspaces.length > 0 && !activeWorkspace) {
+      setActiveWorkspace(workspaces[0] as WorkspaceItem);
+    }
+  }, [workspaces, activeWorkspace]);
+
+  // Close dropdown on outside click
   React.useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (
@@ -49,6 +38,21 @@ export function WorkspaceSwitcher() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  // Loading skeleton
+  if (workspaces === undefined) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-2 w-full max-w-[240px]">
+        <div className="w-6 h-6 rounded-sm bg-zinc-200 animate-pulse shrink-0" />
+        <div className="flex flex-col gap-1 flex-1">
+          <div className="h-3 w-24 rounded-sm bg-zinc-200 animate-pulse" />
+          <div className="h-2 w-12 rounded-sm bg-zinc-100 animate-pulse" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!activeWorkspace) return null;
 
   return (
     <div className="relative" ref={containerRef}>
@@ -65,18 +69,14 @@ export function WorkspaceSwitcher() {
       >
         <div className="flex items-center gap-2 truncate">
           <div className="flex items-center justify-center w-6 h-6 rounded-sm bg-black text-white shrink-0">
-            {activeWorkspace.icon || (
-              <span className="text-xs font-semibold">
-                {activeWorkspace.name.charAt(0)}
-              </span>
-            )}
+            <Building2 className="w-3.5 h-3.5" />
           </div>
           <div className="flex flex-col truncate">
             <span className="font-semibold text-black truncate leading-tight">
               {activeWorkspace.name}
             </span>
             <span className="text-[10px] text-zinc-500 font-mono tracking-tight uppercase leading-tight">
-              {activeWorkspace.role}
+              Owner
             </span>
           </div>
         </div>
@@ -94,45 +94,47 @@ export function WorkspaceSwitcher() {
             className="flex flex-col p-1 max-h-[300px] overflow-auto"
             role="listbox"
           >
-            {mockWorkspaces.map((workspace) => (
-              <li key={workspace.id} role="option" aria-selected={activeWorkspace.id === workspace.id}>
+            {workspaces.map((workspace) => (
+              <li
+                key={workspace._id}
+                role="option"
+                aria-selected={activeWorkspace._id === workspace._id}
+              >
                 <button
                   type="button"
                   onClick={() => {
-                    setActiveWorkspace(workspace);
+                    setActiveWorkspace(workspace as WorkspaceItem);
                     setIsOpen(false);
                   }}
                   className={cn(
                     "flex items-center justify-between w-full px-2 py-2 text-sm text-left transition-colors",
                     "hover:bg-zinc-100 focus:bg-zinc-100 outline-none rounded-sm",
-                    activeWorkspace.id === workspace.id ? "text-black font-medium" : "text-zinc-600"
+                    activeWorkspace._id === workspace._id
+                      ? "text-black font-medium"
+                      : "text-zinc-600"
                   )}
                 >
                   <div className="flex items-center gap-2 truncate">
                     <div className="flex items-center justify-center w-5 h-5 rounded-sm bg-zinc-100 text-zinc-600 shrink-0">
-                      {workspace.icon || (
-                        <span className="text-[10px] font-semibold">
-                          {workspace.name.charAt(0)}
-                        </span>
-                      )}
+                      <Building2 className="w-3 h-3" />
                     </div>
                     <span className="truncate">{workspace.name}</span>
                   </div>
-                  {activeWorkspace.id === workspace.id && (
+                  {activeWorkspace._id === workspace._id && (
                     <Check className="w-4 h-4 shrink-0 text-black" />
                   )}
                 </button>
               </li>
             ))}
           </ul>
-          
+
           <div className="px-1 py-1 border-t border-zinc-200">
             <button
               type="button"
               className="flex items-center w-full gap-2 px-2 py-2 text-sm text-left transition-colors text-zinc-600 hover:text-black hover:bg-zinc-50 rounded-sm outline-none focus:bg-zinc-50"
             >
               <div className="flex items-center justify-center w-5 h-5 shrink-0 rounded-sm bg-zinc-50 border border-dashed border-zinc-300">
-                <Plus className="w-3 h-3 text-zinc-400 group-hover:text-black" />
+                <Plus className="w-3 h-3 text-zinc-400" />
               </div>
               <span className="font-medium">Create New Workspace</span>
             </button>
