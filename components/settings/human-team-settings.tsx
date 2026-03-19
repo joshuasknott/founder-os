@@ -44,6 +44,7 @@ export function HumanTeamSettings() {
   const [inviteEmail, setInviteEmail] = React.useState("");
   const [inviteRole, setInviteRole] = React.useState<Role>("Contributor");
   const [activeMenuId, setActiveMenuId] = React.useState<string | null>(null);
+  const [inviteError, setInviteError] = React.useState("");
 
   // Close menus when clicking outside
   React.useEffect(() => {
@@ -56,7 +57,12 @@ export function HumanTeamSettings() {
 
   const handleInvite = (e: React.FormEvent) => {
     e.preventDefault();
+    setInviteError("");
     if (!inviteEmail) return;
+    if (!inviteEmail.includes("@")) {
+      setInviteError("Please enter a valid email address.");
+      return;
+    }
     // In a real app this would trigger the email invitation
     setInviteEmail("");
     setInviteRole("Contributor");
@@ -71,40 +77,43 @@ export function HumanTeamSettings() {
           Invite new members to your Corporate Workspace. They will receive an email invitation to join.
         </p>
 
-        <form onSubmit={handleInvite} className="flex items-center gap-3">
-          <div className="relative flex-1">
-            <input
-              type="email"
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-              placeholder="name@company.com"
-              className="w-full px-3 py-2 text-sm text-black border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent placeholder:text-zinc-400 rounded-none bg-white"
-            />
-          </div>
-          
-          <div className="relative w-[180px]">
-            <select
-              title="Select Role"
-              value={inviteRole}
-              onChange={(e) => setInviteRole(e.target.value as Role)}
-              className="w-full px-3 py-2 pr-8 text-sm text-black bg-white border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-black appearance-none cursor-pointer rounded-none"
-            >
-              <option value="Contributor">Contributor</option>
-              <option value="Owner">Owner</option>
-            </select>
-            <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none">
-              <svg className="w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+        <form onSubmit={handleInvite} className="flex flex-col gap-1">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+            <div className="relative flex-1 w-full sm:w-auto">
+              <input
+                type="text"
+                value={inviteEmail}
+                onChange={(e) => { setInviteEmail(e.target.value); setInviteError(""); }}
+                placeholder="name@company.com"
+                className="w-full px-3 py-2 text-sm text-black border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent placeholder:text-zinc-400 rounded-none bg-white"
+              />
             </div>
-          </div>
+            
+            <div className="relative w-full sm:w-[180px]">
+              <select
+                title="Select Role"
+                value={inviteRole}
+                onChange={(e) => setInviteRole(e.target.value as Role)}
+                className="w-full px-3 py-2 pr-8 text-sm text-black bg-white border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-black appearance-none cursor-pointer rounded-none"
+              >
+                <option value="Contributor">Contributor</option>
+                <option value="Owner">Owner</option>
+              </select>
+              <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none">
+                <svg className="w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+              </div>
+            </div>
 
-          <button
-            type="submit"
-            disabled={!inviteEmail}
-            className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white transition-opacity bg-black rounded-none hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-          >
-            <UserPlus className="w-4 h-4" />
-            Send Invite
-          </button>
+            <button
+              type="submit"
+              disabled={!inviteEmail}
+              className="flex items-center justify-center w-full sm:w-auto gap-2 px-4 py-2 text-sm font-medium text-white transition-opacity bg-black rounded-none hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+            >
+              <UserPlus className="w-4 h-4" />
+              Send Invite
+            </button>
+          </div>
+          {inviteError && <p className="text-red-500 text-xs mt-1">{inviteError}</p>}
         </form>
       </div>
 
@@ -137,7 +146,7 @@ export function HumanTeamSettings() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-6">
+              <div className="flex items-center gap-6 pr-6">
                 <div className="hidden sm:flex flex-col items-end">
                   <span className="text-xs text-zinc-400 uppercase tracking-wider font-mono">Joined</span>
                   <span className="text-sm text-zinc-600">{member.joinedAt}</span>

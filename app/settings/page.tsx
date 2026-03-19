@@ -5,18 +5,34 @@ import { DollarSign, Key, Shield, AlertTriangle, Save, ServerCrash, Plus, Copy, 
 import { HumanTeamSettings } from "@/components/settings/human-team-settings";
 
 export default function SettingsPage() {
+  const [activeTab, setActiveTab] = useState<"General" | "Team" | "Integrations" | "Billing" | "Danger Zone">("Team");
+  const tabs = ["General", "Team", "Integrations", "Billing", "Danger Zone"] as const;
+
   return (
     <div className="flex h-full flex-col w-full p-8 md:p-12 max-w-4xl mx-auto">
-      <div className="mb-10 flex flex-col gap-2">
-        <h1 className="text-3xl font-semibold tracking-tight text-black">Corporate Governance</h1>
-        <p className="text-sm text-zinc-500">Configure cost controls, API integrations, and security policies.</p>
+      <div className="flex items-center gap-6 border-b border-zinc-200 mb-8">
+        {tabs.map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`cursor-pointer pb-3 text-sm font-semibold relative transition-colors ${
+              activeTab === tab ? "text-black" : "text-zinc-500 hover:text-black"
+            }`}
+          >
+            {tab}
+            {activeTab === tab && <span className="absolute bottom-0 left-0 w-full h-[2px] bg-black" />}
+          </button>
+        ))}
       </div>
 
-      <div className="flex flex-col gap-10">
-        <HumanTeamSettings />
-        <CostControlsSection />
-        <ExternalConnectionsSection />
-        <DangerZoneSection />
+      <div className="flex flex-col">
+        {activeTab === "General" && (
+           <div className="text-sm text-zinc-500">General settings coming soon.</div>
+        )}
+        {activeTab === "Team" && <div className="animate-in fade-in duration-200"><HumanTeamSettings /></div>}
+        {activeTab === "Integrations" && <div className="animate-in fade-in duration-200"><ExternalConnectionsSection /></div>}
+        {activeTab === "Billing" && <div className="animate-in fade-in duration-200"><CostControlsSection /></div>}
+        {activeTab === "Danger Zone" && <div className="animate-in fade-in duration-200"><DangerZoneSection /></div>}
       </div>
     </div>
   );
