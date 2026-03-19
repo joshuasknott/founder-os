@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { DollarSign, Key, Shield, AlertTriangle, Save, ServerCrash, Plus, Copy, Trash2 } from "lucide-react";
+import { HumanTeamSettings } from "@/components/settings/human-team-settings";
 
 export default function SettingsPage() {
   return (
@@ -12,6 +13,7 @@ export default function SettingsPage() {
       </div>
 
       <div className="flex flex-col gap-10">
+        <HumanTeamSettings />
         <CostControlsSection />
         <ExternalConnectionsSection />
         <DangerZoneSection />
