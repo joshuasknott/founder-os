@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LayoutDashboard, BrainCircuit, Users, Settings, MessageSquare } from "lucide-react";
+import { WorkspaceSwitcher } from "./workspace-switcher";
 
 export function Leftnav() {
   const pathname = usePathname();
@@ -26,9 +27,10 @@ export function Leftnav() {
 
   return (
     <nav className="flex h-full w-64 flex-col border-r border-zinc-200 bg-white sm:bg-zinc-50 py-4">
-      {/* Header */}
-      <div className="mb-8 px-4 flex items-center">
+      {/* Header & Global Context Switcher */}
+      <div className="mb-6 px-4 flex flex-col gap-4">
         <h1 className="text-lg font-bold tracking-tight text-black">FounderOS</h1>
+        <WorkspaceSwitcher />
       </div>
 
       {/* Zone 1 (Top) */}
