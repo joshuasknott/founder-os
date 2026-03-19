@@ -48,6 +48,19 @@ export default function BoardroomPage() {
     setAttachments(attachments.filter(a => a.id !== id));
   };
 
+  const handleSubmit = () => {
+    if (!directive.trim()) return;
+    // Real submission wiring will go here
+    setDirective("");
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit();
+    }
+  };
+
   return (
     <div className="flex h-full flex-col relative w-full bg-white">
       {/* Empty State Area */}
@@ -90,6 +103,7 @@ export default function BoardroomPage() {
           <textarea
             value={directive}
             onChange={(e) => setDirective(e.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder="Give a directive..."
             className="w-full resize-none bg-transparent text-base text-black placeholder:text-zinc-400 focus:outline-none min-h-[44px]"
             rows={1}
@@ -212,7 +226,10 @@ export default function BoardroomPage() {
               <button className="flex h-8 w-8 items-center justify-center rounded-sm text-zinc-500 hover:bg-zinc-100 hover:text-black transition-colors">
                 <Mic size={18} />
               </button>
-              <button className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors ${directive.trim() ? 'bg-black text-white hover:bg-zinc-800' : 'bg-zinc-800 text-white opacity-80'}`}>
+              <button 
+                onClick={handleSubmit}
+                className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors ${directive.trim() ? 'bg-black text-white hover:bg-zinc-800' : 'bg-zinc-800 text-white opacity-80'}`}
+              >
                 <Send size={14} strokeWidth={2.5} className="-ml-0.5 mt-0.5" />
               </button>
             </div>
