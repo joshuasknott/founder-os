@@ -1,12 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import { Plus, Send, ChevronUp, Mic, FileIcon, X, Search, FileText } from "lucide-react";
 import Link from "next/link";
+import type { Id } from "@/convex/_generated/dataModel";
+
+type Agent = {
+  _id: Id<"agents">;
+  name: string;
+  role: string;
+  status: "idle" | "working" | "offline";
+  clearanceLevel: number;
+  model: string;
+  systemPrompt: string;
+  workspaceId: Id<"workspaces">;
+};
 
 export default function BoardroomPage() {
+  const agents = useQuery(api.agents.get);
   const [directive, setDirective] = useState("");
   const [selectedMode, setSelectedMode] = useState<"Chat" | "Task">("Chat");
+  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
   const [modeOpen, setModeOpen] = useState(false);
   const [agentOpen, setAgentOpen] = useState(false);
   const [blueprintOpen, setBlueprintOpen] = useState(false);
@@ -15,6 +31,13 @@ export default function BoardroomPage() {
   const [agentSearch, setAgentSearch] = useState("");
   const [blueprintModalOpen, setBlueprintModalOpen] = useState(false);
   const [blueprintSearch, setBlueprintSearch] = useState("");
+
+  // Default to the first agent once data loads
+  useEffect(() => {
+    if (agents && agents.length > 0 && !selectedAgent) {
+      setSelectedAgent(agents[0] as Agent);
+    }
+  }, [agents, selectedAgent]);
 
   // Mock attachments state
   const [attachments, setAttachments] = useState<{ id: string; name: string }[]>([
@@ -118,16 +141,33 @@ export default function BoardroomPage() {
                   onClick={() => { setAgentOpen(!agentOpen); setModeOpen(false); setBlueprintOpen(false); setPlusOpen(false); }}
                   className="flex items-center gap-1.5 rounded-sm px-2 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 hover:text-black transition-colors"
                 >
-                  Orion (Chief of Staff)
+                  {agents === undefined ? (
+                    <span className="h-3 w-24 rounded-sm bg-zinc-200 animate-pulse inline-block" />
+                  ) : selectedAgent ? (
+                    <>{selectedAgent.name} ({selectedAgent.role})</>
+                  ) : (
+                    "No Agent"
+                  )}
                   <ChevronUp size={14} className="opacity-50" />
                 </button>
                 {agentOpen && (
-                  <div className="absolute left-0 bottom-full mb-1 w-48 max-h-96 overflow-y-auto rounded-sm border border-zinc-200 bg-white p-1 shadow-lg z-50">
-                    <button className="flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm font-medium text-black">Orion (Chief of Staff)</button>
-                    <button className="flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm text-zinc-600">Atlas (Backend Architecture)</button>
-                    <button className="flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm text-zinc-600">Cipher (Frontend Vanguard)</button>
-                    <button className="flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm text-zinc-600">Nova (Content & Strategy)</button>
-                    <button className="flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm text-zinc-600">Sentinel (SecOps & Telemetry)</button>
+                  <div className="absolute left-0 bottom-full mb-1 w-56 max-h-96 overflow-y-auto rounded-sm border border-zinc-200 bg-white p-1 shadow-lg z-50">
+                    {agents === undefined ? (
+                      <div className="flex flex-col gap-1 p-2">
+                        <div className="h-3 w-full rounded-sm bg-zinc-100 animate-pulse" />
+                        <div className="h-3 w-3/4 rounded-sm bg-zinc-100 animate-pulse" />
+                      </div>
+                    ) : (
+                      agents.map((agent) => (
+                        <button
+                          key={agent._id}
+                          onClick={() => { setSelectedAgent(agent as Agent); setAgentOpen(false); }}
+                          className={`flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm ${selectedAgent?._id === agent._id ? "font-semibold text-black" : "font-medium text-zinc-600"}`}
+                        >
+                          {agent.name} ({agent.role})
+                        </button>
+                      ))
+                    )}
                     <div className="my-1 border-t border-zinc-100" />
                     <button 
                       onClick={() => { setAgentModalOpen(true); setAgentOpen(false); }}
@@ -207,11 +247,33 @@ export default function BoardroomPage() {
             </div>
 
             <div className="p-4 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <AgentModalCard name="Orion" role="Chief of Staff" status="idle" onClick={() => setAgentModalOpen(false)} />
-              <AgentModalCard name="Atlas" role="Backend Architecture" status="working" onClick={() => setAgentModalOpen(false)} />
-              <AgentModalCard name="Cipher" role="Frontend Vanguard" status="idle" onClick={() => setAgentModalOpen(false)} />
-              <AgentModalCard name="Nova" role="Content & Strategy" status="offline" onClick={() => setAgentModalOpen(false)} />
-              <AgentModalCard name="Sentinel" role="SecOps & Telemetry" status="idle" onClick={() => setAgentModalOpen(false)} />
+              {agents === undefined ? (
+                Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="flex items-center gap-3 rounded-sm border border-zinc-100 p-3 animate-pulse">
+                    <div className="h-10 w-10 rounded-sm bg-zinc-200 shrink-0" />
+                    <div className="flex flex-col gap-1.5 flex-1">
+                      <div className="h-3 w-20 rounded-sm bg-zinc-200" />
+                      <div className="h-2.5 w-28 rounded-sm bg-zinc-100" />
+                    </div>
+                  </div>
+                ))
+              ) : (
+                agents
+                  .filter(a => 
+                    agentSearch.trim() === "" ||
+                    a.name.toLowerCase().includes(agentSearch.toLowerCase()) ||
+                    a.role.toLowerCase().includes(agentSearch.toLowerCase())
+                  )
+                  .map((agent) => (
+                    <AgentModalCard 
+                      key={agent._id}
+                      name={agent.name}
+                      role={agent.role}
+                      status={agent.status as "idle" | "working" | "offline"}
+                      onClick={() => { setSelectedAgent(agent as Agent); setAgentModalOpen(false); }}
+                    />
+                  ))
+              )}
             </div>
 
             <div className="border-t border-zinc-200 p-3 bg-zinc-50 flex items-center justify-center">
