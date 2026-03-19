@@ -17,7 +17,7 @@ interface Workspace {
 const mockWorkspaces: Workspace[] = [
   {
     id: "ws_01",
-    name: "FounderOS Meta",
+    name: "FounderOS",
     role: "Owner",
     icon: <Building2 className="w-4 h-4" />,
   },

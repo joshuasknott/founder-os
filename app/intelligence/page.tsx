@@ -1,11 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Folder, FileText, History, Search, Plus, MoreVertical, Edit2, Download, Trash2, ChevronRight, FileCode, X, GitFork } from "lucide-react";
-import { CodebaseMapViewer } from "@/components/intelligence/codebase-map-viewer";
+import { Folder, FileText, History, Search, Plus, MoreVertical, Edit2, Download, Trash2, ChevronRight, FileCode, X } from "lucide-react";
 
 export default function IntelligenceHubPage() {
-  const [activeTab, setActiveTab] = useState<"knowledge" | "blueprints" | "history" | "codebase">("knowledge");
+  const [activeTab, setActiveTab] = useState<"knowledge" | "blueprints" | "history">("knowledge");
   const [searchQuery, setSearchQuery] = useState("");
 
   return (
@@ -58,15 +57,6 @@ export default function IntelligenceHubPage() {
           <History size={16} /> History
           {activeTab === "history" && <span className="absolute bottom-0 left-0 w-full h-0.5 bg-black" />}
         </button>
-        <button
-          onClick={() => setActiveTab("codebase")}
-          className={`flex items-center gap-2 px-6 py-2.5 text-sm font-semibold transition-colors relative ${
-            activeTab === "codebase" ? "text-black" : "text-zinc-500 hover:text-black"
-          }`}
-        >
-          <GitFork size={16} /> Codebase Map
-          {activeTab === "codebase" && <span className="absolute bottom-0 left-0 w-full h-0.5 bg-black" />}
-        </button>
       </div>
 
       {/* Tab Content */}
@@ -74,7 +64,6 @@ export default function IntelligenceHubPage() {
         {activeTab === "knowledge" && <KnowledgeView />}
         {activeTab === "blueprints" && <BlueprintsView />}
         {activeTab === "history" && <HistoryView />}
-        {activeTab === "codebase" && <CodebaseMapViewer />}
       </div>
     </div>
   );
