@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Plus, Send, ChevronUp, Mic, FileIcon, X, Search, FileText } from "lucide-react";
 import Link from "next/link";
+import { CodeInterventionModal } from "@/components/modals/code-intervention-modal";
 
 export default function BoardroomPage() {
   const [directive, setDirective] = useState("");
@@ -15,6 +16,7 @@ export default function BoardroomPage() {
   const [agentSearch, setAgentSearch] = useState("");
   const [blueprintModalOpen, setBlueprintModalOpen] = useState(false);
   const [blueprintSearch, setBlueprintSearch] = useState("");
+  const [showIntervention, setShowIntervention] = useState(false);
 
   // Mock attachments state
   const [attachments, setAttachments] = useState<{ id: string; name: string }[]>([
@@ -35,6 +37,13 @@ export default function BoardroomPage() {
         ) : (
           <p className="text-sm font-mono text-black font-medium max-w-md">Task Mode: Issuing directives. Agents will generate actionable specifications for approval.</p>
         )}
+      </div>
+
+      {/* Test Override Button */}
+      <div className="mx-auto w-full max-w-4xl mb-4 px-4 md:px-6 flex justify-end">
+        <button onClick={() => setShowIntervention(true)} className="px-3 py-1.5 text-xs font-semibold bg-zinc-100 border border-zinc-200 rounded-sm text-black hover:bg-zinc-200 transition-colors">
+          Test Manual Override Modal
+        </button>
       </div>
 
       {/* Input Dock (Floating) */}
@@ -257,6 +266,11 @@ export default function BoardroomPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Manual Override Intervention Modal */}
+      {showIntervention && (
+        <CodeInterventionModal onClose={() => setShowIntervention(false)} />
       )}
     </div>
   );
