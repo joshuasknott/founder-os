@@ -71,7 +71,7 @@ export function CodeInterventionModal({ onClose }: CodeInterventionModalProps) {
                 {showIDE ? (
                   <>Exit Override</>
                 ) : (
-                  <><CodeIcon size={12} /> Manual Override</>
+                  <><CodeIcon size={12} /> View Source</>
                 )}
               </button>
             </div>

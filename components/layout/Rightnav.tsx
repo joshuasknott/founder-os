@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Check, X, FileJson, XCircle, Send, Plus, ChevronUp, Mic } from "lucide-react";
+import { CodeInterventionModal } from "@/components/modals/code-intervention-modal";
 
 export function Rightnav() {
   const [activeTab, setActiveTab] = useState<"inbox" | "logs">("inbox");
@@ -41,11 +42,6 @@ export function Rightnav() {
 
 function InboxView() {
   const [selectedApproval, setSelectedApproval] = useState<any | null>(null);
-
-  // Dock state
-  const [directive, setDirective] = useState("");
-  const [modeOpen, setModeOpen] = useState(false);
-  const [plusOpen, setPlusOpen] = useState(false);
 
   const mockApprovals = [
     {
@@ -87,158 +83,7 @@ function InboxView() {
       </div>
 
       {selectedApproval && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 md:p-8 overflow-y-auto animate-in fade-in duration-200">
-          <div className="w-full max-w-5xl bg-white shadow-2xl rounded-xl flex flex-col md:overflow-hidden h-full max-h-[85vh]">
-            
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-zinc-200 p-4 md:px-6">
-              <div className="flex items-center gap-3">
-                <span className="flex items-center gap-1 rounded-sm bg-black px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-white">
-                  {selectedApproval.tier}
-                </span>
-                <h2 className="text-xl font-semibold tracking-tight text-black">{selectedApproval.title}</h2>
-              </div>
-              <button onClick={() => setSelectedApproval(null)} className="text-zinc-500 hover:text-black transition-colors rounded-sm hover:bg-zinc-100 p-1">
-                <X size={24} />
-              </button>
-            </div>
-
-            {/* Split View Content */}
-            <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
-              
-              {/* Left Column: Spec Editor (60%) */}
-              <div className="w-full md:w-[60%] border-b md:border-b-0 md:border-r border-zinc-200 bg-zinc-950 flex flex-col min-h-[300px]">
-                <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 bg-black">
-                  <span className="flex items-center gap-2 text-xs font-mono font-medium text-zinc-300">
-                    <FileJson size={14} className="text-zinc-500" /> payload.json
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                    <span className="text-[10px] font-medium text-emerald-500">Valid JSON</span>
-                  </div>
-                </div>
-                <textarea 
-                  className="w-full flex-1 resize-none bg-transparent p-4 font-mono text-sm leading-relaxed text-zinc-300 outline-none selection:bg-zinc-700"
-                  defaultValue={selectedApproval.spec}
-                  spellCheck={false}
-                />
-              </div>
-
-              {/* Right Column: Agent Iteration Chat (40%) */}
-              <div className="w-full md:w-[40%] flex flex-col bg-white min-h-[400px]">
-                
-                {/* Agent Identity */}
-                <div className="flex items-center gap-3 border-b border-zinc-100 p-4">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-sm bg-black text-white text-lg font-bold">
-                    {selectedApproval.agent[0]}
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-semibold text-black">{selectedApproval.agent}</h3>
-                    <p className="text-xs font-mono text-zinc-500">{selectedApproval.agentRole}</p>
-                  </div>
-                </div>
-
-                {/* Mock Chat History */}
-                <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
-                  <div className="flex flex-col gap-1 items-start">
-                    <span className="text-xs font-semibold text-black">{selectedApproval.agent}</span>
-                    <div className="rounded-sm rounded-tl-none border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-700 max-w-[90%]">
-                      Here is the proposed specification for "{selectedApproval.title}". Please review the parameters.
-                    </div>
-                  </div>
-                </div>
-
-                {/* Iteration Input Dock (Gemini Style) & Footer Actions */}
-                <div className="flex flex-col border-t border-zinc-200">
-                  <div className="p-4">
-                    <div className="bg-white border border-zinc-200 rounded-xl shadow-sm overflow-visible flex flex-col focus-within:border-black transition-colors">
-                      {/* Top: Auto-expanding Textarea */}
-                      <textarea
-                        value={directive}
-                        onChange={(e) => setDirective(e.target.value)}
-                        placeholder="Iterate on this spec..."
-                        className="w-full resize-none bg-transparent text-sm text-black placeholder:text-zinc-400 focus:outline-none min-h-[44px] p-3 pb-0"
-                        rows={1}
-                      />
-                      
-                      {/* Bottom Toolbar */}
-                      <div className="flex items-center justify-between p-2 mt-1">
-                        {/* Left Side: Buttons & Dropdowns */}
-                        <div className="flex items-center gap-2">
-                          {/* Plus Button Selector */}
-                          <div className="relative">
-                            <button 
-                              onClick={() => { setPlusOpen(!plusOpen); setModeOpen(false); }}
-                              className="flex h-8 w-8 items-center justify-center rounded-sm text-zinc-500 hover:bg-zinc-100 hover:text-black transition-colors shrink-0"
-                            >
-                              <Plus size={18} />
-                            </button>
-                            {plusOpen && (
-                              <div className="absolute left-0 bottom-full mb-1 w-48 rounded-sm border border-zinc-200 bg-white p-1 shadow-lg z-20">
-                                <button className="flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm font-medium text-black">Upload File</button>
-                                <button className="flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm font-medium text-black">Import from Knowledge</button>
-                              </div>
-                            )}
-                          </div>
-                          
-                          <div className="h-4 w-px bg-zinc-200 mx-1" /> {/* Divider */}
-
-                          {/* Mode Selector */}
-                          <div className="relative">
-                            <button 
-                              onClick={() => { setModeOpen(!modeOpen); setPlusOpen(false); }}
-                              className="flex items-center gap-1.5 rounded-sm px-2 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 hover:text-black transition-colors"
-                            >
-                              Chat
-                              <ChevronUp size={14} className="opacity-50" />
-                            </button>
-                            {modeOpen && (
-                              <div className="absolute left-0 bottom-full mb-1 w-32 rounded-sm border border-zinc-200 bg-white p-1 shadow-lg z-20">
-                                <button className="flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm font-medium text-black">Chat</button>
-                                <button className="flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm text-zinc-600">Task</button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Right Side: Mic & Send */}
-                        <div className="flex items-center gap-2">
-                          <button className="flex h-8 w-8 items-center justify-center rounded-sm text-zinc-500 hover:bg-zinc-100 hover:text-black transition-colors">
-                            <Mic size={18} />
-                          </button>
-                          <button 
-                            className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors ${
-                              directive.trim() ? 'bg-black text-white hover:bg-zinc-800' : 'bg-zinc-800 text-white opacity-80'
-                            }`}
-                          >
-                            <Send size={14} strokeWidth={2.5} className="-ml-0.5 mt-0.5" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Absolute Bottom Actions */}
-                  <div className="flex items-center justify-end gap-3 bg-zinc-50 p-4 border-t border-zinc-200">
-                    <button 
-                      onClick={() => setSelectedApproval(null)}
-                      className="px-6 py-2 rounded-sm text-sm font-semibold text-black border border-zinc-200 hover:bg-zinc-100 transition-colors bg-white shadow-sm"
-                    >
-                      Deny
-                    </button>
-                    <button 
-                      onClick={() => setSelectedApproval(null)}
-                      className="px-6 py-2 rounded-sm text-sm font-semibold text-white bg-black hover:bg-zinc-800 transition-colors shadow-sm"
-                    >
-                      Approve
-                    </button>
-                  </div>
-                </div>
-
-              </div>
-            </div>
-          </div>
-        </div>
+        <CodeInterventionModal onClose={() => setSelectedApproval(null)} />
       )}
     </>
   );
