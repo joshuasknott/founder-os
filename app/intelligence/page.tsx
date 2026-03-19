@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -11,8 +12,10 @@ import {
 
 type NodeType = "Folder" | "File" | "Blueprint";
 
-export default function IntelligenceHubPage() {
-  const [activeTab, setActiveTab] = useState<"knowledge" | "blueprints" | "history">("knowledge");
+function IntelligenceHubContent() {
+  const searchParams = useSearchParams();
+  const initTab = searchParams.get("tab") === "blueprints" ? "blueprints" : "knowledge";
+  const [activeTab, setActiveTab] = useState<"knowledge" | "blueprints" | "history">(initTab);
   const [searchQuery, setSearchQuery] = useState("");
 
   return (
@@ -74,6 +77,18 @@ export default function IntelligenceHubPage() {
         {activeTab === "history" && <HistoryView searchQuery={searchQuery} />}
       </div>
     </div>
+  );
+}
+
+export default function IntelligenceHubPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex h-full w-full items-center justify-center p-8">
+        <div className="h-8 w-8 rounded-full border-2 border-zinc-200 border-t-black animate-spin" />
+      </div>
+    }>
+      <IntelligenceHubContent />
+    </Suspense>
   );
 }
 

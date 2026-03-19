@@ -317,7 +317,7 @@ export default function BoardroomPage() {
             </div>
 
             <div className="border-t border-zinc-200 p-3 bg-zinc-50 flex items-center justify-center">
-              <Link href="/intelligence" className="text-xs font-semibold text-zinc-500 hover:text-black hover:underline underline-offset-2 transition-all">
+              <Link href="/intelligence?tab=blueprints" className="text-xs font-semibold text-zinc-500 hover:text-black hover:underline underline-offset-2 transition-all">
                 Manage Blueprints in Intelligence Hub
               </Link>
             </div>
