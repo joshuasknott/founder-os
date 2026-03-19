@@ -5,8 +5,8 @@ import { DollarSign, Key, Shield, AlertTriangle, Save, ServerCrash, Plus, Copy, 
 import { HumanTeamSettings } from "@/components/settings/human-team-settings";
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<"General" | "Team" | "Integrations" | "Billing" | "Danger Zone">("Team");
-  const tabs = ["General", "Team", "Integrations", "Billing", "Danger Zone"] as const;
+  const [activeTab, setActiveTab] = useState<"General" | "Team" | "Integrations" | "Billing">("Team");
+  const tabs = ["General", "Team", "Integrations", "Billing"] as const;
 
   return (
     <div className="flex h-full flex-col w-full p-8 md:p-12 max-w-4xl mx-auto">
@@ -32,7 +32,6 @@ export default function SettingsPage() {
         {activeTab === "Team" && <div className="animate-in fade-in duration-200"><HumanTeamSettings /></div>}
         {activeTab === "Integrations" && <div className="animate-in fade-in duration-200"><ExternalConnectionsSection /></div>}
         {activeTab === "Billing" && <div className="animate-in fade-in duration-200"><CostControlsSection /></div>}
-        {activeTab === "Danger Zone" && <div className="animate-in fade-in duration-200"><DangerZoneSection /></div>}
       </div>
     </div>
   );
@@ -142,26 +141,3 @@ function ApiKeyInput({ provider, description, placeholder }: { provider: string;
   );
 }
 
-function DangerZoneSection() {
-  return (
-    <section className="flex flex-col gap-4 mt-8 pt-8 border-t border-red-200">
-      <div className="flex items-center gap-2 pb-2">
-        <AlertTriangle size={18} className="text-red-500" />
-        <h2 className="text-lg font-semibold text-red-500">Danger Zone</h2>
-      </div>
-      <p className="text-sm text-zinc-500">Destructive actions regarding system integrity.</p>
-      
-      <div className="flex flex-col gap-4 mt-2">
-        <div className="flex items-center justify-between border border-red-200 bg-red-50/50 p-4 rounded-sm">
-          <div className="flex flex-col">
-            <span className="text-sm font-semibold text-black">Halt All Execution</span>
-            <span className="text-xs text-zinc-600">Immediately freeze all active agents and cancel pending operations.</span>
-          </div>
-          <button className="flex items-center gap-2 rounded-sm bg-red-500 px-4 py-2 text-xs font-medium text-white hover:bg-red-600 transition-colors shadow-sm">
-            <ServerCrash size={14} /> Emergency Stop
-          </button>
-        </div>
-      </div>
-    </section>
-  );
-}
