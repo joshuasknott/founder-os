@@ -41,48 +41,91 @@ export default function SettingsPage() {
 }
 
 function CostControlsSection() {
-  const [dailyLimit, setDailyLimit] = useState("50.00");
-  const [alertThreshold, setAlertThreshold] = useState("40.00");
+  const workspaces = useQuery(api.workspaces.get);
+  const workspace = workspaces?.[0];
+  const updateBillingLimits = useMutation(api.workspaces.updateBillingLimits);
+
+  const [dailyLimit, setDailyLimit] = useState<string>("");
+  const [alertThreshold, setAlertThreshold] = useState<string>("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [initialized, setInitialized] = useState(false);
+
+  if (workspace !== undefined && !initialized) {
+    setDailyLimit(String(workspace.dailySpendLimit ?? 50));
+    setAlertThreshold(String(workspace.alertThreshold ?? 40));
+    setInitialized(true);
+  }
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!workspace) return;
+    setIsSaving(true);
+    try {
+      await updateBillingLimits({
+        workspaceId: workspace._id as Id<"workspaces">,
+        dailySpendLimit: parseFloat(dailyLimit) || 0,
+        alertThreshold: parseFloat(alertThreshold) || 0,
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   return (
     <section className="flex flex-col gap-4">
       <div className="flex items-center gap-2 border-b border-zinc-200 pb-2">
         <DollarSign size={18} className="text-black" />
-        <h2 className="text-lg font-semibold text-black">Cost & Circuit Breakers</h2>
+        <h2 className="text-lg font-semibold text-black">Cost &amp; Circuit Breakers</h2>
       </div>
       <p className="text-sm text-zinc-500">Set hard daily limits. The system will halt autonomous execution if thresholds are breached.</p>
-      
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-2">
-        <div className="flex flex-col gap-2">
-          <label className="text-xs font-semibold uppercase tracking-wider text-black">Daily Spending Limit (GBP)</label>
-          <div className="relative flex items-center">
-            <span className="absolute left-3 text-zinc-500 font-mono">£</span>
-            <input 
-              type="number" 
-              value={dailyLimit}
-              onChange={(e) => setDailyLimit(e.target.value)}
-              className="w-full rounded-sm border border-zinc-200 px-8 py-2 font-mono text-sm text-black focus:border-black focus:outline-none transition-colors"
-            />
+
+      <form onSubmit={handleSave} className="flex flex-col gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-2">
+          <div className="flex flex-col gap-2">
+            <label className="text-xs font-semibold uppercase tracking-wider text-black">Daily Spending Limit (GBP)</label>
+            <div className="relative flex items-center">
+              <span className="absolute left-3 text-zinc-500 font-mono">£</span>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={dailyLimit}
+                onChange={(e) => setDailyLimit(e.target.value)}
+                disabled={!initialized}
+                className="w-full rounded-sm border border-zinc-200 px-8 py-2 font-mono text-sm text-black focus:border-black focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-wait"
+              />
+            </div>
+          </div>
+          <div className="flex flex-col gap-2">
+            <label className="text-xs font-semibold uppercase tracking-wider text-black">Alert Threshold (GBP)</label>
+            <div className="relative flex items-center">
+              <span className="absolute left-3 text-zinc-500 font-mono">£</span>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={alertThreshold}
+                onChange={(e) => setAlertThreshold(e.target.value)}
+                disabled={!initialized}
+                className="w-full rounded-sm border border-zinc-200 px-8 py-2 font-mono text-sm text-black focus:border-black focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-wait"
+              />
+            </div>
           </div>
         </div>
-        <div className="flex flex-col gap-2">
-          <label className="text-xs font-semibold uppercase tracking-wider text-black">Alert Threshold (GBP)</label>
-          <div className="relative flex items-center">
-            <span className="absolute left-3 text-zinc-500 font-mono">£</span>
-            <input 
-              type="number" 
-              value={alertThreshold}
-              onChange={(e) => setAlertThreshold(e.target.value)}
-              className="w-full rounded-sm border border-zinc-200 px-8 py-2 font-mono text-sm text-black focus:border-black focus:outline-none transition-colors"
-            />
-          </div>
+        <div className="flex justify-end">
+          <button
+            type="submit"
+            disabled={isSaving || !initialized}
+            className="flex items-center gap-2 rounded-sm bg-black px-4 py-2 text-xs font-medium text-white hover:bg-zinc-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Save size={14} />
+            {isSaving ? "Saving..." : saved ? "✓ Saved" : "Update Allocations"}
+          </button>
         </div>
-      </div>
-      <div className="flex justify-end mt-2">
-        <button className="flex items-center gap-2 rounded-sm bg-black px-4 py-2 text-xs font-medium text-white hover:bg-zinc-800 transition-colors">
-          <Save size={14} /> Update Allocations
-        </button>
-      </div>
+      </form>
     </section>
   );
 }
@@ -127,14 +170,12 @@ function ExternalConnectionsSection() {
       <p className="text-sm text-zinc-500">API keys for agent integrations. Keys are encrypted at rest.</p>
 
       <div className="flex flex-col gap-3 mt-1">
-        {/* Loading skeletons */}
         {keys === undefined && (
           Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="h-16 rounded-sm border border-zinc-200 bg-zinc-50/50 animate-pulse" />
           ))
         )}
 
-        {/* Live key rows */}
         {keys?.map((key) => (
           <div key={key._id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-sm border border-zinc-200 p-4 bg-zinc-50/50">
             <div className="flex flex-col shrink-0 min-w-[160px]">
@@ -170,12 +211,10 @@ function ExternalConnectionsSection() {
           </div>
         ))}
 
-        {/* Empty state */}
         {keys !== undefined && keys.length === 0 && !showForm && (
           <p className="text-sm text-zinc-400 py-2">No connections added yet.</p>
         )}
 
-        {/* Inline Add Form */}
         {showForm && (
           <form onSubmit={handleAdd} className="flex flex-col gap-3 rounded-sm border border-zinc-200 bg-zinc-50/50 p-4">
             <h3 className="text-sm font-semibold text-black">New Connection</h3>

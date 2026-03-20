@@ -10,6 +10,8 @@ export default defineSchema({
     name: v.string(),
     iconSlug: v.optional(v.string()),
     createdAt: v.number(),
+    dailySpendLimit: v.optional(v.number()),
+    alertThreshold: v.optional(v.number()),
   }),
 
   users: defineTable({
