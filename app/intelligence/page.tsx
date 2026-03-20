@@ -9,6 +9,7 @@ import {
   Folder, FileText, History, Search, Plus, MoreVertical,
   Edit2, Download, Trash2, ChevronRight, FileCode, X
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 type NodeType = "Folder" | "File" | "Blueprint";
 
@@ -457,16 +458,47 @@ function BlueprintsView({ searchQuery }: { searchQuery: string }) {
 }
 
 function BlueprintCard({ title, desc, onDelete }: { title: string; desc: string; onDelete: (e: React.MouseEvent) => void }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
   return (
-    <div className="flex flex-col gap-2 rounded-sm border border-zinc-200 bg-white p-4 hover:border-black transition-colors shadow-sm group">
-      <div className="flex items-start justify-between">
+    <div 
+      onClick={() => setIsExpanded(!isExpanded)}
+      className={cn(
+        "flex flex-col gap-2 rounded-sm border border-zinc-200 bg-white p-4 transition-all cursor-pointer shadow-sm group",
+        isExpanded ? "border-black shadow-md ring-1 ring-black/5" : "hover:border-zinc-300"
+      )}
+    >
+      <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-black">
-          <FileText size={16} />
+          <FileText size={16} className={isExpanded ? "text-black" : "text-zinc-500"} />
           <h3 className="text-sm font-semibold">{title}</h3>
         </div>
-        <ContextMenu onDelete={onDelete} />
+        <ChevronRight size={16} className={cn("text-zinc-400 transition-transform duration-200", isExpanded && "rotate-90")} />
       </div>
-      <p className="text-xs text-zinc-500 mt-2 line-clamp-2 leading-relaxed">{desc || "No description."}</p>
+      
+      {isExpanded ? (
+        <div className="mt-3 animate-in fade-in slide-in-from-top-2 duration-200">
+          <p className="text-sm text-zinc-600 leading-relaxed font-mono bg-zinc-50 p-3 rounded-sm border border-zinc-100 mb-4 whitespace-pre-wrap">
+            {desc || "No description provided."}
+          </p>
+          <div className="flex items-center justify-end gap-3 pt-2 border-t border-zinc-100">
+            <button 
+              onClick={(e) => { e.stopPropagation(); /* Edit hook to be wired */ }}
+              className="text-xs font-semibold text-zinc-500 hover:text-black transition-colors px-2 py-1"
+            >
+              Edit
+            </button>
+            <button 
+              onClick={onDelete}
+              className="text-xs font-semibold text-red-600 hover:text-red-700 hover:bg-red-50 transition-colors px-2 py-1 rounded-sm"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="text-xs text-zinc-500 mt-1 line-clamp-1">{desc || "No description."}</p>
+      )}
     </div>
   );
 }
