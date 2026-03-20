@@ -90,4 +90,14 @@ export default defineSchema({
   })
     .index("by_workspace", ["workspaceId"])
     .index("by_timestamp", ["timestamp"]),
+
+  // ===========================================================================
+  // 3. Settings
+  // ===========================================================================
+
+  api_keys: defineTable({
+    workspaceId: v.id("workspaces"),
+    name: v.string(),
+    value: v.string(),
+  }).index("by_workspace", ["workspaceId"]),
 });

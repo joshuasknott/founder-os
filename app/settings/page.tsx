@@ -1,7 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { DollarSign, Key, Shield, AlertTriangle, Save, ServerCrash, Plus, Copy, Trash2 } from "lucide-react";
+import { useQuery, useMutation } from "convex/react";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
+import { DollarSign, Key, Shield, Plus, Copy, Trash2, Save } from "lucide-react";
 import { HumanTeamSettings } from "@/components/settings/human-team-settings";
 
 export default function SettingsPage() {
@@ -85,59 +88,142 @@ function CostControlsSection() {
 }
 
 function ExternalConnectionsSection() {
+  const workspaces = useQuery(api.workspaces.get);
+  const workspaceId = workspaces?.[0]?._id as Id<"workspaces"> | undefined;
+  const keys = useQuery(api.integrations.get);
+  const addMutation = useMutation(api.integrations.add);
+  const removeMutation = useMutation(api.integrations.remove);
+
+  const [showForm, setShowForm] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newValue, setNewValue] = useState("");
+  const [isAdding, setIsAdding] = useState(false);
+
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newName.trim() || !newValue.trim() || !workspaceId) return;
+    setIsAdding(true);
+    try {
+      await addMutation({ workspaceId, name: newName.trim(), value: newValue.trim() });
+      setNewName("");
+      setNewValue("");
+      setShowForm(false);
+    } finally {
+      setIsAdding(false);
+    }
+  };
+
+  const maskValue = (val: string) => {
+    if (val.length <= 8) return "••••••••";
+    return val.slice(0, 4) + "•".repeat(Math.min(val.length - 8, 20)) + val.slice(-4);
+  };
+
   return (
     <section className="flex flex-col gap-4">
       <div className="flex items-center gap-2 border-b border-zinc-200 pb-2">
         <Key size={18} className="text-black" />
         <h2 className="text-lg font-semibold text-black">External Connections</h2>
       </div>
-      <p className="text-sm text-zinc-500">Provide API keys for agent integrations. Keys are encrypted at rest.</p>
-      
-      <div className="flex flex-col gap-4 mt-2">
-        <ApiKeyInput provider="OpenAI" description="Core intelligence model access." placeholder="sk-..." />
-        <ApiKeyInput provider="Anthropic" description="Secondary reasoning models (Claude 3.5 Sonnet)." placeholder="sk-ant-..." />
-        <ApiKeyInput provider="GitHub" description="Codebase read/write capabilities." placeholder="ghp_..." />
-        <ApiKeyInput provider="Vercel" description="Deployment infrastructure." placeholder="..." />
-        <ApiKeyInput provider="Resend" description="Transactional email operations." placeholder="re_..." />
-        
-        <button className="flex items-center justify-center gap-2 rounded-sm border border-dashed border-zinc-300 bg-zinc-50 py-3 text-xs font-semibold text-zinc-600 hover:bg-zinc-100 hover:text-black hover:border-zinc-400 transition-colors mt-2">
+      <p className="text-sm text-zinc-500">API keys for agent integrations. Keys are encrypted at rest.</p>
+
+      <div className="flex flex-col gap-3 mt-1">
+        {/* Loading skeletons */}
+        {keys === undefined && (
+          Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="h-16 rounded-sm border border-zinc-200 bg-zinc-50/50 animate-pulse" />
+          ))
+        )}
+
+        {/* Live key rows */}
+        {keys?.map((key) => (
+          <div key={key._id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-sm border border-zinc-200 p-4 bg-zinc-50/50">
+            <div className="flex flex-col shrink-0 min-w-[160px]">
+              <span className="text-sm font-semibold text-black">{key.name}</span>
+            </div>
+            <div className="flex-1 flex items-center gap-2">
+              <Shield size={14} className="text-zinc-400 shrink-0" />
+              <input
+                type="text"
+                readOnly
+                value={maskValue(key.value)}
+                className="w-full rounded-sm border border-zinc-200 px-3 py-1.5 font-mono text-sm text-zinc-500 bg-zinc-100 cursor-default focus:outline-none"
+              />
+              <div className="flex items-center border-l border-zinc-200 pl-2 ml-1">
+                <button
+                  type="button"
+                  title="Copy"
+                  onClick={() => navigator.clipboard.writeText(key.value)}
+                  className="p-1.5 text-zinc-400 hover:text-black hover:bg-zinc-200 rounded-sm transition-colors"
+                >
+                  <Copy size={14} />
+                </button>
+                <button
+                  type="button"
+                  title="Remove"
+                  onClick={() => removeMutation({ keyId: key._id as Id<"api_keys"> })}
+                  className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-sm transition-colors"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+
+        {/* Empty state */}
+        {keys !== undefined && keys.length === 0 && !showForm && (
+          <p className="text-sm text-zinc-400 py-2">No connections added yet.</p>
+        )}
+
+        {/* Inline Add Form */}
+        {showForm && (
+          <form onSubmit={handleAdd} className="flex flex-col gap-3 rounded-sm border border-zinc-200 bg-zinc-50/50 p-4">
+            <h3 className="text-sm font-semibold text-black">New Connection</h3>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <input
+                type="text"
+                placeholder="Name (e.g. OpenAI)"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                required
+                className="flex-1 px-3 py-2 text-sm border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-black rounded-none bg-white"
+              />
+              <input
+                type="password"
+                placeholder="API Key value"
+                value={newValue}
+                onChange={(e) => setNewValue(e.target.value)}
+                required
+                className="flex-1 px-3 py-2 text-sm font-mono border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-black rounded-none bg-white"
+              />
+            </div>
+            <div className="flex items-center gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => { setShowForm(false); setNewName(""); setNewValue(""); }}
+                className="px-3 py-1.5 text-xs font-medium text-zinc-600 hover:text-black transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isAdding}
+                className="flex items-center gap-2 px-4 py-1.5 text-xs font-medium text-white bg-black hover:bg-zinc-800 transition-colors disabled:opacity-50 rounded-none"
+              >
+                <Save size={12} /> {isAdding ? "Saving..." : "Save Key"}
+              </button>
+            </div>
+          </form>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setShowForm(true)}
+          className="flex items-center justify-center gap-2 rounded-sm border border-dashed border-zinc-300 bg-zinc-50 py-3 text-xs font-semibold text-zinc-600 hover:bg-zinc-100 hover:text-black hover:border-zinc-400 transition-colors mt-1"
+        >
           <Plus size={14} /> Add Connection
-        </button>
-      </div>
-      <div className="flex justify-end mt-4">
-        <button className="flex items-center gap-2 rounded-sm bg-black px-4 py-2 text-xs font-medium text-white hover:bg-zinc-800 transition-colors">
-          <Save size={14} /> Save Keys
         </button>
       </div>
     </section>
   );
 }
-
-function ApiKeyInput({ provider, description, placeholder }: { provider: string; description: string; placeholder: string }) {
-  return (
-    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-sm border border-zinc-200 p-4 bg-zinc-50/50">
-      <div className="flex flex-col w-1/3 min-w-[200px]">
-        <span className="text-sm font-semibold text-black">{provider}</span>
-        <span className="text-xs text-zinc-500">{description}</span>
-      </div>
-      <div className="flex-1 right-0 flex items-center gap-2">
-        <Shield size={14} className="text-zinc-400 shrink-0" />
-        <input 
-          type="password" 
-          placeholder={placeholder}
-          defaultValue=""
-          className="w-full rounded-sm border border-zinc-200 px-3 py-1.5 font-mono text-sm text-black focus:border-black focus:outline-none transition-colors"
-        />
-        <div className="flex items-center border-l border-zinc-200 pl-2 ml-1">
-          <button className="p-1.5 text-zinc-400 hover:text-black hover:bg-zinc-200 rounded-sm transition-colors">
-            <Copy size={14} />
-          </button>
-          <button className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-sm transition-colors">
-            <Trash2 size={14} />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
