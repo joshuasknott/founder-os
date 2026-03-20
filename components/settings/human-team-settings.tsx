@@ -9,6 +9,19 @@ import { cn } from "@/lib/utils";
 
 type Role = "Owner" | "Contributor" | "Viewer";
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const TYPO_DOMAINS = [
+  "gmaiil.com",
+  "gmal.com",
+  "gamil.com",
+  "gmail.co",
+  "gmail.con",
+  "yaho.com",
+  "yahoo.co",
+  "hotmial.com",
+  "outlook.co"
+];
+
 export function HumanTeamSettings() {
   const workspaces = useQuery(api.workspaces.get);
   const workspaceId = workspaces?.[0]?._id as Id<"workspaces"> | undefined;
@@ -35,18 +48,28 @@ export function HumanTeamSettings() {
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
     setInviteError("");
-    if (!inviteEmail) return;
-    if (!inviteEmail.includes("@")) {
-      setInviteError("Please enter a valid email address.");
+    
+    const cleanEmail = inviteEmail.trim();
+    if (!cleanEmail) return;
+
+    if (!EMAIL_REGEX.test(cleanEmail)) {
+      setInviteError("Please enter a valid email structure (e.g., user@domain.com).");
       return;
     }
+
+    const domain = cleanEmail.split("@")[1]?.toLowerCase();
+    if (domain && TYPO_DOMAINS.includes(domain)) {
+      setInviteError(`Invalid domain "@${domain}" detected. Please check for common typos.`);
+      return;
+    }
+
     if (!workspaceId) {
       setInviteError("No workspace found. Please seed the database first.");
       return;
     }
     setIsInviting(true);
     try {
-      await inviteMutation({ workspaceId, email: inviteEmail, role: inviteRole });
+      await inviteMutation({ workspaceId, email: cleanEmail, role: inviteRole });
       setInviteEmail("");
       setInviteRole("Contributor");
     } catch {
