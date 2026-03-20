@@ -36,6 +36,9 @@ export function HumanTeamSettings() {
   const [inviteError, setInviteError] = React.useState("");
   const [isInviting, setIsInviting] = React.useState(false);
 
+  // Simulated logged-in user role for testing RBAC
+  const [currentUserRole, setCurrentUserRole] = React.useState<Role>("Owner");
+
   // Close menus when clicking outside
   React.useEffect(() => {
     function handleClickOutside() {
@@ -91,7 +94,8 @@ export function HumanTeamSettings() {
   return (
     <div className="w-full max-w-4xl space-y-8">
       {/* Top Section: Invite */}
-      <div className="p-6 bg-white border border-zinc-200">
+      {currentUserRole === "Owner" && (
+        <div className="p-6 bg-white border border-zinc-200">
         <h3 className="mb-1 text-lg font-semibold text-black">Invite Member</h3>
         <p className="mb-4 text-sm text-zinc-500">
           Invite new members to your Corporate Workspace. They will receive an email invitation to join.
@@ -137,14 +141,28 @@ export function HumanTeamSettings() {
           {inviteError && <p className="text-red-500 text-xs mt-1">{inviteError}</p>}
         </form>
       </div>
+      )}
 
       {/* Bottom Section: Active Members */}
       <div className="bg-white border border-zinc-200">
-        <div className="p-6 border-b border-zinc-200">
-          <h3 className="mb-1 text-lg font-semibold text-black">Active Members</h3>
-          <p className="text-sm text-zinc-500">
-            Manage your current corporate team. Owners have full administrative clearance.
-          </p>
+        <div className="p-6 border-b border-zinc-200 flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+          <div>
+            <h3 className="mb-1 text-lg font-semibold text-black">Active Members</h3>
+            <p className="text-sm text-zinc-500">
+              Manage your current corporate team. Owners have full administrative clearance.
+            </p>
+          </div>
+          {/* Simulated Auth Toggle */}
+          <select
+            title="Simulate User Role"
+            value={currentUserRole}
+            onChange={(e) => setCurrentUserRole(e.target.value as Role)}
+            className="px-2 py-1 text-xs font-mono border border-zinc-200 bg-zinc-50 text-zinc-600 focus:outline-none focus:ring-1 focus:ring-black rounded-sm cursor-pointer shrink-0"
+          >
+            <option value="Owner">View as: Owner</option>
+            <option value="Contributor">View as: Contributor</option>
+            <option value="Viewer">View as: Viewer</option>
+          </select>
         </div>
 
         <div className="flex flex-col">
@@ -193,7 +211,7 @@ export function HumanTeamSettings() {
                 </div>
 
                 <div className={cn(
-                  "px-2.5 py-1 text-xs font-mono tracking-tight uppercase border w-24 text-center",
+                  "px-2.5 py-1 text-xs font-mono tracking-tight uppercase border w-24 text-center shrink-0",
                   member.role === "Owner"
                     ? "bg-black text-white border-black"
                     : "bg-zinc-100 text-zinc-600 border-zinc-200"
@@ -201,44 +219,48 @@ export function HumanTeamSettings() {
                   {member.role}
                 </div>
 
-                <div className="relative">
-                  <button
-                    type="button"
-                    title="Menu"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setActiveMenuId(activeMenuId === member._id ? null : member._id);
-                    }}
-                    className="p-2 text-zinc-400 transition-colors rounded-none hover:text-black hover:bg-zinc-100"
-                  >
-                    <MoreHorizontal className="w-5 h-5" />
-                  </button>
-
-                  {activeMenuId === member._id && (
-                    <div
-                      className="absolute right-0 z-50 w-40 mt-1 bg-white border border-zinc-200 shadow-sm animate-in fade-in zoom-in-95 duration-100 origin-top-right"
-                      onClick={(e) => e.stopPropagation()}
+                {currentUserRole === "Owner" ? (
+                  <div className="relative shrink-0">
+                    <button
+                      type="button"
+                      title="Menu"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveMenuId(activeMenuId === member._id ? null : member._id);
+                      }}
+                      className="p-2 text-zinc-400 transition-colors rounded-none hover:text-black hover:bg-zinc-100"
                     >
-                      <div className="flex flex-col py-1">
-                        <button
-                          type="button"
-                          className="w-full px-3 py-2 text-sm text-left text-zinc-600 hover:bg-zinc-100 hover:text-black transition-colors"
-                          onClick={() => setActiveMenuId(null)}
-                        >
-                          Change Role
-                        </button>
-                        <div className="h-px bg-zinc-200 my-1" />
-                        <button
-                          type="button"
-                          className="w-full px-3 py-2 text-sm text-left text-red-600 hover:bg-red-50 transition-colors font-medium"
-                          onClick={() => handleRemove(member._id as Id<"users">)}
-                        >
-                          Remove Member
-                        </button>
+                      <MoreHorizontal className="w-5 h-5" />
+                    </button>
+
+                    {activeMenuId === member._id && (
+                      <div
+                        className="absolute right-0 z-50 w-40 mt-1 bg-white border border-zinc-200 shadow-sm animate-in fade-in zoom-in-95 duration-100 origin-top-right"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="flex flex-col py-1">
+                          <button
+                            type="button"
+                            className="w-full px-3 py-2 text-sm text-left text-zinc-600 hover:bg-zinc-100 hover:text-black transition-colors"
+                            onClick={() => setActiveMenuId(null)}
+                          >
+                            Change Role
+                          </button>
+                          <div className="h-px bg-zinc-200 my-1" />
+                          <button
+                            type="button"
+                            className="w-full px-3 py-2 text-sm text-left text-red-600 hover:bg-red-50 transition-colors font-medium"
+                            onClick={() => handleRemove(member._id as Id<"users">)}
+                          >
+                            Remove Member
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="w-9 shrink-0" />
+                )}
               </div>
             </div>
           ))}
