@@ -8,6 +8,18 @@ export const get = query({
   },
 });
 
+export const create = mutation({
+  args: { name: v.string() },
+  handler: async (ctx, { name }) => {
+    const workspaceId = await ctx.db.insert("workspaces", {
+      name,
+      iconSlug: "building",
+      createdAt: Date.now(),
+    });
+    return workspaceId;
+  },
+});
+
 export const updateBillingLimits = mutation({
   args: {
     workspaceId: v.id("workspaces"),
