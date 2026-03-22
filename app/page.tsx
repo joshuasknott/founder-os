@@ -31,6 +31,7 @@ export default function BoardroomPage() {
   const [agentSearch, setAgentSearch] = useState("");
   const [blueprintModalOpen, setBlueprintModalOpen] = useState(false);
   const [blueprintSearch, setBlueprintSearch] = useState("");
+  const [selectedBlueprint, setSelectedBlueprint] = useState<{ id: string; title: string } | null>(null);
 
   // Default to the first agent once data loads
   useEffect(() => {
@@ -59,6 +60,12 @@ export default function BoardroomPage() {
       e.preventDefault();
       handleSubmit();
     }
+  };
+
+  const handleSelectBlueprint = (id: string | null, title: string) => {
+    setSelectedBlueprint(id ? { id, title } : null);
+    setBlueprintOpen(false);
+    setBlueprintModalOpen(false);
   };
 
   return (
@@ -199,16 +206,28 @@ export default function BoardroomPage() {
                   onClick={() => { setBlueprintOpen(!blueprintOpen); setModeOpen(false); setAgentOpen(false); setPlusOpen(false); }}
                   className="flex items-center gap-1.5 rounded-sm px-2 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 hover:text-black transition-colors"
                 >
-                  No Blueprint
+                  {selectedBlueprint ? (
+                    <span className="flex items-center gap-1.5 font-semibold text-black">
+                      <FileText size={14} className="text-zinc-500" />
+                      {selectedBlueprint.title}
+                    </span>
+                  ) : (
+                    "No Blueprint"
+                  )}
                   <ChevronUp size={14} className="opacity-50" />
                 </button>
                 {blueprintOpen && (
                   <div className="absolute left-0 bottom-full mb-1 w-48 max-h-96 overflow-y-auto rounded-sm border border-zinc-200 bg-white p-1 shadow-lg z-50">
-                    <button className="flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm font-medium text-black">No Blueprint</button>
+                    <button 
+                      onClick={() => handleSelectBlueprint(null, "No Blueprint")}
+                      className={`flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm ${!selectedBlueprint ? "font-semibold text-black bg-zinc-50" : "font-medium text-black"}`}
+                    >
+                      No Blueprint
+                    </button>
                     <div className="my-1 border-t border-zinc-100" />
-                    <button className="flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm text-zinc-600">Frontend Architecture Rewrite</button>
-                    <button className="flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm text-zinc-600">Database Migration SOP</button>
-                    <button className="flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm text-zinc-600">Weekly Investor Update</button>
+                    <button onClick={() => handleSelectBlueprint("bp_1", "Frontend Architecture Rewrite")} className={`flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm ${selectedBlueprint?.id === "bp_1" ? "font-semibold text-black bg-zinc-50" : "text-zinc-600"}`}>Frontend Architecture Rewrite</button>
+                    <button onClick={() => handleSelectBlueprint("bp_2", "Database Migration SOP")} className={`flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm ${selectedBlueprint?.id === "bp_2" ? "font-semibold text-black bg-zinc-50" : "text-zinc-600"}`}>Database Migration SOP</button>
+                    <button onClick={() => handleSelectBlueprint("bp_3", "Weekly Investor Update")} className={`flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm ${selectedBlueprint?.id === "bp_3" ? "font-semibold text-black bg-zinc-50" : "text-zinc-600"}`}>Weekly Investor Update</button>
                     <div className="my-1 border-t border-zinc-100" />
                     <button 
                       onClick={() => { setBlueprintModalOpen(true); setBlueprintOpen(false); }}
@@ -328,9 +347,24 @@ export default function BoardroomPage() {
             </div>
 
             <div className="p-4 overflow-y-auto flex flex-col gap-2">
-              <BlueprintModalCard title="Frontend Architecture Rewrite" description="Strict instructions on enforcing Executive Minimalism across React components." onClick={() => setBlueprintModalOpen(false)} />
-              <BlueprintModalCard title="Database Migration SOP" description="Standard procedure for safely running schema changes via Convex." onClick={() => setBlueprintModalOpen(false)} />
-              <BlueprintModalCard title="Weekly Investor Update" description="Format specifications and data sources required to compile the weekly metric report." onClick={() => setBlueprintModalOpen(false)} />
+              <BlueprintModalCard 
+                title="Frontend Architecture Rewrite" 
+                description="Strict instructions on enforcing Executive Minimalism across React components." 
+                isSelected={selectedBlueprint?.id === "bp_1"}
+                onClick={() => handleSelectBlueprint("bp_1", "Frontend Architecture Rewrite")} 
+              />
+              <BlueprintModalCard 
+                title="Database Migration SOP" 
+                description="Standard procedure for safely running schema changes via Convex." 
+                isSelected={selectedBlueprint?.id === "bp_2"}
+                onClick={() => handleSelectBlueprint("bp_2", "Database Migration SOP")} 
+              />
+              <BlueprintModalCard 
+                title="Weekly Investor Update" 
+                description="Format specifications and data sources required to compile the weekly metric report." 
+                isSelected={selectedBlueprint?.id === "bp_3"}
+                onClick={() => handleSelectBlueprint("bp_3", "Weekly Investor Update")} 
+              />
             </div>
 
             <div className="border-t border-zinc-200 p-3 bg-zinc-50 flex items-center justify-center">
@@ -376,15 +410,15 @@ function AgentModalCard({ name, role, status, onClick }: { name: string; role: s
   );
 }
 
-function BlueprintModalCard({ title, description, onClick }: { title: string; description: string; onClick: () => void }) {
+function BlueprintModalCard({ title, description, isSelected, onClick }: { title: string; description: string; isSelected?: boolean; onClick: () => void }) {
   return (
     <button 
       onClick={onClick}
-      className="flex flex-col gap-1.5 rounded-sm border border-zinc-200 bg-white p-3 hover:border-black transition-colors shadow-sm text-left group"
+      className={`flex flex-col gap-1.5 rounded-sm border bg-white p-3 transition-colors shadow-sm text-left group ${isSelected ? "border-black ring-1 ring-black/5" : "border-zinc-200 hover:border-black"}`}
     >
       <div className="flex items-center gap-2">
-        <FileText size={16} className="text-zinc-400 group-hover:text-black transition-colors shrink-0" />
-        <span className="text-sm font-semibold text-black truncate">{title}</span>
+        <FileText size={16} className={`${isSelected ? "text-black" : "text-zinc-400 group-hover:text-black"} transition-colors shrink-0`} />
+        <span className={`text-sm font-semibold truncate ${isSelected ? "text-black" : "text-zinc-800"}`}>{title}</span>
       </div>
       <p className="text-xs text-zinc-500 line-clamp-1 truncate w-full">{description}</p>
     </button>
