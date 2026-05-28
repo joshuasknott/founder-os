@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
+import { ShieldAlert, Loader2 } from "lucide-react";
 
 export function LoginCard() {
   const [email, setEmail] = useState("");
@@ -33,12 +34,12 @@ export function LoginCard() {
   };
 
   return (
-    <div className="flex w-full flex-col items-center justify-center border border-zinc-200 bg-[#FFFFFF] p-8 max-w-[400px]">
+    <div className="flex w-full flex-col items-center justify-center bg-white/75 border border-black/[0.04] p-8 max-w-[400px] shadow-[0_10px_35px_rgba(0,0,0,0.03)] rounded-2xl backdrop-blur-xl animate-slide-up select-none">
       <div className="mb-6 text-center w-full">
-        <h2 className="text-xl font-medium tracking-tight text-[#000000]">
+        <h2 className="text-lg font-bold tracking-tight text-text-primary antialiased">
           Sovereign Access
         </h2>
-        <p className="font-mono text-xs tracking-widest text-zinc-500 uppercase mt-2">
+        <p className="text-[10px] font-bold tracking-widest text-text-muted uppercase mt-1">
           Identity Verification
         </p>
       </div>
@@ -50,7 +51,7 @@ export function LoginCard() {
             placeholder="founder@company.com"
             value={email}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)}
-            className="w-full border border-zinc-300 px-3 py-2 focus:border-[#000000] focus:ring-[#000000] text-base h-12 rounded-none shadow-none text-black bg-white"
+            className="w-full border border-black/[0.05] px-4 py-2.5 focus:border-accent/40 focus:ring-4 focus:ring-accent/5 text-sm h-11 rounded-xl shadow-sm text-text-primary bg-white focus:bg-white transition-all outline-none placeholder:text-text-muted/60"
             required
             disabled={isLoading}
           />
@@ -61,22 +62,32 @@ export function LoginCard() {
             placeholder="••••••••"
             value={password}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
-            className="w-full border border-zinc-300 px-3 py-2 focus:border-[#000000] focus:ring-[#000000] text-base h-12 rounded-none shadow-none text-black bg-white"
+            className="w-full border border-black/[0.05] px-4 py-2.5 focus:border-accent/40 focus:ring-4 focus:ring-accent/5 text-sm h-11 rounded-xl shadow-sm text-text-primary bg-white focus:bg-white transition-all outline-none placeholder:text-text-muted/60"
             required
             disabled={isLoading}
           />
         </div>
         
         {errorStatus && (
-          <p className="text-xs font-mono text-red-600 font-medium pb-2">ERROR: {errorStatus}</p>
+          <div className="mt-2 p-3 bg-rose-50 border border-rose-500/10 rounded-xl text-[10px] font-semibold text-rose-600 leading-normal flex items-start gap-2 animate-fade-in">
+            <ShieldAlert size={14} className="text-rose-500 shrink-0" />
+            <p>ERROR: {errorStatus}</p>
+          </div>
         )}
         
         <button 
           type="submit" 
-          className="flex items-center justify-center w-full bg-[#000000] hover:bg-zinc-800 text-[#FFFFFF] shadow-none h-12 text-base font-medium rounded-none transition-colors"
+          className="flex items-center justify-center w-full bg-accent hover:bg-accent-hover text-white shadow-sm hover:scale-[1.02] active:scale-[0.98] h-11 text-xs font-bold rounded-xl transition-all cursor-pointer disabled:opacity-50"
           disabled={isLoading}
         >
-          {isLoading ? "Authenticating..." : "Access OS"}
+          {isLoading ? (
+            <span className="flex items-center gap-1.5 justify-center">
+              <Loader2 size={13} className="animate-spin" />
+              Authenticating...
+            </span>
+          ) : (
+            "Access Workspace"
+          )}
         </button>
       </form>
     </div>

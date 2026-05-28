@@ -2,68 +2,91 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, BrainCircuit, Users, Settings, MessageSquare } from "lucide-react";
-import { WorkspaceSwitcher } from "./workspace-switcher";
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
+import { Terminal, BookOpen, Settings, MessageSquare, Plus, Zap } from "lucide-react";
 
 export function Leftnav() {
   const pathname = usePathname();
+  const sessions = useQuery(api.chat.getSessions);
 
   const NavItem = ({ href, icon, label }: { href: string; icon: React.ReactNode; label: string }) => {
     const isActive = pathname === href || (href !== "/" && pathname?.startsWith(href));
     return (
       <Link
         href={href}
-        className={`flex items-center gap-3 px-4 py-2 text-sm transition-colors rounded-none ${
+        className={`flex items-center gap-3 mx-3 px-3.5 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
           isActive
-            ? "border-l-4 border-black bg-zinc-100 font-semibold text-black"
-            : "border-l-4 border-transparent font-medium text-zinc-600 hover:bg-zinc-100 hover:text-black"
+            ? "bg-accent/8 text-accent font-semibold shadow-sm shadow-accent/5 border border-accent/10"
+            : "text-text-secondary border border-transparent hover:bg-black/[0.02] hover:text-text-primary active:scale-[0.98]"
         }`}
       >
-        {icon}
+        <span className={`transition-transform duration-200 ${isActive ? "scale-105 text-accent" : "opacity-70 group-hover:opacity-100"}`}>
+          {icon}
+        </span>
         <span>{label}</span>
       </Link>
     );
   };
 
   return (
-    <nav className="flex h-full w-64 flex-col border-r border-zinc-200 bg-white sm:bg-zinc-50 py-4">
-      {/* Header & Global Context Switcher */}
-      <div className="mb-6 px-4 flex flex-col gap-4">
-        <h1 className="text-lg font-bold tracking-tight text-black">FounderOS</h1>
-        <WorkspaceSwitcher />
+    <nav className="flex h-full w-60 flex-col border-r border-black/[0.04] bg-white/45 backdrop-blur-2xl py-6 shrink-0 z-20">
+      {/* Header / Logo */}
+      <div className="mb-6 px-6">
+        <h1 className="text-base font-bold tracking-tight text-text-primary antialiased">FounderOS</h1>
+        <p className="text-[9px] font-semibold text-text-muted tracking-widest uppercase mt-0.5">Control Center</p>
       </div>
 
-      {/* Zone 1 (Top) */}
+      {/* Primary Navigation */}
       <div className="flex flex-col gap-1">
-        <NavItem href="/" icon={<LayoutDashboard size={18} />} label="Boardroom" />
-        <NavItem href="/intelligence" icon={<BrainCircuit size={18} />} label="Intelligence" />
-        <NavItem href="/team" icon={<Users size={18} />} label="Team" />
+        <NavItem href="/" icon={<Terminal size={16} />} label="Command" />
+        <NavItem href="/context" icon={<BookOpen size={16} />} label="Context" />
       </div>
 
-      {/* Zone 2 (Middle) */}
+      {/* Recent Sessions */}
       <div className="flex-1 flex flex-col overflow-y-auto mt-6">
-        <div className="px-5 mb-2">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Recent Sessions</h2>
+        <div className="px-6 mb-2 flex items-center justify-between">
+          <h2 className="text-[10px] font-semibold uppercase tracking-widest text-text-muted">Sessions</h2>
         </div>
         <div className="flex flex-col gap-1 px-3">
-          <Link href="#" className="flex items-center gap-2 px-2 py-1 text-sm text-zinc-600 truncate hover:text-black hover:bg-zinc-100 rounded transition-colors group">
-            <MessageSquare size={14} className="opacity-50 shrink-0 group-hover:opacity-100 transition-opacity" />
-            <span className="truncate">Database Migration Plan</span>
-          </Link>
-          <Link href="#" className="flex items-center gap-2 px-2 py-1 text-sm text-zinc-600 truncate hover:text-black hover:bg-zinc-100 rounded transition-colors group">
-            <MessageSquare size={14} className="opacity-50 shrink-0 group-hover:opacity-100 transition-opacity" />
-            <span className="truncate">Q3 Marketing Strategy</span>
-          </Link>
-          <Link href="#" className="flex items-center gap-2 px-2 py-1 text-sm text-zinc-600 truncate hover:text-black hover:bg-zinc-100 rounded transition-colors group">
-            <MessageSquare size={14} className="opacity-50 shrink-0 group-hover:opacity-100 transition-opacity" />
-            <span className="truncate">Frontend Architecture Audit</span>
-          </Link>
+          {sessions === undefined ? (
+            // Loading skeleton
+            <div className="flex flex-col gap-2 px-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-7 rounded-lg bg-black/[0.02] animate-pulse" />
+              ))}
+            </div>
+          ) : sessions.length === 0 ? (
+            <p className="px-3 py-2 text-[11px] text-text-muted">No sessions yet</p>
+          ) : (
+            sessions.map((session) => {
+              const sessionHref = `/?session=${session._id}`;
+              const isSessionActive = pathname === "/" && typeof window !== "undefined" && new URLSearchParams(window.location.search).get("session") === session._id;
+              
+              return (
+                <Link
+                  key={session._id}
+                  href={sessionHref}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-all duration-200 group active:scale-[0.98] ${
+                    isSessionActive
+                      ? "bg-black/[0.03] text-text-primary font-medium"
+                      : "text-text-secondary hover:text-text-primary hover:bg-black/[0.015]"
+                  }`}
+                >
+                  <MessageSquare size={13} className={`shrink-0 transition-opacity ${
+                    isSessionActive ? "text-accent opacity-90" : "opacity-40 group-hover:opacity-75"
+                  }`} />
+                  <span className="truncate text-xs">{session.title}</span>
+                </Link>
+              );
+            })
+          )}
         </div>
       </div>
 
-      {/* Zone 3 (Bottom) */}
-      <div className="mt-auto pt-4 flex flex-col">
-        <NavItem href="/settings" icon={<Settings size={18} />} label="Settings" />
+      {/* Bottom Settings Link */}
+      <div className="mt-auto pt-4 flex flex-col gap-1 border-t border-black/[0.03]">
+        <NavItem href="/settings" icon={<Settings size={16} />} label="Settings" />
       </div>
     </nav>
   );

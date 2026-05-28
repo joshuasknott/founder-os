@@ -62,6 +62,17 @@ export const getRecentLogs = query({
   },
 });
 
+export const getLogsByDirective = query({
+  args: { directiveId: v.id("directives") },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("observabilityLogs")
+      .withIndex("by_traceId", (q) => q.eq("traceId", args.directiveId))
+      .order("desc")
+      .collect();
+  },
+});
+
 // =========================================================================
 // logEvent — Immutable, sanitized observability log writer
 //

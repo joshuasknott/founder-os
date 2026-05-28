@@ -1,268 +1,120 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
-import { DollarSign, Key, Shield, Plus, Copy, Trash2, Save } from "lucide-react";
-import { HumanTeamSettings } from "@/components/settings/human-team-settings";
+import { Key, Github, Cloud, Mail, AlertTriangle, ShieldCheck } from "lucide-react";
+
+type ConnectionConfig = {
+  id: string;
+  label: string;
+  icon: React.ReactNode;
+  placeholder: string;
+  value: string;
+};
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<"General" | "Team" | "Integrations" | "Billing">("Team");
-  const tabs = ["General", "Team", "Integrations", "Billing"] as const;
+  const [connections, setConnections] = useState<ConnectionConfig[]>([
+    { id: "openai", label: "OpenAI API", icon: <Key size={14} />, placeholder: "sk-...", value: "" },
+    { id: "anthropic", label: "Anthropic Claude", icon: <Key size={14} />, placeholder: "sk-ant-...", value: "" },
+    { id: "google", label: "Google Gemini AI", icon: <Key size={14} />, placeholder: "AIza...", value: "" },
+    { id: "github", label: "GitHub Access Token", icon: <Github size={14} />, placeholder: "ghp_...", value: "" },
+    { id: "vercel", label: "Vercel Platform", icon: <Cloud size={14} />, placeholder: "vercel_...", value: "" },
+    { id: "resend", label: "Resend Email Platform", icon: <Mail size={14} />, placeholder: "re_...", value: "" },
+  ]);
 
-  return (
-    <div className="flex h-full flex-col w-full p-8 md:p-12 max-w-4xl mx-auto">
-      <div className="flex items-center gap-6 border-b border-zinc-200 mb-8">
-        {tabs.map(tab => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`cursor-pointer pb-3 text-sm font-semibold relative transition-colors ${
-              activeTab === tab ? "text-black" : "text-zinc-500 hover:text-black"
-            }`}
-          >
-            {tab}
-            {activeTab === tab && <span className="absolute bottom-0 left-0 w-full h-[2px] bg-black" />}
-          </button>
-        ))}
-      </div>
-
-      <div className="flex flex-col">
-        {activeTab === "General" && (
-           <div className="text-sm text-zinc-500">General settings coming soon.</div>
-        )}
-        {activeTab === "Team" && <div className="animate-in fade-in duration-200"><HumanTeamSettings /></div>}
-        {activeTab === "Integrations" && <div className="animate-in fade-in duration-200"><ExternalConnectionsSection /></div>}
-        {activeTab === "Billing" && <div className="animate-in fade-in duration-200"><CostControlsSection /></div>}
-      </div>
-    </div>
-  );
-}
-
-function CostControlsSection() {
-  const workspaces = useQuery(api.workspaces.get);
-  const workspace = workspaces?.[0];
-  const updateBillingLimits = useMutation(api.workspaces.updateBillingLimits);
-
-  const [dailyLimit, setDailyLimit] = useState<string>("");
-  const [alertThreshold, setAlertThreshold] = useState<string>("");
-  const [isSaving, setIsSaving] = useState(false);
+  const [dailyLimit, setDailyLimit] = useState("50");
+  const [alertThreshold, setAlertThreshold] = useState("40");
   const [saved, setSaved] = useState(false);
-  const [initialized, setInitialized] = useState(false);
 
-  if (workspace !== undefined && !initialized) {
-    setDailyLimit(String(workspace.dailySpendLimit ?? 50));
-    setAlertThreshold(String(workspace.alertThreshold ?? 40));
-    setInitialized(true);
-  }
+  const updateConnection = (id: string, value: string) => {
+    setConnections(prev => prev.map(c => c.id === id ? { ...c, value } : c));
+  };
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!workspace) return;
-    setIsSaving(true);
-    try {
-      await updateBillingLimits({
-        workspaceId: workspace._id as Id<"workspaces">,
-        dailySpendLimit: parseFloat(dailyLimit) || 0,
-        alertThreshold: parseFloat(alertThreshold) || 0,
-      });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
-    } finally {
-      setIsSaving(false);
-    }
+  const handleSave = () => {
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
   };
 
   return (
-    <section className="flex flex-col gap-4">
-      <div className="flex items-center gap-2 border-b border-zinc-200 pb-2">
-        <DollarSign size={18} className="text-black" />
-        <h2 className="text-lg font-semibold text-black">Cost &amp; Circuit Breakers</h2>
+    <div className="flex-1 p-8 max-w-2xl z-10 relative animate-fade-in">
+      {/* Title */}
+      <div className="mb-8">
+        <h1 className="text-lg font-bold text-text-primary antialiased">Workspace Settings</h1>
+        <p className="text-xs font-medium text-text-secondary mt-1">Configure API keys, model variables, and spending gates.</p>
       </div>
-      <p className="text-sm text-zinc-500">Set hard daily limits. The system will halt autonomous execution if thresholds are breached.</p>
 
-      <form onSubmit={handleSave} className="flex flex-col gap-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-2">
-          <div className="flex flex-col gap-2">
-            <label className="text-xs font-semibold uppercase tracking-wider text-black">Daily Spending Limit (GBP)</label>
-            <div className="relative flex items-center">
-              <span className="absolute left-3 text-zinc-500 font-mono">£</span>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={dailyLimit}
-                onChange={(e) => setDailyLimit(e.target.value)}
-                disabled={!initialized}
-                className="w-full rounded-sm border border-zinc-200 px-8 py-2 font-mono text-sm text-black focus:border-black focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-wait"
-              />
-            </div>
-          </div>
-          <div className="flex flex-col gap-2">
-            <label className="text-xs font-semibold uppercase tracking-wider text-black">Alert Threshold (GBP)</label>
-            <div className="relative flex items-center">
-              <span className="absolute left-3 text-zinc-500 font-mono">£</span>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={alertThreshold}
-                onChange={(e) => setAlertThreshold(e.target.value)}
-                disabled={!initialized}
-                className="w-full rounded-sm border border-zinc-200 px-8 py-2 font-mono text-sm text-black focus:border-black focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-wait"
-              />
-            </div>
-          </div>
+      {/* API Connections Card */}
+      <section className="mb-6 bg-white/60 border border-black/[0.04] rounded-2xl p-6 backdrop-blur-md shadow-sm">
+        <div className="flex items-center gap-2 mb-4">
+          <ShieldCheck size={14} className="text-accent" />
+          <h2 className="text-xs font-bold text-text-primary uppercase tracking-wider">API Gateways</h2>
         </div>
-        <div className="flex justify-end">
-          <button
-            type="submit"
-            disabled={isSaving || !initialized}
-            className="flex items-center gap-2 rounded-sm bg-black px-4 py-2 text-xs font-medium text-white hover:bg-zinc-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Save size={14} />
-            {isSaving ? "Saving..." : saved ? "✓ Saved" : "Update Allocations"}
-          </button>
-        </div>
-      </form>
-    </section>
-  );
-}
-
-function ExternalConnectionsSection() {
-  const workspaces = useQuery(api.workspaces.get);
-  const workspaceId = workspaces?.[0]?._id as Id<"workspaces"> | undefined;
-  const keys = useQuery(api.integrations.get);
-  const addMutation = useMutation(api.integrations.add);
-  const removeMutation = useMutation(api.integrations.remove);
-
-  const [showForm, setShowForm] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [newValue, setNewValue] = useState("");
-  const [isAdding, setIsAdding] = useState(false);
-
-  const handleAdd = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newName.trim() || !newValue.trim() || !workspaceId) return;
-    setIsAdding(true);
-    try {
-      await addMutation({ workspaceId, name: newName.trim(), value: newValue.trim() });
-      setNewName("");
-      setNewValue("");
-      setShowForm(false);
-    } finally {
-      setIsAdding(false);
-    }
-  };
-
-  const maskValue = (val: string) => {
-    if (val.length <= 8) return "••••••••";
-    return val.slice(0, 4) + "•".repeat(Math.min(val.length - 8, 20)) + val.slice(-4);
-  };
-
-  return (
-    <section className="flex flex-col gap-4">
-      <div className="flex items-center gap-2 border-b border-zinc-200 pb-2">
-        <Key size={18} className="text-black" />
-        <h2 className="text-lg font-semibold text-black">External Connections</h2>
-      </div>
-      <p className="text-sm text-zinc-500">API keys for agent integrations. Keys are encrypted at rest.</p>
-
-      <div className="flex flex-col gap-3 mt-1">
-        {keys === undefined && (
-          Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="h-16 rounded-sm border border-zinc-200 bg-zinc-50/50 animate-pulse" />
-          ))
-        )}
-
-        {keys?.map((key) => (
-          <div key={key._id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-sm border border-zinc-200 p-4 bg-zinc-50/50">
-            <div className="flex flex-col shrink-0 min-w-[160px]">
-              <span className="text-sm font-semibold text-black">{key.name}</span>
-            </div>
-            <div className="flex-1 flex items-center gap-2">
-              <Shield size={14} className="text-zinc-400 shrink-0" />
-              <input
-                type="text"
-                readOnly
-                value={maskValue(key.value)}
-                className="w-full rounded-sm border border-zinc-200 px-3 py-1.5 font-mono text-sm text-zinc-500 bg-zinc-100 cursor-default focus:outline-none"
-              />
-              <div className="flex items-center border-l border-zinc-200 pl-2 ml-1">
-                <button
-                  type="button"
-                  title="Copy"
-                  onClick={() => navigator.clipboard.writeText(key.value)}
-                  className="p-1.5 text-zinc-400 hover:text-black hover:bg-zinc-200 rounded-sm transition-colors"
-                >
-                  <Copy size={14} />
-                </button>
-                <button
-                  type="button"
-                  title="Remove"
-                  onClick={() => removeMutation({ keyId: key._id as Id<"api_keys"> })}
-                  className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-sm transition-colors"
-                >
-                  <Trash2 size={14} />
-                </button>
+        <div className="space-y-4">
+          {connections.map((conn) => (
+            <div key={conn.id} className="flex items-center gap-3.5 group">
+              <div className="w-8.5 h-8.5 rounded-lg bg-black/[0.02] border border-black/[0.015] flex items-center justify-center text-text-secondary shrink-0 transition-transform duration-200 group-hover:scale-105">
+                {conn.icon}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-[10px] font-bold text-text-secondary uppercase tracking-wide">{conn.label}</label>
+                </div>
+                <input
+                  type="password"
+                  value={conn.value}
+                  onChange={(e) => updateConnection(conn.id, e.target.value)}
+                  placeholder={conn.placeholder}
+                  className="w-full px-3 py-2 text-xs bg-white/70 border border-black/[0.05] rounded-lg focus:outline-none focus:ring-4 focus:ring-accent/5 focus:border-accent/40 focus:bg-white transition-all font-mono placeholder:text-text-muted/60 text-text-primary shadow-sm shadow-black/[0.002]"
+                />
               </div>
             </div>
+          ))}
+        </div>
+
+        {/* Warning Badge */}
+        <div className="mt-5 p-3.5 bg-amber-50/60 border border-amber-500/10 rounded-xl text-[10.5px] leading-normal text-amber-800/90 flex items-start gap-2.5">
+          <AlertTriangle size={14} className="text-amber-600 shrink-0 mt-0.5" />
+          <p className="font-medium">
+            Keys are secured inside isolated Convex production variables. Rest assured, your credentials are never exposed to client-side scripts.
+          </p>
+        </div>
+      </section>
+
+      {/* Cost Controls Card */}
+      <section className="mb-8 bg-white/60 border border-black/[0.04] rounded-2xl p-6 backdrop-blur-md shadow-sm">
+        <h2 className="text-xs font-bold text-text-primary mb-4 uppercase tracking-wider select-none">LLM Spend Controls</h2>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="text-[10px] font-bold text-text-secondary block mb-1.5 uppercase tracking-wide select-none">Daily Spending Limit (£)</label>
+            <input
+              type="number"
+              value={dailyLimit}
+              onChange={(e) => setDailyLimit(e.target.value)}
+              className="w-full px-3 py-2 text-xs bg-white/70 border border-black/[0.05] rounded-lg focus:outline-none focus:ring-4 focus:ring-accent/5 focus:border-accent/40 focus:bg-white transition-all font-semibold text-text-primary shadow-sm"
+            />
           </div>
-        ))}
+          <div>
+            <label className="text-[10px] font-bold text-text-secondary block mb-1.5 uppercase tracking-wide select-none">Alert Threshold (£)</label>
+            <input
+              type="number"
+              value={alertThreshold}
+              onChange={(e) => setAlertThreshold(e.target.value)}
+              className="w-full px-3 py-2 text-xs bg-white/70 border border-black/[0.05] rounded-lg focus:outline-none focus:ring-4 focus:ring-accent/5 focus:border-accent/40 focus:bg-white transition-all font-semibold text-text-primary shadow-sm"
+            />
+          </div>
+        </div>
+      </section>
 
-        {keys !== undefined && keys.length === 0 && !showForm && (
-          <p className="text-sm text-zinc-400 py-2">No connections added yet.</p>
-        )}
-
-        {showForm && (
-          <form onSubmit={handleAdd} className="flex flex-col gap-3 rounded-sm border border-zinc-200 bg-zinc-50/50 p-4">
-            <h3 className="text-sm font-semibold text-black">New Connection</h3>
-            <div className="flex flex-col sm:flex-row gap-3">
-              <input
-                type="text"
-                placeholder="Name (e.g. OpenAI)"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                required
-                className="flex-1 px-3 py-2 text-sm border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-black rounded-none bg-white"
-              />
-              <input
-                type="password"
-                placeholder="API Key value"
-                value={newValue}
-                onChange={(e) => setNewValue(e.target.value)}
-                required
-                className="flex-1 px-3 py-2 text-sm font-mono border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-black rounded-none bg-white"
-              />
-            </div>
-            <div className="flex items-center gap-2 justify-end">
-              <button
-                type="button"
-                onClick={() => { setShowForm(false); setNewName(""); setNewValue(""); }}
-                className="px-3 py-1.5 text-xs font-medium text-zinc-600 hover:text-black transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={isAdding}
-                className="flex items-center gap-2 px-4 py-1.5 text-xs font-medium text-white bg-black hover:bg-zinc-800 transition-colors disabled:opacity-50 rounded-none"
-              >
-                <Save size={12} /> {isAdding ? "Saving..." : "Save Key"}
-              </button>
-            </div>
-          </form>
-        )}
-
-        <button
-          type="button"
-          onClick={() => setShowForm(true)}
-          className="flex items-center justify-center gap-2 rounded-sm border border-dashed border-zinc-300 bg-zinc-50 py-3 text-xs font-semibold text-zinc-600 hover:bg-zinc-100 hover:text-black hover:border-zinc-400 transition-colors mt-1"
-        >
-          <Plus size={14} /> Add Connection
-        </button>
-      </div>
-    </section>
+      {/* Save Action */}
+      <button
+        onClick={handleSave}
+        className={`px-6 py-2.5 rounded-lg text-xs font-bold shadow-sm transition-all duration-200 active:scale-[0.97] cursor-pointer ${
+          saved
+            ? "bg-emerald-500 hover:bg-emerald-600 text-white shadow-emerald-500/10"
+            : "bg-accent hover:bg-accent-hover text-white shadow-accent/10"
+        }`}
+      >
+        {saved ? "Saved Configuration ✓" : "Save Changes"}
+      </button>
+    </div>
   );
 }

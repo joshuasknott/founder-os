@@ -326,33 +326,31 @@ export const injectAtlasDebugTask = internalMutation({
 // =========================================================================
 
 export const dispatchDirective = internalAction({
-  args: { directiveId: v.id("directives") },
+  args: { 
+    directiveId: v.id("directives"),
+    taskMatrix: v.string(),
+  },
   handler: async (ctx, args) => {
-    const rawMatrix = await ctx.runQuery(internal.engine.getApprovedSpec, { directiveId: args.directiveId });
-    if (!rawMatrix) throw new Error("No approved matrix found");
-
     let parsedTasks: any[];
     try {
-      parsedTasks = JSON.parse(rawMatrix);
+      parsedTasks = JSON.parse(args.taskMatrix);
     } catch {
       throw new Error("Failed to parse task matrix from playbook.");
     }
 
-    // Resolve matrix into agent IDs
     const resolvedTasks: any[] = [];
     for (const task of parsedTasks) {
-       // Search by name if needed, or if ID is passed natively.
-       let assignedAgentId = task.assignedAgentId;
-       const agent = await ctx.runQuery(internal.engine.getAgentByName, { name: task.assignedAgentId });
-       if (agent) assignedAgentId = agent._id;
+      let assignedAgentId = task.assignedAgentId;
+      const agent = await ctx.runQuery(internal.engine.getAgentByName, { name: task.assignedAgentId });
+      if (agent) assignedAgentId = agent._id;
 
-       resolvedTasks.push({
-         title: task.title,
-         description: task.descriptionTemplate,
-         assignedAgentId,
-         autonomyLevel: task.autonomyLevel,
-         dependsOnIndices: task.dependencies.map((d: string) => parseInt(d)).filter((d: number) => !isNaN(d)),
-       });
+      resolvedTasks.push({
+        title: task.title,
+        description: task.descriptionTemplate,
+        assignedAgentId,
+        autonomyLevel: 1 as 1 | 2 | 3,
+        dependsOnIndices: task.dependencies.map((d: string) => parseInt(d)).filter((d: number) => !isNaN(d)),
+      });
     }
 
     const taskIds = await ctx.runMutation(internal.engine.createTaskBatch, {
@@ -360,7 +358,6 @@ export const dispatchDirective = internalAction({
       tasks: resolvedTasks,
     });
 
-    // SMART BURST EXECUTION: Kick off all root nodes instantly
     for (let i = 0; i < resolvedTasks.length; i++) {
       if (resolvedTasks[i].dependsOnIndices.length === 0) {
         await ctx.scheduler.runAfter(0, internal.engine.executeTask, { taskId: taskIds[i] });
@@ -382,13 +379,7 @@ export const executeTask = internalAction({
 
     const maxRetries = taskData.autonomyLevel === 1 ? L1_MAX_ITERATIONS : L3_MAX_RETRIES;
 
-    if (taskData.autonomyLevel === 3) {
-      await ctx.runMutation(internal.engine.blockForApproval, {
-        taskId: args.taskId,
-        directiveId: taskData.directiveId,
-      });
-      return;
-    }
+
 
     const results = await ctx.runAction(internal.memory.queryMemory, {
       queryText: `Task: ${taskData.title}\nDescription: ${taskData.description}`,
@@ -487,14 +478,7 @@ export const executeTask = internalAction({
       departmentId: agent.departmentId,
     });
 
-    if (taskData.autonomyLevel === 2) {
-      // Pending review sits INDEFINITELY until manual action. Veto CRON killed.
-      await ctx.runMutation(internal.engine.submitShadowApproval, {
-        taskId: args.taskId,
-        directiveId: taskData.directiveId,
-      });
-      return;
-    }
+
 
     await ctx.runMutation(internal.engine.completeTask, {
       taskId: args.taskId,

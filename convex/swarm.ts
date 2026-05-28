@@ -1,15 +1,12 @@
 import { query, mutation } from "./_generated/server";
-import { v, ConvexError } from "convex/values";
+import { v } from "convex/values";
 
 // =========================================================================
-// QUERIES (all require Principal Binding)
+// QUERIES
 // =========================================================================
 
 export const getDepartments = query({
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new ConvexError("Unauthorized: Principal identity required");
-
     return await ctx.db.query("departments").collect();
   },
 });
@@ -17,9 +14,6 @@ export const getDepartments = query({
 export const getAgentsByDepartment = query({
   args: { departmentId: v.id("departments") },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new ConvexError("Unauthorized: Principal identity required");
-
     return await ctx.db
       .query("agents")
       .withIndex("by_department", (q) => q.eq("departmentId", args.departmentId))
@@ -29,9 +23,6 @@ export const getAgentsByDepartment = query({
 
 export const getAllAgents = query({
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new ConvexError("Unauthorized: Principal identity required");
-
     return await ctx.db.query("agents").collect();
   },
 });
@@ -39,9 +30,6 @@ export const getAllAgents = query({
 export const getPlaybooksByDepartment = query({
   args: { departmentId: v.id("departments") },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new ConvexError("Unauthorized: Principal identity required");
-
     return await ctx.db
       .query("playbooks")
       .withIndex("by_department", (q) => q.eq("departmentId", args.departmentId))
@@ -49,8 +37,14 @@ export const getPlaybooksByDepartment = query({
   },
 });
 
+export const getAllPlaybooks = query({
+  handler: async (ctx) => {
+    return await ctx.db.query("playbooks").collect();
+  },
+});
+
 // =========================================================================
-// MUTATIONS (Swarm Studio CRUD — all require Principal Binding)
+// MUTATIONS (Swarm Studio CRUD)
 // =========================================================================
 
 export const createDepartment = mutation({
@@ -60,9 +54,6 @@ export const createDepartment = mutation({
     description: v.string(),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new ConvexError("Unauthorized: Principal identity required");
-
     return await ctx.db.insert("departments", {
       name: args.name,
       icon: args.icon,
@@ -91,9 +82,6 @@ export const hireAgent = mutation({
     reportsTo: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new ConvexError("Unauthorized: Principal identity required");
-
     return await ctx.db.insert("agents", {
       name: args.name,
       role: args.role,
@@ -126,9 +114,6 @@ export const createPlaybook = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new ConvexError("Unauthorized: Principal identity required");
-
     return await ctx.db.insert("playbooks", {
       name: args.name,
       departmentId: args.departmentId,

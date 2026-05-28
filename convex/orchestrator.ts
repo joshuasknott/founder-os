@@ -2,7 +2,7 @@ import { internalMutation, internalQuery, action } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
-export const submitPlaybookToQueue = internalMutation({
+export const autoDispatchPlaybook = internalMutation({
   args: {
     directiveId: v.id("directives"),
     playbookId: v.id("playbooks"),
@@ -11,24 +11,21 @@ export const submitPlaybookToQueue = internalMutation({
     const playbook = await ctx.db.get(args.playbookId);
     if (!playbook) throw new Error("Playbook not found");
 
-    await ctx.db.insert("approvalQueue", {
-      type: "spec_gate",
-      directiveId: args.directiveId,
-      payloadHash: JSON.stringify(playbook.taskMatrix),
-      status: "pending",
-      autonomyLevel: 3 as 1 | 2 | 3,
-    });
-
-    await ctx.db.patch(args.directiveId, { status: "awaiting_approval" });
+    await ctx.db.patch(args.directiveId, { status: "in_progress" });
 
     await ctx.scheduler.runAfter(0, internal.telemetry.logEvent, {
       traceId: args.directiveId,
       actor: "agent: Orion",
       eventType: "STATE_TRANSITION" as const,
       rawPayload: {
-        transition: "pending_spec → awaiting_approval",
-        message: `Orion mapped prompt to Playbook: ${playbook.name}`,
+        transition: "pending_spec → in_progress",
+        message: `Orion auto-dispatching Playbook: ${playbook.name}`,
       },
+    });
+
+    await ctx.scheduler.runAfter(0, internal.engine.dispatchDirective, {
+      directiveId: args.directiveId,
+      taskMatrix: JSON.stringify(playbook.taskMatrix),
     });
   },
 });
@@ -113,7 +110,7 @@ export const initializePlaybook = action({
       return;
     }
 
-    await ctx.runMutation(internal.orchestrator.submitPlaybookToQueue, {
+    await ctx.runMutation(internal.orchestrator.autoDispatchPlaybook, {
       directiveId: args.directiveId,
       playbookId: matchedPlaybook._id,
     });

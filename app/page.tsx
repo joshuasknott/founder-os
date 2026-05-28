@@ -1,426 +1,355 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useQuery } from "convex/react";
+import { useState, useCallback, useEffect, Suspense } from "react";
+import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { Plus, Send, ChevronUp, Mic, FileIcon, X, Search, FileText } from "lucide-react";
-import Link from "next/link";
-import type { Id } from "@/convex/_generated/dataModel";
+import { Id } from "@/convex/_generated/dataModel";
+import { useSearchParams } from "next/navigation";
+import { InputDock } from "@/components/command/InputDock";
+import { ChatView } from "@/components/command/ChatView";
+import { AgentMap } from "@/components/command/AgentMap";
+import { Zap, MessageSquare, Loader2 } from "lucide-react";
 
-type Agent = {
-  _id: Id<"agents">;
-  name: string;
-  role: string;
-  status: "idle" | "working" | "offline";
-  clearanceLevel: number;
-  model: string;
-  systemPrompt: string;
-  workspaceId: Id<"workspaces">;
-};
+type View = "idle" | "chat" | "task";
+type Mode = "chat" | "task";
 
-export default function BoardroomPage() {
-  const agents = useQuery(api.agents.get);
-  const [directive, setDirective] = useState("");
-  const [selectedMode, setSelectedMode] = useState<"Chat" | "Task">("Chat");
-  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
-  const [modeOpen, setModeOpen] = useState(false);
-  const [agentOpen, setAgentOpen] = useState(false);
-  const [blueprintOpen, setBlueprintOpen] = useState(false);
-  const [plusOpen, setPlusOpen] = useState(false);
-  const [agentModalOpen, setAgentModalOpen] = useState(false);
-  const [agentSearch, setAgentSearch] = useState("");
-  const [blueprintModalOpen, setBlueprintModalOpen] = useState(false);
-  const [blueprintSearch, setBlueprintSearch] = useState("");
-  const [selectedBlueprint, setSelectedBlueprint] = useState<{ id: string; title: string } | null>(null);
+export default function CommandPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex-1 flex items-center justify-center bg-transparent z-10">
+          <div className="w-10 h-10 rounded-xl bg-white/70 border border-black/[0.04] shadow-sm flex items-center justify-center animate-spin">
+            <Loader2 size={18} className="text-accent" />
+          </div>
+        </div>
+      }
+    >
+      <CommandPageInner />
+    </Suspense>
+  );
+}
 
-  // Default to the first agent once data loads
+function CommandPageInner() {
+  const searchParams = useSearchParams();
+  const sessionParam = searchParams.get("session");
+
+  const [view, setView] = useState<View>("idle");
+  const [mode, setMode] = useState<Mode>("chat");
+  const [selectedAgentId, setSelectedAgentId] = useState<Id<"agents"> | null>(null);
+  const [activeSessionId, setActiveSessionId] = useState<Id<"chatSessions"> | null>(
+    sessionParam ? (sessionParam as Id<"chatSessions">) : null
+  );
+  const [activeDirectiveId, setActiveDirectiveId] = useState<Id<"directives"> | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  // Convex queries
+  const agents = useQuery(api.swarm.getAllAgents);
+  const isSeeded = useQuery(api.init.isSeeded);
+  const chatMessages = useQuery(
+    api.chat.getMessages,
+    activeSessionId ? { sessionId: activeSessionId } : "skip"
+  );
+  const activeDirective = useQuery(
+    api.directives.getDirectiveById,
+    activeDirectiveId ? { directiveId: activeDirectiveId } : "skip"
+  );
+  const directiveTasks = useQuery(
+    api.directives.getTasksByDirective,
+    activeDirectiveId ? { directiveId: activeDirectiveId } : "skip"
+  );
+  const directiveLogs = useQuery(
+    api.telemetry.getLogsByDirective,
+    activeDirectiveId ? { directiveId: activeDirectiveId } : "skip"
+  );
+
+  // Convex mutations/actions
+  const createSession = useMutation(api.chat.createSession);
+  const sendChatMessage = useAction(api.chat.sendMessage);
+  const createDirective = useMutation(api.directives.createDirective);
+  const seedSwarm = useMutation(api.init.seedSwarm);
+
+  // Auto-seed on first load
   useEffect(() => {
-    if (agents && agents.length > 0 && !selectedAgent) {
-      setSelectedAgent(agents[0] as Agent);
+    if (isSeeded === false) {
+      seedSwarm().catch(console.error);
     }
-  }, [agents, selectedAgent]);
+  }, [isSeeded, seedSwarm]);
 
-  // Mock attachments state
-  const [attachments, setAttachments] = useState<{ id: string; name: string }[]>([
-    { id: "1", name: "Document.pdf" }
-  ]);
-
-  const removeAttachment = (id: string) => {
-    setAttachments(attachments.filter(a => a.id !== id));
-  };
-
-  const handleSubmit = () => {
-    if (!directive.trim()) return;
-    // Real submission wiring will go here
-    setDirective("");
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
+  // If session param provided, switch to chat view
+  useEffect(() => {
+    if (sessionParam) {
+      setActiveSessionId(sessionParam as Id<"chatSessions">);
+      setView("chat");
     }
-  };
+  }, [sessionParam]);
 
-  const handleSelectBlueprint = (id: string | null, title: string) => {
-    setSelectedBlueprint(id ? { id, title } : null);
-    setBlueprintOpen(false);
-    setBlueprintModalOpen(false);
-  };
+  // Get agent info for current chat session
+  const chatSessionsList = useQuery(api.chat.getSessions);
+  const currentSession = chatSessionsList?.find((s) => s._id === activeSessionId);
+  const chatAgent = agents?.find((a) => a._id === currentSession?.agentId);
+  const selectedAgent = agents?.find((a) => a._id === selectedAgentId);
+
+  // Poll for directive completion
+  useEffect(() => {
+    if (activeDirective && (activeDirective.status === "completed" || activeDirective.status === "blocked")) {
+      setIsProcessing(false);
+    }
+  }, [activeDirective]);
+
+  // Keep selectedAgentId synchronized when activeSessionId or chatAgent loads/changes
+  useEffect(() => {
+    if (chatAgent) {
+      setSelectedAgentId(chatAgent._id);
+    }
+  }, [chatAgent]);
+
+  // Handle agent switching from the dropdown picker
+  const handleAgentChange = useCallback((newAgentId: Id<"agents"> | null) => {
+    if (!newAgentId) return;
+    setSelectedAgentId(newAgentId);
+
+    // Switch to existing session with this agent if it exists
+    const existingSession = chatSessionsList?.find((s) => s.agentId === newAgentId);
+    if (existingSession) {
+      setActiveSessionId(existingSession._id);
+      setView("chat");
+      setMode("chat");
+    } else {
+      setActiveSessionId(null);
+      setView("chat");
+      setMode("chat");
+    }
+  }, [chatSessionsList]);
+
+  // Auto-switch mode based on active view state
+  useEffect(() => {
+    if (view === "chat") {
+      setMode("chat");
+    } else if (view === "task") {
+      setMode("task");
+    }
+  }, [view]);
+
+  const handleChatSend = useCallback(
+    async (message: string, agentId: Id<"agents">) => {
+      setIsProcessing(true);
+      setView("chat");
+
+      try {
+        let sessionId = activeSessionId;
+
+        if (!sessionId) {
+          // Create a new session
+          sessionId = await createSession({
+            agentId,
+            title: message.slice(0, 50) + (message.length > 50 ? "..." : ""),
+          });
+          setActiveSessionId(sessionId);
+        }
+
+        await sendChatMessage({
+          sessionId,
+          agentId,
+          content: message,
+        });
+      } catch (error) {
+        console.error("Chat error:", error);
+      } finally {
+        setView("chat");
+        setIsProcessing(false);
+      }
+    },
+    [activeSessionId, createSession, sendChatMessage]
+  );
+
+  const handleTaskSend = useCallback(
+    async (title: string, objective: string) => {
+      setIsProcessing(true);
+      setView("task");
+
+      try {
+        const directiveId = await createDirective({ title, objective });
+        setActiveDirectiveId(directiveId);
+      } catch (error) {
+        console.error("Directive error:", error);
+        setIsProcessing(false);
+      }
+    },
+    [createDirective]
+  );
+
+  const handleNewSession = useCallback(() => {
+    setActiveSessionId(null);
+    setActiveDirectiveId(null);
+    setView("idle");
+    setIsProcessing(false);
+  }, []);
+
+  // Loading state while checking seed
+  if (isSeeded === undefined) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-transparent z-10">
+        <div className="flex flex-col items-center gap-3 animate-fade-in">
+          <div className="w-10 h-10 rounded-xl bg-white/70 border border-black/[0.04] shadow-sm flex items-center justify-center animate-spin">
+            <Loader2 size={18} className="text-accent" />
+          </div>
+          <p className="text-xs font-semibold text-text-secondary select-none">Initializing FounderOS...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Seeding state
+  if (isSeeded === false) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-transparent z-10">
+        <div className="flex flex-col items-center gap-3 animate-fade-in text-center px-6">
+          <div className="w-10 h-10 rounded-xl bg-white/70 border border-black/[0.04] shadow-sm flex items-center justify-center animate-spin mb-1">
+            <Loader2 size={18} className="text-accent" />
+          </div>
+          <p className="text-xs font-bold text-text-primary tracking-wide">Setting up your Swarm Workspace...</p>
+          <p className="text-[10px] text-text-muted font-medium tracking-widest uppercase">Deploying agents and playbooks</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex h-full flex-col relative w-full bg-white">
-      {/* Empty State Area */}
-      <div className="flex-1 flex flex-col items-center justify-center p-12 text-center gap-4">
-        <h2 className="text-3xl font-light tracking-tight text-zinc-800">Good morning. Let's build.</h2>
-        {selectedMode === "Chat" ? (
-          <p className="text-base font-mono text-zinc-500 max-w-md">
-            <span className="font-semibold text-black">Chat Mode:</span> Brainstorming with agents. No system changes will be executed.
-          </p>
-        ) : (
-          <p className="text-base font-mono text-zinc-500 max-w-md">
-            <span className="font-semibold text-black">Task Mode:</span> Issuing directives. Agents will generate actionable specifications for approval.
-          </p>
-        )}
-      </div>
-
-      {/* Input Dock (Floating) */}
-      <div className="mx-auto w-full max-w-4xl mb-6 px-4 md:px-6">
-        <div className="bg-white border border-zinc-200 rounded-2xl shadow-sm flex flex-col p-6 md:p-8 gap-3">
-          
-          {/* Attachments Area */}
-          {attachments.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 mb-2">
-              {attachments.map((file) => (
-                <div key={file.id} className="flex items-center gap-1.5 rounded-sm bg-zinc-100 px-2 py-1 text-xs font-medium text-black border border-zinc-200">
-                  <FileIcon size={12} className="text-zinc-500" />
-                  <span className="truncate max-w-[120px]">{file.name}</span>
-                  <button 
-                    onClick={() => removeAttachment(file.id)}
-                    className="ml-1 text-zinc-400 hover:text-black transition-colors"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              ))}
+    <div className="flex-1 flex flex-col relative h-full">
+      {/* Task Mode: Agent Map */}
+      {view === "task" && activeDirective && (
+        <div className="flex-1 flex flex-col min-h-0">
+          {/* Task header */}
+          <div className="border-b border-black/[0.03] bg-white/45 backdrop-blur-md px-6 py-4 flex items-center justify-between z-20 shadow-sm shadow-black/[0.002]">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-xl bg-accent/8 border border-accent/10 flex items-center justify-center shadow-sm text-accent shrink-0 animate-pulse-soft">
+                <Zap size={14} className="text-accent" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-sm font-bold text-text-primary truncate antialiased">{activeDirective.title}</h2>
+                <p className="text-[10px] font-semibold text-text-muted tracking-wider uppercase mt-0.5">
+                  {activeDirective.status === "in_progress" || activeDirective.status === "pending_spec"
+                    ? "Agents actively coordinating"
+                    : activeDirective.status === "completed"
+                    ? "Directive completed successfully"
+                    : activeDirective.status.replace(/_/g, " ")}
+                </p>
+              </div>
             </div>
-          )}
+            <button
+              onClick={handleNewSession}
+              className="text-xs font-semibold text-text-secondary hover:text-text-primary px-3.5 py-2 border border-black/[0.04] bg-white/60 hover:bg-white shadow-sm shadow-black/[0.005] rounded-lg transition-all duration-200 active:scale-[0.97]"
+            >
+              New Session
+            </button>
+          </div>
 
-          {/* Input Area */}
-          <textarea
-            value={directive}
-            onChange={(e) => setDirective(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Give a directive..."
-            className="w-full resize-none bg-transparent text-base text-black placeholder:text-zinc-400 focus:outline-none min-h-[44px]"
-            rows={1}
+          {/* Agent Map Grid */}
+          <AgentMap
+            directive={activeDirective}
+            tasks={directiveTasks}
+            agents={agents}
+            logs={directiveLogs}
+          />
+        </div>
+      )}
+
+      {/* Chat Mode */}
+      {view === "chat" && (
+        <div className="flex-1 flex flex-col min-h-0">
+          {/* Chat header */}
+          <div className="border-b border-black/[0.03] bg-white/45 backdrop-blur-md px-6 py-4 flex items-center justify-between z-20 shadow-sm shadow-black/[0.002]">
+            <div className="flex items-center gap-3">
+              {chatAgent ? (
+                <div className="w-8 h-8 rounded-xl bg-white border border-black/[0.04] shadow-sm flex items-center justify-center text-base shrink-0 select-none">
+                  {chatAgent.avatar}
+                </div>
+              ) : (
+                <div className="w-8 h-8 rounded-xl bg-accent/8 flex items-center justify-center text-accent shrink-0 select-none">
+                  <MessageSquare size={14} />
+                </div>
+              )}
+              <div className="min-w-0">
+                <h2 className="text-sm font-bold text-text-primary truncate antialiased">
+                  {chatAgent?.name ?? selectedAgent?.name ?? "Chat Session"}
+                </h2>
+                <p className="text-[10px] font-semibold text-text-muted tracking-wider uppercase mt-0.5 truncate">
+                  {chatAgent?.role ?? "Discuss objective and delegate tasks"}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleNewSession}
+              className="text-xs font-semibold text-text-secondary hover:text-text-primary px-3.5 py-2 border border-black/[0.04] bg-white/60 hover:bg-white shadow-sm shadow-black/[0.005] rounded-lg transition-all duration-200 active:scale-[0.97]"
+            >
+              New Session
+            </button>
+          </div>
+
+          {/* Messages view */}
+          <ChatView
+            messages={chatMessages as any}
+            isLoading={isProcessing}
+            agentName={chatAgent?.name ?? selectedAgent?.name ?? "Agent"}
+            agentAvatar={chatAgent?.avatar ?? selectedAgent?.avatar ?? "🤖"}
           />
 
-          {/* Toolbar */}
-          <div className="flex items-center justify-between mt-2 pt-2">
-            
-            {/* Left Side: Buttons & Dropdowns */}
-            <div className="flex items-center gap-2">
-              {/* Plus Button Selector */}
-              <div className="relative">
-                <button 
-                  onClick={() => { setPlusOpen(!plusOpen); setModeOpen(false); setAgentOpen(false); setBlueprintOpen(false); }}
-                  className="flex h-8 w-8 items-center justify-center rounded-sm text-zinc-500 hover:bg-zinc-100 hover:text-black transition-colors shrink-0"
-                >
-                  <Plus size={18} />
-                </button>
-                {plusOpen && (
-                  <div className="absolute left-0 bottom-full mb-1 w-48 max-h-96 overflow-y-auto rounded-sm border border-zinc-200 bg-white p-1 shadow-lg z-50">
-                    <button className="flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm font-medium text-black">Upload File</button>
-                    <button className="flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm font-medium text-black">Import from Knowledge</button>
-                  </div>
-                )}
-              </div>
-              
-              <div className="h-4 w-px bg-zinc-200 mx-1" /> {/* Divider */}
-
-              {/* Mode Selector */}
-              <div className="relative">
-                <button 
-                  onClick={() => { setModeOpen(!modeOpen); setAgentOpen(false); setBlueprintOpen(false); setPlusOpen(false); }}
-                  className="flex items-center gap-1.5 rounded-sm px-2 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 hover:text-black transition-colors"
-                >
-                  {selectedMode}
-                  <ChevronUp size={14} className="opacity-50" />
-                </button>
-                {modeOpen && (
-                  <div className="absolute left-0 bottom-full mb-1 w-32 max-h-96 overflow-y-auto rounded-sm border border-zinc-200 bg-white p-1 shadow-lg z-50">
-                    <button onClick={() => { setSelectedMode("Chat"); setModeOpen(false); }} className={`flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm ${selectedMode === "Chat" ? "bg-zinc-100 text-black font-semibold" : "font-medium text-black"}`}>Chat</button>
-                    <button onClick={() => { setSelectedMode("Task"); setModeOpen(false); }} className={`flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm ${selectedMode === "Task" ? "bg-zinc-100 text-black font-semibold" : "text-zinc-600"}`}>Task</button>
-                  </div>
-                )}
-              </div>
-
-              {/* Agent Selector */}
-              <div className="relative hidden sm:block">
-                <button 
-                  onClick={() => { setAgentOpen(!agentOpen); setModeOpen(false); setBlueprintOpen(false); setPlusOpen(false); }}
-                  className="flex items-center gap-1.5 rounded-sm px-2 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 hover:text-black transition-colors"
-                >
-                  {agents === undefined ? (
-                    <span className="h-3 w-24 rounded-sm bg-zinc-200 animate-pulse inline-block" />
-                  ) : selectedAgent ? (
-                    <>{selectedAgent.name} ({selectedAgent.role})</>
-                  ) : (
-                    "No Agent"
-                  )}
-                  <ChevronUp size={14} className="opacity-50" />
-                </button>
-                {agentOpen && (
-                  <div className="absolute left-0 bottom-full mb-1 w-56 max-h-96 overflow-y-auto rounded-sm border border-zinc-200 bg-white p-1 shadow-lg z-50">
-                    {agents === undefined ? (
-                      <div className="flex flex-col gap-1 p-2">
-                        <div className="h-3 w-full rounded-sm bg-zinc-100 animate-pulse" />
-                        <div className="h-3 w-3/4 rounded-sm bg-zinc-100 animate-pulse" />
-                      </div>
-                    ) : (
-                      agents.map((agent) => (
-                        <button
-                          key={agent._id}
-                          onClick={() => { setSelectedAgent(agent as Agent); setAgentOpen(false); }}
-                          className={`flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm ${selectedAgent?._id === agent._id ? "font-semibold text-black" : "font-medium text-zinc-600"}`}
-                        >
-                          {agent.name} ({agent.role})
-                        </button>
-                      ))
-                    )}
-                    <div className="my-1 border-t border-zinc-100" />
-                    <button 
-                      onClick={() => { setAgentModalOpen(true); setAgentOpen(false); }}
-                      className="flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm font-medium text-black"
-                    >
-                      Browse Agents
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Blueprint Selector */}
-              <div className="relative hidden md:block">
-                <button 
-                  onClick={() => { setBlueprintOpen(!blueprintOpen); setModeOpen(false); setAgentOpen(false); setPlusOpen(false); }}
-                  className="flex items-center gap-1.5 rounded-sm px-2 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 hover:text-black transition-colors"
-                >
-                  {selectedBlueprint ? (
-                    <span className="flex items-center gap-1.5 font-semibold text-black">
-                      <FileText size={14} className="text-zinc-500" />
-                      {selectedBlueprint.title}
-                    </span>
-                  ) : (
-                    "No Blueprint"
-                  )}
-                  <ChevronUp size={14} className="opacity-50" />
-                </button>
-                {blueprintOpen && (
-                  <div className="absolute left-0 bottom-full mb-1 w-48 max-h-96 overflow-y-auto rounded-sm border border-zinc-200 bg-white p-1 shadow-lg z-50">
-                    <button 
-                      onClick={() => handleSelectBlueprint(null, "No Blueprint")}
-                      className={`flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm ${!selectedBlueprint ? "font-semibold text-black bg-zinc-50" : "font-medium text-black"}`}
-                    >
-                      No Blueprint
-                    </button>
-                    <div className="my-1 border-t border-zinc-100" />
-                    <button onClick={() => handleSelectBlueprint("bp_1", "Frontend Architecture Rewrite")} className={`flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm ${selectedBlueprint?.id === "bp_1" ? "font-semibold text-black bg-zinc-50" : "text-zinc-600"}`}>Frontend Architecture Rewrite</button>
-                    <button onClick={() => handleSelectBlueprint("bp_2", "Database Migration SOP")} className={`flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm ${selectedBlueprint?.id === "bp_2" ? "font-semibold text-black bg-zinc-50" : "text-zinc-600"}`}>Database Migration SOP</button>
-                    <button onClick={() => handleSelectBlueprint("bp_3", "Weekly Investor Update")} className={`flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm ${selectedBlueprint?.id === "bp_3" ? "font-semibold text-black bg-zinc-50" : "text-zinc-600"}`}>Weekly Investor Update</button>
-                    <div className="my-1 border-t border-zinc-100" />
-                    <button 
-                      onClick={() => { setBlueprintModalOpen(true); setBlueprintOpen(false); }}
-                      className="flex w-full items-center px-2 py-1.5 text-left text-xs hover:bg-zinc-100 rounded-sm font-medium text-black"
-                    >
-                      Browse Blueprints
-                    </button>
-                  </div>
-                )}
+          {/* Helper Mode explanation when there are no messages in the chat room yet */}
+          {chatMessages && chatMessages.length === 0 && !isProcessing && (
+            <div className="flex-1 flex items-center justify-center animate-fade-in relative z-10">
+              <div className="flex flex-col items-center text-center max-w-md px-6 select-none">
+                <h2 className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Chat Mode</h2>
+                <h3 className="text-sm font-bold text-text-primary tracking-tight mb-2 antialiased">
+                  Conversation with {chatAgent?.name ?? selectedAgent?.name}
+                </h3>
+                <p className="text-xs font-medium text-text-secondary/90 leading-relaxed max-w-xs">
+                  Brainstorm guidelines, refine templates, and explore playbooks. Planning conversations are completely safe and will not alter files.
+                </p>
               </div>
             </div>
-
-            {/* Right Side: Mic & Send */}
-            <div className="flex items-center gap-2">
-              <button className="flex h-8 w-8 items-center justify-center rounded-sm text-zinc-500 hover:bg-zinc-100 hover:text-black transition-colors">
-                <Mic size={18} />
-              </button>
-              <button 
-                onClick={handleSubmit}
-                className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors ${directive.trim() ? 'bg-black text-white hover:bg-zinc-800' : 'bg-zinc-800 text-white opacity-80'}`}
-              >
-                <Send size={14} strokeWidth={2.5} className="-ml-0.5 mt-0.5" />
-              </button>
-            </div>
-
-          </div>
+          )}
         </div>
+      )}
+
+      {/* Idle State */}
+      {view === "idle" && (
+        <div className="flex-1 flex flex-col items-center justify-center px-6 py-12 z-10 relative">
+          {mode === "chat" ? (
+            <div className="flex flex-col items-center text-center max-w-md px-6 animate-fade-in select-none">
+              <h2 className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Chat Mode</h2>
+              <h3 className="text-sm font-bold text-text-primary tracking-tight mb-2 antialiased">
+                Brainstorm with {selectedAgent?.name ?? "your Agent Swarm"}
+              </h3>
+              <p className="text-xs font-medium text-text-secondary/90 leading-relaxed max-w-xs">
+                Discuss objectives and plan guidelines. Conversational planning sessions will not modify files or make code changes.
+              </p>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center text-center max-w-md px-6 animate-fade-in select-none">
+              <h2 className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Task Mode</h2>
+              <h3 className="text-sm font-bold text-text-primary tracking-tight mb-2 antialiased">
+                Issue Swarm Directive
+              </h3>
+              <p className="text-xs font-medium text-text-secondary/90 leading-relaxed max-w-xs">
+                Deploy automated workflows. Your agent crew will self-assemble, draft a multi-step blueprint task matrix, and execute changes in the codebase.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Input Dock — floating always on top */}
+      <div className="px-6 py-6 bg-transparent relative z-20">
+        <InputDock
+          onChatSend={handleChatSend}
+          onTaskSend={handleTaskSend}
+          isProcessing={isProcessing}
+          mode={mode}
+          setMode={setMode}
+          selectedAgentId={selectedAgentId}
+          setSelectedAgentId={handleAgentChange}
+        />
       </div>
-
-      {/* Agent Selection Modal */}
-      {agentModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/20 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="w-full max-w-2xl bg-white shadow-2xl rounded-sm border border-zinc-200 flex flex-col max-h-[90vh]">
-            
-            <div className="flex flex-col border-b border-zinc-200">
-              <div className="flex items-center justify-between p-4">
-                <h2 className="text-lg font-semibold text-black">Select Agent</h2>
-                <button onClick={() => setAgentModalOpen(false)} className="text-zinc-400 hover:text-black transition-colors rounded-sm p-1 hover:bg-zinc-100">
-                  <X size={20} />
-                </button>
-              </div>
-              <div className="relative px-4 pb-4">
-                <Search size={16} className="absolute left-7 top-1/2 -translate-y-1/2 -mt-2 text-zinc-400" />
-                <input 
-                  type="text" 
-                  autoFocus
-                  placeholder="Search agents by name or role..." 
-                  value={agentSearch}
-                  onChange={(e) => setAgentSearch(e.target.value)}
-                  className="w-full rounded-sm border border-zinc-200 py-2.5 pl-10 pr-4 text-sm font-medium text-black focus:border-black focus:outline-none transition-colors bg-zinc-50 focus:bg-white"
-                />
-              </div>
-            </div>
-
-            <div className="p-4 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {agents === undefined ? (
-                Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} className="flex items-center gap-3 rounded-sm border border-zinc-100 p-3 animate-pulse">
-                    <div className="h-10 w-10 rounded-sm bg-zinc-200 shrink-0" />
-                    <div className="flex flex-col gap-1.5 flex-1">
-                      <div className="h-3 w-20 rounded-sm bg-zinc-200" />
-                      <div className="h-2.5 w-28 rounded-sm bg-zinc-100" />
-                    </div>
-                  </div>
-                ))
-              ) : (
-                agents
-                  .filter(a => 
-                    agentSearch.trim() === "" ||
-                    a.name.toLowerCase().includes(agentSearch.toLowerCase()) ||
-                    a.role.toLowerCase().includes(agentSearch.toLowerCase())
-                  )
-                  .map((agent) => (
-                    <AgentModalCard 
-                      key={agent._id}
-                      name={agent.name}
-                      role={agent.role}
-                      status={agent.status as "idle" | "working" | "offline"}
-                      onClick={() => { setSelectedAgent(agent as Agent); setAgentModalOpen(false); }}
-                    />
-                  ))
-              )}
-            </div>
-
-            <div className="border-t border-zinc-200 p-3 bg-zinc-50 flex items-center justify-center">
-              <Link href="/team" className="text-xs font-semibold text-zinc-500 hover:text-black hover:underline underline-offset-2 transition-all">
-                Manage Team Settings
-              </Link>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Blueprint Selection Modal */}
-      {blueprintModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/20 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="w-full max-w-2xl bg-white shadow-2xl rounded-sm border border-zinc-200 flex flex-col max-h-[90vh]">
-            
-            <div className="flex flex-col border-b border-zinc-200">
-              <div className="flex items-center justify-between p-4">
-                <h2 className="text-lg font-semibold text-black">Select Blueprint</h2>
-                <button onClick={() => setBlueprintModalOpen(false)} className="text-zinc-400 hover:text-black transition-colors rounded-sm p-1 hover:bg-zinc-100">
-                  <X size={20} />
-                </button>
-              </div>
-              <div className="relative px-4 pb-4">
-                <Search size={16} className="absolute left-7 top-1/2 -translate-y-1/2 -mt-2 text-zinc-400" />
-                <input 
-                  type="text" 
-                  autoFocus
-                  placeholder="Search blueprints by title or keyword..." 
-                  value={blueprintSearch}
-                  onChange={(e) => setBlueprintSearch(e.target.value)}
-                  className="w-full rounded-sm border border-zinc-200 py-2.5 pl-10 pr-4 text-sm font-medium text-black focus:border-black focus:outline-none transition-colors bg-zinc-50 focus:bg-white"
-                />
-              </div>
-            </div>
-
-            <div className="p-4 overflow-y-auto flex flex-col gap-2">
-              <BlueprintModalCard 
-                title="Frontend Architecture Rewrite" 
-                description="Strict instructions on enforcing Executive Minimalism across React components." 
-                isSelected={selectedBlueprint?.id === "bp_1"}
-                onClick={() => handleSelectBlueprint("bp_1", "Frontend Architecture Rewrite")} 
-              />
-              <BlueprintModalCard 
-                title="Database Migration SOP" 
-                description="Standard procedure for safely running schema changes via Convex." 
-                isSelected={selectedBlueprint?.id === "bp_2"}
-                onClick={() => handleSelectBlueprint("bp_2", "Database Migration SOP")} 
-              />
-              <BlueprintModalCard 
-                title="Weekly Investor Update" 
-                description="Format specifications and data sources required to compile the weekly metric report." 
-                isSelected={selectedBlueprint?.id === "bp_3"}
-                onClick={() => handleSelectBlueprint("bp_3", "Weekly Investor Update")} 
-              />
-            </div>
-
-            <div className="border-t border-zinc-200 p-3 bg-zinc-50 flex items-center justify-center">
-              <Link href="/intelligence?tab=blueprints" className="text-xs font-semibold text-zinc-500 hover:text-black hover:underline underline-offset-2 transition-all">
-                Manage Blueprints in Intelligence Hub
-              </Link>
-            </div>
-          </div>
-        </div>
-      )}
-
-
     </div>
-  );
-}
-
-function AgentModalCard({ name, role, status, onClick }: { name: string; role: string; status: "idle" | "working" | "offline"; onClick: () => void }) {
-  const statusColors = {
-    idle: "border-zinc-300",
-    working: "bg-emerald-500 animate-pulse border-emerald-500",
-    offline: "border-red-500 bg-red-500"
-  };
-
-  return (
-    <button 
-      onClick={onClick}
-      className="flex items-center gap-3 rounded-sm border border-zinc-200 bg-white p-3 hover:border-black transition-colors shadow-sm text-left group"
-    >
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-sm bg-black text-white text-lg font-bold">
-        {name[0]}
-      </div>
-      <div className="flex flex-col flex-1 min-w-0">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-semibold text-black truncate">{name}</span>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">{status}</span>
-            <span className={`h-2 w-2 rounded-full border ${status === 'idle' ? 'bg-transparent' : ''} ${statusColors[status]}`} />
-          </div>
-        </div>
-        <span className="text-xs text-zinc-500 font-mono truncate">{role}</span>
-      </div>
-    </button>
-  );
-}
-
-function BlueprintModalCard({ title, description, isSelected, onClick }: { title: string; description: string; isSelected?: boolean; onClick: () => void }) {
-  return (
-    <button 
-      onClick={onClick}
-      className={`flex flex-col gap-1.5 rounded-sm border bg-white p-3 transition-colors shadow-sm text-left group ${isSelected ? "border-black ring-1 ring-black/5" : "border-zinc-200 hover:border-black"}`}
-    >
-      <div className="flex items-center gap-2">
-        <FileText size={16} className={`${isSelected ? "text-black" : "text-zinc-400 group-hover:text-black"} transition-colors shrink-0`} />
-        <span className={`text-sm font-semibold truncate ${isSelected ? "text-black" : "text-zinc-800"}`}>{title}</span>
-      </div>
-      <p className="text-xs text-zinc-500 line-clamp-1 truncate w-full">{description}</p>
-    </button>
   );
 }
