@@ -10,7 +10,9 @@
     "builder": "node workers/builder/index.mjs",
     "builder:once": "node workers/builder/index.mjs --once",
     "worker:documents": "node workers/document/index.mjs",
-    "worker:documents:once": "node workers/document/index.mjs --once"
+    "worker:documents:once": "node workers/document/index.mjs --once",
+    "worker:design": "node workers/design/index.mjs",
+    "worker:design:once": "node workers/design/index.mjs --once"
   },
   "dependencies": {
     "@convex-dev/better-auth": "^0.10.13",

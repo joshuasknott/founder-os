@@ -2,7 +2,7 @@ import { mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
-function initialRunKind(objective: string): "code_preview" | "document" | "generic" {
+function initialRunKind(objective: string): "code_preview" | "document" | "design" | "generic" {
   const normalized = objective.toLowerCase();
   const buildSignals = [
     "build",
@@ -20,6 +20,23 @@ function initialRunKind(objective: string): "code_preview" | "document" | "gener
 
   if (buildSignals.some((signal) => normalized.includes(signal))) {
     return "code_preview";
+  }
+
+  const designSignals = [
+    "design",
+    "graphic",
+    "social post",
+    "social posts",
+    "brand asset",
+    "visual",
+    "image",
+    "presentation",
+    "slide",
+    "deck",
+  ];
+
+  if (designSignals.some((signal) => normalized.includes(signal))) {
+    return "design";
   }
 
   const documentSignals = [

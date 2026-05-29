@@ -178,6 +178,19 @@ export const listQueuedDocuments = query({
   },
 });
 
+export const listQueuedDesigns = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const queued = await ctx.db
+      .query("workRuns")
+      .withIndex("by_status", (q) => q.eq("status", "queued"))
+      .order("asc")
+      .take(args.limit ?? 10);
+
+    return queued.filter((run) => run.kind === "design");
+  },
+});
+
 export const appendUpdate = mutation({
   args: {
     runId: v.id("workRuns"),
@@ -242,6 +255,7 @@ export const markNeedsReviewWithResult = mutation({
   args: {
     runId: v.id("workRuns"),
     summary: v.optional(v.string()),
+    content: v.optional(v.string()),
     previewUrl: v.optional(v.string()),
     internalNotes: v.optional(v.string()),
     message: v.optional(v.string()),
@@ -267,6 +281,7 @@ export const markNeedsReviewWithResult = mutation({
 
     await saveRunOutputToLibrary(ctx, run, {
       summary: args.summary,
+      content: args.content,
       previewUrl: args.previewUrl,
     });
   },
