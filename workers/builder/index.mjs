@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { ConvexHttpClient } from "convex/browser";
 import { Codex } from "@openai/codex-sdk";
 import { api } from "../../convex/_generated/api.js";
@@ -44,6 +44,43 @@ function openAiKey() {
 
 function sleep(ms) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+}
+
+function execGit(args) {
+  return new Promise((resolveGit) => {
+    execFile("git", args, { cwd: WORKSPACE_DIR, windowsHide: true }, (error, stdout) => {
+      if (error) {
+        resolveGit(null);
+        return;
+      }
+      resolveGit(stdout.trim());
+    });
+  });
+}
+
+async function sourceMetadata() {
+  const [branch, commitSha, status] = await Promise.all([
+    execGit(["rev-parse", "--abbrev-ref", "HEAD"]),
+    execGit(["rev-parse", "HEAD"]),
+    execGit(["status", "--short"]),
+  ]);
+
+  return {
+    source: "local_git",
+    branch,
+    commitSha,
+    hasUncommittedChanges: Boolean(status),
+  };
+}
+
+function deploymentMetadata(previewUrl) {
+  return {
+    provider: process.env.BUILDER_PREVIEW_PROVIDER ?? "local",
+    projectId: process.env.VERCEL_PROJECT_ID ?? null,
+    teamId: process.env.VERCEL_TEAM_ID ?? null,
+    previewUrl,
+    publishRequiresApproval: true,
+  };
 }
 
 async function isPreviewReachable(url) {
@@ -120,6 +157,8 @@ async function simulateRun(client, run) {
     previewUrl: previewUrl ?? undefined,
     internalNotes: JSON.stringify({
       mode: "simulated",
+      source: await sourceMetadata(),
+      deployment: deploymentMetadata(previewUrl),
       previewUrl,
       previewAvailable: hasPreview,
     }),
@@ -249,6 +288,8 @@ async function runCodex(client, run, directive) {
     internalNotes: JSON.stringify({
       mode: "codex",
       threadId: thread.id,
+      source: await sourceMetadata(),
+      deployment: deploymentMetadata(previewUrl),
       changedFileCount: changedFiles.size,
       changedFiles: [...changedFiles],
       commandCount,
