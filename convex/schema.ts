@@ -317,7 +317,70 @@ export default defineSchema({
   }).index("by_created", ["createdAt"]),
 
   // ===========================================================================
-  // 5. THE TELEMETRY LAYER (Radical Observability — Glass Box)
+  // 5. THE WORK RUNS LAYER (Hidden Task Execution Tracking)
+  // ===========================================================================
+
+  workRuns: defineTable({
+    directiveId: v.id("directives"),
+    taskId: v.optional(v.id("tasks")),
+    kind: v.union(
+      v.literal("code_preview"),
+      v.literal("document"),
+      v.literal("design"),
+      v.literal("email"),
+      v.literal("schedule"),
+      v.literal("data_update"),
+      v.literal("generic")
+    ),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("working"),
+      v.literal("needs_review"),
+      v.literal("waiting_for_approval"),
+      v.literal("completed"),
+      v.literal("failed"),
+      v.literal("stopped")
+    ),
+    title: v.string(),
+    summary: v.optional(v.string()),
+    internalNotes: v.optional(v.string()),
+    previewUrl: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_directive", ["directiveId"])
+    .index("by_status", ["status"]),
+
+  workRunUpdates: defineTable({
+    runId: v.id("workRuns"),
+    message: v.string(),
+    tone: v.union(
+      v.literal("info"),
+      v.literal("progress"),
+      v.literal("review"),
+      v.literal("blocked"),
+      v.literal("complete"),
+      v.literal("error")
+    ),
+    createdAt: v.number(),
+  }).index("by_run", ["runId"]),
+
+  workArtifacts: defineTable({
+    runId: v.id("workRuns"),
+    directiveId: v.optional(v.id("directives")),
+    title: v.string(),
+    kind: v.string(),
+    summary: v.optional(v.string()),
+    url: v.optional(v.string()),
+    libraryDocumentId: v.optional(v.id("documents")),
+    metadata: v.optional(v.any()),
+    createdAt: v.number(),
+  })
+    .index("by_run", ["runId"])
+    .index("by_directive", ["directiveId"]),
+
+  // ===========================================================================
+  // 6. THE TELEMETRY LAYER (Radical Observability — Glass Box)
   // ===========================================================================
 
   observabilityLogs: defineTable({

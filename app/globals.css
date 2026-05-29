@@ -228,4 +228,70 @@
   .react-flow__controls-button:last-child {
     border-bottom: none !important;
   }
+
+  /* Animated flowing gradient border for prompt box */
+  @keyframes gradient-flow {
+    0% { --gradient-angle: 0deg; }
+    100% { --gradient-angle: 360deg; }
+  }
+
+  @property --gradient-angle {
+    syntax: "<angle>";
+    initial-value: 0deg;
+    inherits: false;
+  }
+
+  .prompt-glow-chat,
+  .prompt-glow-task {
+    position: relative;
+    overflow: visible;
+  }
+
+  .prompt-glow-chat::before,
+  .prompt-glow-task::before {
+    content: "";
+    position: absolute;
+    inset: -2px;
+    border-radius: calc(1.5rem + 2px);
+    padding: 2px;
+    -webkit-mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+    animation: gradient-flow 3s linear infinite;
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* Chat mode: Blue/indigo/cyan hues */
+  .prompt-glow-chat::before {
+    background: conic-gradient(
+      from var(--gradient-angle),
+      #e4e4e7,
+      #818cf8,
+      #6366f1,
+      #22d3ee,
+      #6366f1,
+      #818cf8,
+      #e4e4e7
+    );
+  }
+
+  /* Task mode: Purple/fuchsia/rose hues */
+  .prompt-glow-task::before {
+    background: conic-gradient(
+      from var(--gradient-angle),
+      #e4e4e7,
+      #c084fc,
+      #a855f7,
+      #db2777,
+      #a855f7,
+      #c084fc,
+      #e4e4e7
+    );
+  }
 }

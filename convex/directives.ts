@@ -1,5 +1,5 @@
 import { mutation, query } from "./_generated/server";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
 export const createDirective = mutation({
@@ -16,6 +16,23 @@ export const createDirective = mutation({
       status: "pending_spec",
     });
 
+    const now = Date.now();
+    const runId = await ctx.db.insert("workRuns", {
+      directiveId,
+      kind: "generic",
+      status: "queued",
+      title: args.title,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await ctx.db.insert("workRunUpdates", {
+      runId,
+      message: "I've added this to your workspace and I'm preparing the next step.",
+      tone: "info",
+      createdAt: now,
+    });
+
     if (args.sessionId) {
       await ctx.db.insert("chatMessages", {
         sessionId: args.sessionId,
@@ -27,7 +44,7 @@ export const createDirective = mutation({
         sessionId: args.sessionId,
         role: "assistant",
         agentName: "FounderOS",
-        content: `I created a task for this and will keep updates in this conversation.\n\nTask: ${args.title}`,
+        content: `I've added this to your workspace and I'm preparing the next step.`,
       });
 
       await ctx.db.patch(args.sessionId, { lastMessageAt: Date.now() });
@@ -41,12 +58,6 @@ export const createDirective = mutation({
         directive: args.title,
         transition: "created → pending_spec",
       },
-    });
-
-    await ctx.scheduler.runAfter(0, api.orchestrator.initializePlaybook, {
-      directiveId,
-      directiveTitle: args.title,
-      directiveObjective: args.objective,
     });
 
     return directiveId;
@@ -89,12 +100,6 @@ export const addClarification = mutation({
       await ctx.db.patch(sessionId, { lastMessageAt: Date.now() });
     }
 
-    await ctx.scheduler.runAfter(0, api.orchestrator.initializePlaybook, {
-      directiveId: args.directiveId,
-      directiveTitle: directive.title,
-      directiveObjective: updatedObjective,
-    });
-
     return args.directiveId;
   },
 });
@@ -132,6 +137,17 @@ export const stopDirective = mutation({
           status: "denied",
           principalSignature: `stopped:${Date.now()}`,
         });
+      }
+    }
+
+    const workRuns = await ctx.db
+      .query("workRuns")
+      .withIndex("by_directive", (q) => q.eq("directiveId", args.directiveId))
+      .collect();
+
+    for (const run of workRuns) {
+      if (run.status !== "completed" && run.status !== "stopped" && run.status !== "failed") {
+        await ctx.db.patch(run._id, { status: "stopped", updatedAt: Date.now() });
       }
     }
 
@@ -180,6 +196,31 @@ export const deleteDirective = mutation({
 
     for (const log of logs) {
       await ctx.db.delete(log._id);
+    }
+
+    const workRuns = await ctx.db
+      .query("workRuns")
+      .withIndex("by_directive", (q) => q.eq("directiveId", args.directiveId))
+      .collect();
+
+    for (const run of workRuns) {
+      const updates = await ctx.db
+        .query("workRunUpdates")
+        .withIndex("by_run", (q) => q.eq("runId", run._id))
+        .collect();
+      for (const update of updates) {
+        await ctx.db.delete(update._id);
+      }
+
+      const artifacts = await ctx.db
+        .query("workArtifacts")
+        .withIndex("by_run", (q) => q.eq("runId", run._id))
+        .collect();
+      for (const artifact of artifacts) {
+        await ctx.db.delete(artifact._id);
+      }
+
+      await ctx.db.delete(run._id);
     }
 
     await ctx.db.delete(args.directiveId);

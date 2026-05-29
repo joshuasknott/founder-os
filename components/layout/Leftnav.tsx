@@ -1,10 +1,13 @@
 "use client";
 
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { useMockUser } from "@/hooks/use-mock-user";
+import { authClient } from "@/lib/auth-client";
 import {
   CalendarClock,
   Home,
@@ -15,6 +18,7 @@ import {
   Plus,
   Settings,
   Trash2,
+  LogOut,
   type LucideIcon,
 } from "lucide-react";
 
@@ -91,6 +95,20 @@ export function Leftnav() {
   const deleteTask = useMutation(api.directives.deleteDirective);
   const deleteChat = useMutation(api.chat.deleteSession);
 
+  const { user, mounted } = useMockUser();
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (popoverRef.current && !popoverRef.current.contains(event.target as Node)) {
+        setPopoverOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   const recents: RecentItem[] | undefined =
     recentWork === undefined || recentChats === undefined
       ? undefined
@@ -122,7 +140,7 @@ export function Leftnav() {
       <div className="mb-3 px-4 lg:mb-7 lg:px-6">
         <Link href="/" className="block" aria-label="FounderOS Home">
           <h1 className="text-xl font-semibold tracking-tight text-text-primary">FounderOS</h1>
-          <p className="mt-0.5 text-xs font-medium text-text-muted">AI company workspace</p>
+          <p className="mt-0.5 text-xs font-medium text-text-muted">AI business workspace</p>
         </Link>
       </div>
 
@@ -215,8 +233,104 @@ export function Leftnav() {
         </div>
       </div>
 
-      <div className="mt-auto hidden border-t border-black/[0.05] pt-4 lg:block">
-        <NavItem href="/settings" icon={Settings} label="Settings" pathname={pathname} />
+      <div className="mt-auto hidden border-t border-black/[0.05] pt-4 lg:block px-3">
+        {mounted ? (
+          <div className="relative" ref={popoverRef}>
+            {/* Profile Popover */}
+            {popoverOpen && (
+              <div className="absolute bottom-full left-0 z-50 mb-2 w-56 rounded-xl border border-black/[0.06] bg-white p-3 shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-150">
+                <div className="px-1 py-1.5">
+                  <p className="text-[10px] text-text-muted uppercase tracking-wider font-bold">Account</p>
+                  <p className="mt-1 text-sm font-semibold text-text-primary truncate">
+                    {user.name}
+                  </p>
+                  <p className="text-[11px] text-text-muted truncate">
+                    {user.email}
+                  </p>
+                  <p className="text-[10px] text-text-muted uppercase tracking-wider font-bold mt-3">Business</p>
+                  <p className="mt-1 text-xs font-semibold text-text-primary truncate">
+                    {user.businessName || "FounderOS"}
+                  </p>
+                </div>
+                <div className="h-px bg-black/[0.06] my-2" />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setPopoverOpen(false);
+                    try {
+                      await authClient.signOut();
+                    } catch (e) {
+                      console.error("Sign out error", e);
+                    }
+                    window.location.reload();
+                  }}
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-semibold text-red-600 hover:bg-red-50 transition duration-150"
+                >
+                  <LogOut size={13} />
+                  <span>Sign out</span>
+                </button>
+              </div>
+            )}
+
+            {/* Profile & Settings row */}
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => setPopoverOpen(!popoverOpen)}
+                className="flex items-center gap-2.5 rounded-lg border border-transparent p-2 text-left transition hover:bg-black/[0.03] active:scale-[0.98] outline-none group min-w-0 flex-1 mr-2"
+                aria-label="User menu"
+              >
+                <div className="h-10 w-10 rounded-full border border-black/[0.08] overflow-hidden bg-zinc-100 flex items-center justify-center shrink-0">
+                  {user.avatarUrl ? (
+                    <img
+                      src={user.avatarUrl}
+                      alt={user.name}
+                      className="h-full w-full object-cover"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name || "U")}`;
+                      }}
+                    />
+                  ) : (
+                    <span className="text-sm font-bold text-text-muted">
+                      {(user.name || "U").charAt(0).toUpperCase()}
+                    </span>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-bold text-text-primary group-hover:text-black leading-tight">
+                    {user.name}
+                  </p>
+                  <p className="truncate text-xs text-text-muted mt-0.5 font-medium">
+                    {user.businessName || "FounderOS"}
+                  </p>
+                </div>
+              </button>
+
+              <Link
+                href="/settings"
+                className={`flex h-10 w-10 items-center justify-center rounded-lg border text-text-muted transition hover:bg-black/[0.035] hover:text-text-primary shrink-0 ${
+                  pathname === "/settings"
+                    ? "border-black/10 bg-white text-text-primary shadow-sm"
+                    : "border-transparent"
+                }`}
+                title="Settings"
+              >
+                <Settings size={17} />
+              </Link>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between p-2">
+            <div className="flex items-center gap-2.5 flex-1 mr-2">
+              <div className="h-10 w-10 rounded-full bg-black/[0.04] animate-pulse" />
+              <div className="flex-1 space-y-1">
+                <div className="h-3.5 w-20 bg-black/[0.04] rounded animate-pulse" />
+                <div className="h-2.5 w-16 bg-black/[0.04] rounded animate-pulse" />
+              </div>
+            </div>
+            <div className="h-10 w-10 rounded-lg bg-black/[0.04] animate-pulse" />
+          </div>
+        )}
       </div>
     </nav>
   );

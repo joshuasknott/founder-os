@@ -5,7 +5,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "FounderOS",
-  description: "AI company workspace for a founder and one business",
+  description: "AI business workspace for a founder and one business",
 };
 
 export default function RootLayout({

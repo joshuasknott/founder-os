@@ -33,6 +33,7 @@ import type * as system from "../system.js";
 import type * as telemetry from "../telemetry.js";
 import type * as tools from "../tools.js";
 import type * as users from "../users.js";
+import type * as workRuns from "../workRuns.js";
 import type * as workspaces from "../workspaces.js";
 
 import type {
@@ -67,6 +68,7 @@ declare const fullApi: ApiFromModules<{
   telemetry: typeof telemetry;
   tools: typeof tools;
   users: typeof users;
+  workRuns: typeof workRuns;
   workspaces: typeof workspaces;
 }>;
 

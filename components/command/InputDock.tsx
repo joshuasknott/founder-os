@@ -10,9 +10,37 @@ import {
   Zap,
   ChevronDown,
   Loader2,
+  Mic,
 } from "lucide-react";
 
 type Mode = "chat" | "task";
+
+type BrowserSpeechRecognitionEvent = {
+  results: ArrayLike<ArrayLike<{ transcript: string }>>;
+};
+
+type BrowserSpeechRecognitionErrorEvent = {
+  error: string;
+};
+
+type BrowserSpeechRecognition = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onstart: (() => void) | null;
+  onresult: ((event: BrowserSpeechRecognitionEvent) => void) | null;
+  onerror: ((event: BrowserSpeechRecognitionErrorEvent) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+
+type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
+
+type SpeechRecognitionWindow = Window & {
+  SpeechRecognition?: BrowserSpeechRecognitionConstructor;
+  webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor;
+};
 
 export function InputDock({
   onChatSend,
@@ -35,6 +63,69 @@ export function InputDock({
   const [showAgentPicker, setShowAgentPicker] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
+
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+    };
+  }, []);
+
+  const toggleListening = useCallback(() => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+
+    if (typeof window === "undefined") return;
+
+    const speechWindow = window as SpeechRecognitionWindow;
+    const SpeechRecognition =
+      speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      alert("Speech recognition is not supported in this browser.");
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = "en-US";
+
+      recognition.onstart = () => {
+        setIsListening(true);
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        if (transcript) {
+          setInput((prev) => prev + (prev ? " " : "") + transcript);
+        }
+      };
+
+      recognition.onerror = (event) => {
+        console.error("Speech recognition error:", event.error);
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err) {
+      console.error("Failed to start speech recognition:", err);
+      setIsListening(false);
+    }
+  }, [isListening, setInput]);
 
   const agents = useQuery(api.swarm.getAllAgents);
 
@@ -177,17 +268,32 @@ export function InputDock({
             className="flex-1 resize-none bg-transparent text-sm text-text-primary placeholder:text-text-muted/65 focus:outline-none py-2 px-1 max-h-[120px] leading-relaxed selection:bg-accent/15"
             disabled={isProcessing}
           />
-          <button
-            onClick={handleSend}
-            disabled={!input.trim() || isProcessing}
-            className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-accent text-white disabled:opacity-20 disabled:scale-100 disabled:cursor-not-allowed hover:bg-accent-hover hover:scale-[1.04] transition-all duration-200 active:scale-[0.96]"
-          >
-            {isProcessing ? (
-              <Loader2 size={13} className="animate-spin" />
-            ) : (
-              <Send size={13} />
-            )}
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={toggleListening}
+              disabled={isProcessing}
+              aria-label={isListening ? "Stop listening" : "Start listening"}
+              className={`w-8 h-8 flex items-center justify-center rounded-lg border transition-all duration-200 active:scale-[0.96] disabled:opacity-20 ${
+                isListening
+                  ? "bg-red-500 border-red-500 text-white animate-pulse"
+                  : "border-black/[0.04] bg-white text-text-muted hover:text-text-primary hover:bg-black/[0.02]"
+              }`}
+            >
+              <Mic size={13} />
+            </button>
+            <button
+              onClick={handleSend}
+              disabled={!input.trim() || isProcessing}
+              className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-accent text-white disabled:opacity-20 disabled:scale-100 disabled:cursor-not-allowed hover:bg-accent-hover hover:scale-[1.04] transition-all duration-200 active:scale-[0.96]"
+            >
+              {isProcessing ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <Send size={13} />
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Mode hint */}

@@ -39,7 +39,7 @@ export function LoginCard() {
           FounderOS
         </h2>
         <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-text-muted">
-          AI company workspace
+          AI business workspace
         </p>
       </div>
 

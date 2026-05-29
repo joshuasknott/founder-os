@@ -15,7 +15,6 @@ import {
   History,
   Library,
   Loader2,
-  MessageSquare,
   Presentation,
   Save,
   Search,
@@ -30,8 +29,7 @@ type LibrarySection =
   | "websites"
   | "presentations"
   | "tools"
-  | "history"
-  | "conversations";
+  | "history";
 
 type DocumentKind =
   | "document"
@@ -41,7 +39,6 @@ type DocumentKind =
   | "tool"
   | "presentation"
   | "task_output"
-  | "conversation"
   | "record"
   | "brief"
   | "plan";
@@ -68,22 +65,12 @@ type LibraryEntry =
   | {
       id: string;
       source: "document";
-      section: Exclude<LibrarySection, "all" | "conversations">;
+      section: Exclude<LibrarySection, "all">;
       title: string;
       summary: string;
       timestamp: number;
       href: string;
       record: LibraryDocument;
-    }
-  | {
-      id: string;
-      source: "conversation";
-      section: "conversations";
-      title: string;
-      summary: string;
-      timestamp: number;
-      href: string;
-      record: Doc<"chatSessions">;
     }
   | {
       id: string;
@@ -103,7 +90,6 @@ const typeTabs: Array<{ id: LibrarySection; label: string; icon: LucideIcon }> =
   { id: "presentations", label: "Presentations", icon: Presentation },
   { id: "tools", label: "Tools", icon: Wrench },
   { id: "history", label: "History", icon: History },
-  { id: "conversations", label: "Conversations", icon: MessageSquare },
 ];
 
 const legacySeedTitles = new Set([
@@ -152,7 +138,7 @@ function cleanDisplayText(value: string) {
     .trim();
 }
 
-function sectionForKind(kind?: string, hasTrace?: boolean): Exclude<LibrarySection, "all" | "conversations"> {
+function sectionForKind(kind?: string, hasTrace?: boolean): Exclude<LibrarySection, "all"> {
   if (kind === "website") return "websites";
   if (kind === "presentation") return "presentations";
   if (kind === "internal_tool" || kind === "tool") return "tools";
@@ -170,7 +156,6 @@ function SectionIcon({ section, className }: { section: LibrarySection; classNam
   if (section === "presentations") return <Presentation size={16} className={className} />;
   if (section === "tools") return <Wrench size={16} className={className} />;
   if (section === "history") return <History size={16} className={className} />;
-  if (section === "conversations") return <MessageSquare size={16} className={className} />;
   return <Library size={16} className={className} />;
 }
 
@@ -192,9 +177,7 @@ function statusLabel(status: string) {
   return labels[status] ?? status.replace(/_/g, " ");
 }
 
-function canStopTask(status: string) {
-  return !["completed", "aborted_by_principal"].includes(status);
-}
+
 
 export default function LibraryPage() {
   return (
@@ -211,13 +194,10 @@ function LibraryPageContent() {
 
   const overview = useQuery(api.commandCenter.getOverview);
   const documents = useQuery(api.artifacts.list, {}) as LibraryDocument[] | undefined;
-  const conversations = useQuery(api.chat.getSessions) as Doc<"chatSessions">[] | undefined;
   const createItem = useMutation(api.artifacts.create);
   const updateItem = useMutation(api.artifacts.update);
   const revertItem = useMutation(api.artifacts.revert);
   const deleteItem = useMutation(api.artifacts.remove);
-  const deleteConversation = useMutation(api.chat.deleteSession);
-  const stopTask = useMutation(api.directives.stopDirective);
   const deleteTask = useMutation(api.directives.deleteDirective);
 
   const [activeSection, setActiveSection] = useState<LibrarySection>("all");
@@ -243,7 +223,7 @@ function LibraryPageContent() {
   );
 
   const entries = useMemo<LibraryEntry[] | undefined>(() => {
-    if (!visibleDocuments || !conversations || !overview) return undefined;
+    if (!visibleDocuments || !overview) return undefined;
 
     const documentEntries: LibraryEntry[] = visibleDocuments.map((item) => {
       const section = sectionForKind(item.kind, Boolean(item.traceId));
@@ -259,32 +239,23 @@ function LibraryPageContent() {
       };
     });
 
-    const conversationEntries: LibraryEntry[] = conversations.map((item) => ({
-      id: `conversation:${item._id}`,
-      source: "conversation",
-      section: "conversations",
-      title: displayTitle(item.title),
-      summary: `Conversation updated ${formatTime(item.lastMessageAt)}`,
-      timestamp: item.lastMessageAt,
-      href: `/?session=${item._id}`,
-      record: item,
-    }));
+    const historyEntries: LibraryEntry[] = (overview.recentWork as WorkHistory[])
+      .filter((item) => item.status === "completed")
+      .map((item) => ({
+        id: `history:${item._id}`,
+        source: "history",
+        section: "history",
+        title: displayTitle(item.title),
+        summary: `${statusLabel(item.status)} - ${cleanDisplayText(item.objective)}`,
+        timestamp: item._creationTime,
+        href: item.sessionId ? `/?session=${item.sessionId}&task=${item._id}` : `/?task=${item._id}`,
+        record: item,
+      }));
 
-    const historyEntries: LibraryEntry[] = (overview.recentWork as WorkHistory[]).map((item) => ({
-      id: `history:${item._id}`,
-      source: "history",
-      section: "history",
-      title: displayTitle(item.title),
-      summary: `${statusLabel(item.status)} - ${cleanDisplayText(item.objective)}`,
-      timestamp: item._creationTime,
-      href: item.sessionId ? `/?session=${item.sessionId}&task=${item._id}` : `/?task=${item._id}`,
-      record: item,
-    }));
-
-    return [...documentEntries, ...conversationEntries, ...historyEntries].sort(
+    return [...documentEntries, ...historyEntries].sort(
       (a, b) => b.timestamp - a.timestamp,
     );
-  }, [conversations, overview, visibleDocuments]);
+  }, [overview, visibleDocuments]);
 
   const filteredEntries = useMemo(() => {
     if (!entries) return undefined;
@@ -513,13 +484,9 @@ function LibraryPageContent() {
                 <DirectoryRow
                   key={entry.id}
                   entry={entry}
-                  onDeleteConversation={async (sessionId) => {
-                    await deleteConversation({ sessionId });
-                    setStatus("Conversation deleted.");
-                  }}
-                  onStopTask={async (directiveId) => {
-                    await stopTask({ directiveId });
-                    setStatus("Task stopped.");
+                  onDeleteDocument={async (artifactId) => {
+                    await deleteItem({ artifactId });
+                    setStatus("Item deleted.");
                   }}
                   onDeleteTask={async (directiveId) => {
                     await deleteTask({ directiveId });
@@ -537,13 +504,11 @@ function LibraryPageContent() {
 
 function DirectoryRow({
   entry,
-  onDeleteConversation,
-  onStopTask,
+  onDeleteDocument,
   onDeleteTask,
 }: {
   entry: LibraryEntry;
-  onDeleteConversation: (sessionId: Id<"chatSessions">) => Promise<void>;
-  onStopTask: (directiveId: Id<"directives">) => Promise<void>;
+  onDeleteDocument: (artifactId: Id<"documents">) => Promise<void>;
   onDeleteTask: (directiveId: Id<"directives">) => Promise<void>;
 }) {
   return (
@@ -558,27 +523,18 @@ function DirectoryRow({
         </div>
       </Link>
       <span className="hidden shrink-0 text-xs text-text-muted md:block">{formatTime(entry.timestamp)}</span>
-      {entry.source === "conversation" && (
+      {entry.source === "document" && (
         <button
           type="button"
-          onClick={() => void onDeleteConversation(entry.record._id)}
+          onClick={() => void onDeleteDocument((entry.record as LibraryDocument)._id)}
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-muted hover:bg-red-50 hover:text-red-600"
-          aria-label="Delete conversation"
+          aria-label="Delete item"
         >
           <Trash2 size={14} />
         </button>
       )}
       {entry.source === "history" && (
         <div className="flex shrink-0 items-center gap-1">
-          {canStopTask(entry.record.status) && (
-            <button
-              type="button"
-              onClick={() => void onStopTask(entry.record._id)}
-              className="rounded-lg border border-black/[0.08] px-2.5 py-1.5 text-xs font-semibold text-text-secondary hover:text-text-primary"
-            >
-              Stop
-            </button>
-          )}
           <button
             type="button"
             onClick={() => void onDeleteTask(entry.record._id)}
