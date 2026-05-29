@@ -48,6 +48,19 @@ export const create = mutation({
   },
 });
 
+export const listQueuedCodePreview = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const queued = await ctx.db
+      .query("workRuns")
+      .withIndex("by_status", (q) => q.eq("status", "queued"))
+      .order("asc")
+      .take(args.limit ?? 10);
+
+    return queued.filter((run) => run.kind === "code_preview");
+  },
+});
+
 export const appendUpdate = mutation({
   args: {
     runId: v.id("workRuns"),
@@ -102,6 +115,33 @@ export const markNeedsReview = mutation({
     await ctx.db.insert("workRunUpdates", {
       runId: args.runId,
       message: `Ready for your review: ${run.title}`,
+      tone: "review",
+      createdAt: now,
+    });
+  },
+});
+
+export const markNeedsReviewWithResult = mutation({
+  args: {
+    runId: v.id("workRuns"),
+    summary: v.optional(v.string()),
+    previewUrl: v.optional(v.string()),
+    message: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (!run) throw new Error("Run not found.");
+
+    const now = Date.now();
+    await ctx.db.patch(args.runId, {
+      status: "needs_review",
+      summary: args.summary,
+      previewUrl: args.previewUrl,
+      updatedAt: now,
+    });
+    await ctx.db.insert("workRunUpdates", {
+      runId: args.runId,
+      message: args.message ?? `Ready for your review: ${run.title}`,
       tone: "review",
       createdAt: now,
     });

@@ -2,6 +2,27 @@ import { mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
+function initialRunKind(objective: string): "code_preview" | "generic" {
+  const normalized = objective.toLowerCase();
+  const buildSignals = [
+    "build",
+    "create a page",
+    "create page",
+    "landing page",
+    "website",
+    "app",
+    "internal tool",
+    "preview",
+    "code",
+    "fix",
+    "bug",
+  ];
+
+  return buildSignals.some((signal) => normalized.includes(signal))
+    ? "code_preview"
+    : "generic";
+}
+
 export const createDirective = mutation({
   args: {
     title: v.string(),
@@ -19,7 +40,7 @@ export const createDirective = mutation({
     const now = Date.now();
     const runId = await ctx.db.insert("workRuns", {
       directiveId,
-      kind: "generic",
+      kind: initialRunKind(args.objective),
       status: "queued",
       title: args.title,
       createdAt: now,

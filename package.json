@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "builder": "node workers/builder/index.mjs",
+    "builder:once": "node workers/builder/index.mjs --once"
   },
   "dependencies": {
     "@convex-dev/better-auth": "^0.10.13",
