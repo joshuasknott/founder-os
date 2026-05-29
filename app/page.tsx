@@ -20,6 +20,7 @@ import {
   PauseCircle,
   RefreshCcw,
   Sparkles,
+  Trash2,
   UserRound,
   type LucideIcon,
 } from "lucide-react";
@@ -155,6 +156,10 @@ function progressFor(work: WorkItem, tasks?: WorkTask[]) {
   return 8;
 }
 
+function canStopTask(status: string) {
+  return !["completed", "aborted_by_principal"].includes(status);
+}
+
 export default function HomePage() {
   return (
     <Suspense fallback={<HomeLoader />}>
@@ -182,6 +187,8 @@ function HomePageContent() {
   const sendMessage = useAction(api.chat.sendMessage);
   const createTask = useMutation(api.directives.createDirective);
   const addClarification = useMutation(api.directives.addClarification);
+  const stopTask = useMutation(api.directives.stopDirective);
+  const deleteTask = useMutation(api.directives.deleteDirective);
   const approve = useMutation(api.approvals.approve);
   const deny = useMutation(api.approvals.deny);
 
@@ -287,6 +294,17 @@ function HomePageContent() {
     setNotice(null);
     router.replace("/");
   }, [router]);
+
+  const handleStopTask = useCallback(async (directiveId: Id<"directives">) => {
+    await stopTask({ directiveId });
+    setNotice("Task stopped.");
+  }, [stopTask]);
+
+  const handleDeleteTask = useCallback(async (directiveId: Id<"directives">) => {
+    await deleteTask({ directiveId });
+    resetHome();
+    setNotice("Task deleted.");
+  }, [deleteTask, resetHome]);
 
   const handleSend = useCallback(async () => {
     const trimmed = input.trim();
@@ -463,6 +481,8 @@ function HomePageContent() {
             tasks={activeTasks}
             workers={(agents ?? []) as Worker[]}
             outputs={taskOutputs}
+            onStop={handleStopTask}
+            onDelete={handleDeleteTask}
           />
         ) : (
           <QuietEmptyState />
@@ -595,11 +615,15 @@ function WorkItemPanel({
   tasks,
   workers,
   outputs,
+  onStop,
+  onDelete,
 }: {
   work: WorkItem;
   tasks: WorkTask[] | undefined;
   workers: Worker[];
   outputs: LibraryOutput[] | undefined;
+  onStop: (directiveId: Id<"directives">) => Promise<void>;
+  onDelete: (directiveId: Id<"directives">) => Promise<void>;
 }) {
   const workerById = useMemo(
     () => new Map(workers.map((worker) => [worker._id, worker])),
@@ -623,9 +647,29 @@ function WorkItemPanel({
             {cleanDisplayText(work.objective)}
           </p>
         </div>
-        <span className="w-fit rounded-lg border border-black/[0.07] bg-surface px-3 py-1.5 text-xs font-semibold text-text-secondary">
-          {statusLabel(work.status)}
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="w-fit rounded-lg border border-black/[0.07] bg-surface px-3 py-1.5 text-xs font-semibold text-text-secondary">
+            {statusLabel(work.status)}
+          </span>
+          {canStopTask(work.status) && (
+            <button
+              type="button"
+              onClick={() => void onStop(work._id)}
+              className="flex h-9 items-center gap-1.5 rounded-lg border border-black/[0.08] px-2.5 text-xs font-semibold text-text-secondary hover:text-text-primary"
+            >
+              <PauseCircle size={14} />
+              Stop
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void onDelete(work._id)}
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-black/[0.08] text-text-muted hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+            aria-label="Delete task"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
       </div>
 
       <div className="mt-5">

@@ -77,6 +77,11 @@ export const getTaskById = internalQuery({
   handler: async (ctx, args) => await ctx.db.get(args.taskId),
 });
 
+export const getDirectiveById = internalQuery({
+  args: { directiveId: v.id("directives") },
+  handler: async (ctx, args) => await ctx.db.get(args.directiveId),
+});
+
 export const getAgentById = internalQuery({
   args: { agentId: v.id("agents") },
   handler: async (ctx, args) => await ctx.db.get(args.agentId),
@@ -108,6 +113,11 @@ export const createTaskBatch = internalMutation({
     ),
   },
   handler: async (ctx, args) => {
+    const directive = await ctx.db.get(args.directiveId);
+    if (!directive || directive.status === "aborted_by_principal" || directive.status === "completed") {
+      return [];
+    }
+
     await ctx.db.patch(args.directiveId, { status: "in_progress" });
 
     const taskIds: Id<"tasks">[] = [];
@@ -432,7 +442,7 @@ export const dispatchDirective = internalAction({
       tasks: resolvedTasks,
     });
 
-    for (let i = 0; i < resolvedTasks.length; i++) {
+    for (let i = 0; i < taskIds.length; i++) {
       if (resolvedTasks[i].dependsOnIndices.length === 0) {
         await ctx.scheduler.runAfter(0, internal.engine.executeTask, { taskId: taskIds[i] });
       }
@@ -443,6 +453,15 @@ export const dispatchDirective = internalAction({
 export const executeTask = internalAction({
   args: { taskId: v.id("tasks") },
   handler: async (ctx, args) => {
+    const currentTask = await ctx.runQuery(internal.engine.getTaskById, { taskId: args.taskId });
+    if (!currentTask) return;
+    if (["blocked", "completed", "failed", "shadow_pending"].includes(currentTask.status)) return;
+
+    const directive = await ctx.runQuery(internal.engine.getDirectiveById, {
+      directiveId: currentTask.directiveId,
+    });
+    if (!directive || directive.status === "aborted_by_principal" || directive.status === "completed") return;
+
     await ctx.runMutation(internal.engine.startTask, { taskId: args.taskId });
 
     const taskData = await ctx.runQuery(internal.engine.getTaskById, { taskId: args.taskId });

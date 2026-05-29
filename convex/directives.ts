@@ -99,6 +99,93 @@ export const addClarification = mutation({
   },
 });
 
+export const stopDirective = mutation({
+  args: { directiveId: v.id("directives") },
+  handler: async (ctx, args) => {
+    const directive = await ctx.db.get(args.directiveId);
+    if (!directive) throw new Error("Task not found.");
+    if (directive.status === "completed" || directive.status === "aborted_by_principal") {
+      return args.directiveId;
+    }
+
+    await ctx.db.patch(args.directiveId, { status: "aborted_by_principal" });
+
+    const tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_directive", (q) => q.eq("directiveId", args.directiveId))
+      .collect();
+
+    for (const task of tasks) {
+      if (task.status !== "completed" && task.status !== "failed") {
+        await ctx.db.patch(task._id, { status: "blocked" });
+      }
+    }
+
+    const approvals = await ctx.db
+      .query("approvalQueue")
+      .withIndex("by_directive", (q) => q.eq("directiveId", args.directiveId))
+      .collect();
+
+    for (const approval of approvals) {
+      if (approval.status === "pending" || approval.status === "shadow_pending") {
+        await ctx.db.patch(approval._id, {
+          status: "denied",
+          principalSignature: `stopped:${Date.now()}`,
+        });
+      }
+    }
+
+    if (directive.sessionId) {
+      await ctx.db.insert("chatMessages", {
+        sessionId: directive.sessionId,
+        role: "assistant",
+        agentName: "FounderOS",
+        content: `Stopped: ${directive.title}`,
+      });
+      await ctx.db.patch(directive.sessionId, { lastMessageAt: Date.now() });
+    }
+
+    return args.directiveId;
+  },
+});
+
+export const deleteDirective = mutation({
+  args: { directiveId: v.id("directives") },
+  handler: async (ctx, args) => {
+    const directive = await ctx.db.get(args.directiveId);
+    if (!directive) throw new Error("Task not found.");
+
+    const tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_directive", (q) => q.eq("directiveId", args.directiveId))
+      .collect();
+
+    for (const task of tasks) {
+      await ctx.db.delete(task._id);
+    }
+
+    const approvals = await ctx.db
+      .query("approvalQueue")
+      .withIndex("by_directive", (q) => q.eq("directiveId", args.directiveId))
+      .collect();
+
+    for (const approval of approvals) {
+      await ctx.db.delete(approval._id);
+    }
+
+    const logs = await ctx.db
+      .query("observabilityLogs")
+      .withIndex("by_traceId", (q) => q.eq("traceId", args.directiveId))
+      .collect();
+
+    for (const log of logs) {
+      await ctx.db.delete(log._id);
+    }
+
+    await ctx.db.delete(args.directiveId);
+  },
+});
+
 export const getActiveDirective = query({
   handler: async (ctx) => {
     return await ctx.db

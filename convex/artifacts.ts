@@ -196,6 +196,25 @@ export const update = mutation({
   },
 });
 
+export const remove = mutation({
+  args: { artifactId: v.id("documents") },
+  handler: async (ctx, args) => {
+    const doc = await ctx.db.get(args.artifactId);
+    if (!doc) throw new Error("Library item not found.");
+
+    const versions = await ctx.db
+      .query("documentVersions")
+      .withIndex("by_document", (q) => q.eq("documentId", args.artifactId))
+      .collect();
+
+    for (const version of versions) {
+      await ctx.db.delete(version._id);
+    }
+
+    await ctx.db.delete(args.artifactId);
+  },
+});
+
 export const revert = mutation({
   args: {
     artifactId: v.id("documents"),

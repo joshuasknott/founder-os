@@ -2,16 +2,19 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import {
+  CalendarClock,
   Home,
   Library,
   ListTodo,
   MessageSquare,
+  PauseCircle,
   Plus,
   Settings,
+  Trash2,
   type LucideIcon,
 } from "lucide-react";
 
@@ -64,6 +67,10 @@ function statusLabel(status?: string) {
   return labels[status] ?? status.replace(/_/g, " ");
 }
 
+function canStopTask(status?: string) {
+  return Boolean(status && !["completed", "aborted_by_principal"].includes(status));
+}
+
 function displayTitle(title: string) {
   return title
     .replace(/^\[[^\]]+\]\s*/, "")
@@ -80,6 +87,9 @@ export function Leftnav() {
   const pathname = usePathname();
   const recentWork = useQuery(api.directives.getRecentDirectives);
   const recentChats = useQuery(api.chat.getSessions);
+  const stopTask = useMutation(api.directives.stopDirective);
+  const deleteTask = useMutation(api.directives.deleteDirective);
+  const deleteChat = useMutation(api.chat.deleteSession);
 
   const recents: RecentItem[] | undefined =
     recentWork === undefined || recentChats === undefined
@@ -119,6 +129,7 @@ export function Leftnav() {
       <div className="flex flex-wrap gap-1 px-2 lg:flex-col lg:flex-nowrap lg:px-0">
         <NavItem href="/" icon={Home} label="Home" pathname={pathname} />
         <NavItem href="/library" icon={Library} label="Library" pathname={pathname} />
+        <NavItem href="/schedules" icon={CalendarClock} label="Schedules" pathname={pathname} />
         <div className="lg:hidden">
           <NavItem href="/settings" icon={Settings} label="Settings" pathname={pathname} />
         </div>
@@ -152,12 +163,11 @@ export function Leftnav() {
             recents.map((item) => {
               const Icon = item.kind === "Chat" ? MessageSquare : ListTodo;
               return (
-                <Link
+                <div
                   key={`${item.kind}-${item.id}`}
-                  href={item.href}
-                  className="group rounded-lg border border-transparent px-3 py-2 hover:border-black/[0.05] hover:bg-black/[0.025]"
+                  className="group flex items-start gap-1 rounded-lg border border-transparent px-3 py-2 hover:border-black/[0.05] hover:bg-black/[0.025]"
                 >
-                  <div className="flex items-start gap-2">
+                  <Link href={item.href} className="flex min-w-0 flex-1 items-start gap-2">
                     <Icon
                       size={14}
                       className="mt-0.5 shrink-0 text-text-muted group-hover:text-text-primary"
@@ -171,8 +181,34 @@ export function Leftnav() {
                         {item.status ? ` - ${statusLabel(item.status)}` : ""}
                       </p>
                     </div>
+                  </Link>
+                  <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
+                    {item.kind === "Task" && canStopTask(item.status) && (
+                      <button
+                        type="button"
+                        onClick={() => void stopTask({ directiveId: item.id as Id<"directives"> })}
+                        className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted hover:bg-black/[0.05] hover:text-text-primary"
+                        aria-label="Stop task"
+                      >
+                        <PauseCircle size={13} />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (item.kind === "Chat") {
+                          void deleteChat({ sessionId: item.id as Id<"chatSessions"> });
+                        } else {
+                          void deleteTask({ directiveId: item.id as Id<"directives"> });
+                        }
+                      }}
+                      className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted hover:bg-red-50 hover:text-red-600"
+                      aria-label={item.kind === "Chat" ? "Delete chat" : "Delete task"}
+                    >
+                      <Trash2 size={13} />
+                    </button>
                   </div>
-                </Link>
+                </div>
               );
             })
           )}

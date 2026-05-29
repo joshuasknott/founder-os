@@ -148,6 +148,25 @@ export const getRecentHistory = internalQuery({
   },
 });
 
+export const deleteSession = mutation({
+  args: { sessionId: v.id("chatSessions") },
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) throw new Error("Session not found.");
+
+    const messages = await ctx.db
+      .query("chatMessages")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .collect();
+
+    for (const message of messages) {
+      await ctx.db.delete(message._id);
+    }
+
+    await ctx.db.delete(args.sessionId);
+  },
+});
+
 export const updateSessionTimestamp = internalMutation({
   args: { sessionId: v.id("chatSessions") },
   handler: async (ctx, args) => {

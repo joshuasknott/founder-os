@@ -46,6 +46,15 @@ export const create = mutation({
   },
 });
 
+export const remove = mutation({
+  args: { automationId: v.id("scheduleItems") },
+  handler: async (ctx, args) => {
+    const item = await ctx.db.get(args.automationId);
+    if (!item) throw new Error("Schedule not found.");
+    await ctx.db.delete(args.automationId);
+  },
+});
+
 export const pause = mutation({
   args: { automationId: v.id("scheduleItems") },
   handler: async (ctx, args) => {
@@ -55,4 +64,3 @@ export const pause = mutation({
     });
   },
 });
-
