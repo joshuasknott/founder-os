@@ -126,6 +126,7 @@ export const markNeedsReviewWithResult = mutation({
     runId: v.id("workRuns"),
     summary: v.optional(v.string()),
     previewUrl: v.optional(v.string()),
+    internalNotes: v.optional(v.string()),
     message: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -137,6 +138,7 @@ export const markNeedsReviewWithResult = mutation({
       status: "needs_review",
       summary: args.summary,
       previewUrl: args.previewUrl,
+      internalNotes: args.internalNotes,
       updatedAt: now,
     });
     await ctx.db.insert("workRunUpdates", {
