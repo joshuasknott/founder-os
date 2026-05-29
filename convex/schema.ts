@@ -3,14 +3,75 @@ import { v } from "convex/values";
 
 export default defineSchema({
   // ===========================================================================
+  // 0. THE BUSINESS SHELL (Workspace -> internal areas -> Library -> Versions)
+  // ===========================================================================
+
+  workspaces: defineTable({
+    name: v.string(),
+    iconSlug: v.string(),
+    createdAt: v.number(),
+    dailySpendLimit: v.optional(v.number()),
+    alertThreshold: v.optional(v.number()),
+  }),
+
+  api_keys: defineTable({
+    workspaceId: v.id("workspaces"),
+    name: v.string(),
+    value: v.string(),
+    createdAt: v.optional(v.number()),
+  }).index("by_workspace", ["workspaceId"]),
+
+  users: defineTable({
+    externalId: v.string(),
+    workspaceId: v.id("workspaces"),
+    name: v.string(),
+    email: v.string(),
+    role: v.union(
+      v.literal("Owner"),
+      v.literal("Contributor"),
+      v.literal("Viewer")
+    ),
+    status: v.union(v.literal("online"), v.literal("offline")),
+    avatarUrl: v.optional(v.string()),
+    joinedAt: v.number(),
+  }).index("by_workspace", ["workspaceId"]),
+
+  knowledge_nodes: defineTable({
+    workspaceId: v.id("workspaces"),
+    parentId: v.optional(v.id("knowledge_nodes")),
+    type: v.union(
+      v.literal("Folder"),
+      v.literal("File"),
+      v.literal("Blueprint")
+    ),
+    title: v.string(),
+    content: v.optional(v.string()),
+    metadata: v.optional(v.any()),
+  }).index("by_workspace", ["workspaceId"]),
+
+  event_ledger: defineTable({
+    workspaceId: v.id("workspaces"),
+    actorType: v.union(v.literal("Human"), v.literal("Agent")),
+    actorId: v.string(),
+    action: v.string(),
+    displayLabel: v.string(),
+    targetResource: v.optional(v.string()),
+    timestamp: v.number(),
+  })
+    .index("by_workspace", ["workspaceId"])
+    .index("by_timestamp", ["timestamp"]),
+
+  // ===========================================================================
   // 1. THE WORKFORCE LAYER (Lean Workforce — 5 Core Agents)
   // ===========================================================================
 
   departments: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
     name: v.string(),
     icon: v.string(),
     description: v.string(),
-  }),
+    objective: v.optional(v.string()),
+  }).index("by_workspace", ["workspaceId"]),
 
   agents: defineTable({
     name: v.string(),
@@ -60,6 +121,7 @@ export default defineSchema({
   directives: defineTable({
     title: v.string(),
     objective: v.string(),
+    sessionId: v.optional(v.id("chatSessions")),
     status: v.union(
       v.literal("pending_spec"),
       v.literal("needs_clarification"),
@@ -134,10 +196,32 @@ export default defineSchema({
   // ===========================================================================
 
   documents: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
     title: v.string(),
     departmentTag: v.id("departments"),
     author: v.string(),
     traceId: v.optional(v.id("directives")),
+    kind: v.optional(
+      v.union(
+        v.literal("document"),
+        v.literal("file"),
+        v.literal("website"),
+        v.literal("internal_tool"),
+        v.literal("tool"),
+        v.literal("presentation"),
+        v.literal("automation"),
+        v.literal("task_output"),
+        v.literal("conversation"),
+        v.literal("record"),
+        v.literal("brief"),
+        v.literal("plan")
+      )
+    ),
+    summary: v.optional(v.string()),
+    currentVersionId: v.optional(v.id("documentVersions")),
+    versionCount: v.optional(v.number()),
+    createdAt: v.optional(v.number()),
+    updatedAt: v.optional(v.number()),
     status: v.union(
       v.literal("draft"),
       v.literal("under_review"),
@@ -147,24 +231,97 @@ export default defineSchema({
     ),
     isArchived: v.boolean(),
     deprecatedAt: v.optional(v.number()),
-  }),
+  })
+    .index("by_department", ["departmentTag"])
+    .index("by_workspace", ["workspaceId"]),
 
   documentVersions: defineTable({
     documentId: v.id("documents"),
     content: v.string(),
+    versionNumber: v.optional(v.number()),
+    createdAt: v.optional(v.number()),
+    createdBy: v.optional(v.string()),
+    summary: v.optional(v.string()),
     embedding: v.optional(v.array(v.float64())),
-  }).vectorIndex("by_embedding", {
-    vectorField: "embedding",
-    dimensions: 768,
-    filterFields: ["documentId"],
-  }),
+  })
+    .index("by_document", ["documentId"])
+    .vectorIndex("by_embedding", {
+      vectorField: "embedding",
+      dimensions: 768,
+      filterFields: ["documentId"],
+    }),
+
+  projects: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
+    departmentId: v.optional(v.id("departments")),
+    name: v.string(),
+    outcome: v.string(),
+    status: v.union(
+      v.literal("planned"),
+      v.literal("active"),
+      v.literal("waiting"),
+      v.literal("complete")
+    ),
+    dueAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_status", ["status"]),
+
+  scheduleItems: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
+    departmentId: v.optional(v.id("departments")),
+    projectId: v.optional(v.id("projects")),
+    title: v.string(),
+    kind: v.union(
+      v.literal("follow_up"),
+      v.literal("review"),
+      v.literal("deadline"),
+      v.literal("meeting"),
+      v.literal("automation")
+    ),
+    status: v.union(
+      v.literal("scheduled"),
+      v.literal("done"),
+      v.literal("skipped")
+    ),
+    startAt: v.number(),
+    endAt: v.optional(v.number()),
+    prompt: v.optional(v.string()),
+    cadence: v.optional(
+      v.union(
+        v.literal("once"),
+        v.literal("daily"),
+        v.literal("weekdays"),
+        v.literal("weekly")
+      )
+    ),
+    createdAt: v.number(),
+    updatedAt: v.optional(v.number()),
+  }).index("by_start", ["startAt"]),
+
+  buildActivities: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
+    source: v.string(),
+    title: v.string(),
+    summary: v.string(),
+    status: v.union(
+      v.literal("received"),
+      v.literal("building"),
+      v.literal("ready"),
+      v.literal("failed")
+    ),
+    branch: v.optional(v.string()),
+    commitSha: v.optional(v.string()),
+    previewUrl: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_created", ["createdAt"]),
 
   // ===========================================================================
   // 5. THE TELEMETRY LAYER (Radical Observability — Glass Box)
   // ===========================================================================
 
   observabilityLogs: defineTable({
-    traceId: v.id("directives"),
+    traceId: v.union(v.id("directives"), v.string()),
     actor: v.string(),
     eventType: v.union(
       v.literal("STATE_TRANSITION"),

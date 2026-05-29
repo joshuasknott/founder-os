@@ -6,13 +6,32 @@ export const createDirective = mutation({
   args: {
     title: v.string(),
     objective: v.string(),
+    sessionId: v.optional(v.id("chatSessions")),
   },
   handler: async (ctx, args) => {
     const directiveId = await ctx.db.insert("directives", {
       title: args.title,
       objective: args.objective,
+      sessionId: args.sessionId,
       status: "pending_spec",
     });
+
+    if (args.sessionId) {
+      await ctx.db.insert("chatMessages", {
+        sessionId: args.sessionId,
+        role: "user",
+        content: args.objective,
+      });
+
+      await ctx.db.insert("chatMessages", {
+        sessionId: args.sessionId,
+        role: "assistant",
+        agentName: "FounderOS",
+        content: `I created a task for this and will keep updates in this conversation.\n\nTask: ${args.title}`,
+      });
+
+      await ctx.db.patch(args.sessionId, { lastMessageAt: Date.now() });
+    }
 
     await ctx.scheduler.runAfter(0, internal.telemetry.logEvent, {
       traceId: directiveId,
@@ -31,6 +50,52 @@ export const createDirective = mutation({
     });
 
     return directiveId;
+  },
+});
+
+export const addClarification = mutation({
+  args: {
+    directiveId: v.id("directives"),
+    content: v.string(),
+    sessionId: v.optional(v.id("chatSessions")),
+  },
+  handler: async (ctx, args) => {
+    const directive = await ctx.db.get(args.directiveId);
+    if (!directive) throw new Error("Task not found.");
+
+    const sessionId = args.sessionId ?? directive.sessionId;
+    const updatedObjective = `${directive.objective}\n\nFounder clarification: ${args.content}`;
+
+    await ctx.db.patch(args.directiveId, {
+      objective: updatedObjective,
+      status: "pending_spec",
+      ...(sessionId ? { sessionId } : {}),
+    });
+
+    if (sessionId) {
+      await ctx.db.insert("chatMessages", {
+        sessionId,
+        role: "user",
+        content: args.content,
+      });
+
+      await ctx.db.insert("chatMessages", {
+        sessionId,
+        role: "assistant",
+        agentName: "FounderOS",
+        content: "Thanks. I added that answer to the task and will continue from here.",
+      });
+
+      await ctx.db.patch(sessionId, { lastMessageAt: Date.now() });
+    }
+
+    await ctx.scheduler.runAfter(0, api.orchestrator.initializePlaybook, {
+      directiveId: args.directiveId,
+      directiveTitle: directive.title,
+      directiveObjective: updatedObjective,
+    });
+
+    return args.directiveId;
   },
 });
 
