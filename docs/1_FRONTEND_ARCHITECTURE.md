@@ -2,18 +2,21 @@
 
 ## Overview
 
-FounderOS is a calm AI company workspace for one founder and one business. The UI should feel like a practical app for thinking, delegating work, and reviewing finished business outputs. It must not feel like a marketing site, demo dashboard, project manager, or developer console.
+FounderOS is a calm AI company workspace for one founder and one business. The UI should feel like a practical app for thinking, delegating work, reviewing outcomes, scheduling recurring work, and using company knowledge. It must not feel like a marketing site, demo dashboard, project manager, file cabinet, or developer console.
 
 The frontend uses Next.js App Router, Convex queries/mutations/actions, and Tailwind CSS. The interface should hide backend planning details while preserving the underlying system capability.
 
 ## Design Principles
 
 - **App-like, not promotional**: no landing-page hero, metrics wall, feature catalogue, or fake activity panels.
-- **Prompt-first**: the Home screen is centered on one dominant floating prompt box.
-- **Plain language**: user-facing copy says `Library`, `Chat`, `Task`, `workspace`, `review`, and `saved outputs`.
-- **Avoid user-facing internal terms**: do not show artifacts, operators, routing, autonomy level, command center, directives, or projects.
+- **Command-first**: Home is the universal AI command surface for asking, deciding, finding, and starting work.
+- **Work as task flow**: Work is organized around Active, Review, and Completed.
+- **Knowledge, not folders**: Library is queryable business knowledge, not a folder system the founder has to maintain.
+- **Plain language**: user-facing copy says `Home`, `Work`, `Library`, `Schedules`, `Settings`, `review`, and `saved outputs`.
+- **Avoid user-facing internal terms**: do not show artifacts, operators, routing, autonomy level, command center, directives, graph nodes, embeddings, or projects.
 - **Honest data**: show live Convex data only. Starter examples may appear as prompt suggestions, not as seeded records pretending to be real.
 - **Calm utility**: restrained surfaces, readable typography, stable spacing, and no decorative visual bloat.
+- **Do not overbuild early**: introduce the five-surface direction in navigation, copy, and data behavior before adding heavy new UI.
 
 ## App Shell
 
@@ -25,40 +28,56 @@ The root layout is a two-zone app:
 Primary navigation is intentionally simple:
 
 1. **Home**
-2. **Library**
-3. **Settings**
+2. **Work**
+3. **Library**
+4. **Schedules**
+5. **Settings**
 
 Workspace switching is hidden for now. FounderOS assumes one founder and one business. Internal workspace support may remain in the backend, but the primary UI should not ask the founder to choose between workspaces.
 
-The left sidebar also contains recent chats and tasks. Recent conversations belong here, not on the Home canvas.
+The left sidebar may include recent conversations, open reviews, and pinned intelligent views. These should support quick return to important context without turning Home into an activity feed.
 
 ## Home
 
-Home is the main loop:
+Home is the universal AI command surface. It is the place to ask, decide, search, shape work, and start a task without first choosing a tool or department.
 
-1. The founder types into the floating prompt.
-2. The founder chooses `Chat` or `Task` inside the prompt box.
-3. Chat keeps the conversation read-only and helps with thinking, planning, decisions, and context.
-4. Task creates a visible work item, shows progress, and records finished outputs in Library.
+The main loop is:
 
-New sessions default to Chat. Chat must not create business outputs, schedule work, publish, send messages, or change data. If the founder asks for work while in Chat, the assistant should help shape a task.
+1. The founder types into the prompt.
+2. FounderOS answers, asks a clarifying question, finds knowledge, or proposes work.
+3. If work starts, FounderOS creates or links a visible Work item.
+4. Work progress and review needs are shown in Work, with concise feedback available from Home when relevant.
+5. Finished outputs and useful decisions are saved or linked in Library.
 
-Task mode always creates a visible work item. Clarifying questions and answers stay in the same conversation thread. Completed task summaries are also written back into that conversation, and generated outputs are linked from the task panel to Library.
+Conversation remains read-only until the founder chooses or confirms a work action. FounderOS should not create outputs, schedule recurring work, publish, send messages, or change business records without making that action clear.
+
+Clarifying questions and answers stay in context. Completed task summaries are written back to the conversation and linked from the Work item.
 
 Home should only show:
 
 - the prompt box
 - useful prompt suggestions
 - conversation messages when a conversation exists
-- active task/result feedback when relevant
-- approval requests only when one is actually pending
+- concise active work or result feedback when relevant
+- review requests only when one actually needs the founder
+- pinned intelligent views when they help the founder return to important work or knowledge
 - quiet empty states
 
-Home should not show department grids, project cards, schedule cards, build activity feeds, permanent approval blocks, marketing copy, preview promos, or fake panels.
+Home should not show department grids, project cards, folder trees, build activity feeds, permanent approval blocks, marketing copy, preview promos, or fake panels.
 
-## Active Task View
+## Work
 
-Task progress should be understandable to a non-technical founder:
+Work is the founder-facing task flow. It should be organized around three views:
+
+- **Active**: work currently being prepared or worked on.
+- **Review**: work waiting for the founder's answer, approval, or decision.
+- **Completed**: finished work with outcomes and links to saved knowledge.
+
+These views are not project-management columns. They are a calm way to understand what FounderOS is doing and what the founder needs to touch.
+
+## Work Item View
+
+Work progress should be understandable to a non-technical founder:
 
 - use named professional AI workers with avatars/initials and roles
 - show steps as a simple timeline/list
@@ -70,36 +89,78 @@ Do not expose provider choices, raw logs, internal planning, tool calls, model t
 
 ## Library
 
-Library is the business context layer. FounderOS should create better outputs because it can reuse saved documents, assets, websites, presentations, tools, automations, task outputs, uploaded files, conversations, history, and useful records.
+Library is queryable business knowledge. FounderOS should create better outputs because it can reuse saved documents, assets, websites, presentations, tools, task outputs, uploaded files, conversations, decisions, history, and useful records.
 
 The route is `/library`. The legacy `/context` route redirects to `/library`.
 
-Library is organized by type first:
+Library should prioritize search, asking, filtering, summarizing, and related context. It is not a folder system. Views may group by type when helpful:
 
 - Documents
 - Websites
 - Presentations
 - Tools
-- Automations
+- Task outputs
 - History
 - Conversations
+- Records
 
-No asset type should dominate the page. Internal areas may exist as quiet metadata or secondary filters, but the main flow should not ask the founder to manage departments.
+No asset type should dominate the page. Internal areas may exist as quiet metadata or secondary filters, but the main flow should not ask the founder to manage departments, folders, or graph links.
 
-Library items should open into a selected item view. Documents and saved outputs support manual editing by creating a new version. Version history belongs only inside the selected item view, not as a global Library screen. Completed tasks and conversations should be reachable for continuity without turning the Library list into an activity feed.
+Library items should open into a selected item view. The item view should show a clear summary, source, related work, and versions when useful. Documents and saved outputs support manual editing by creating a new version. Version history belongs only inside the selected item view, not as a global Library screen.
 
-Automations stay plain-language. A request such as "send me priorities every morning at 6am" should appear as a manageable Library automation, without cron syntax or technical schedule controls.
+Completed tasks, conversations, schedules, and decisions should be reachable for continuity without turning Library into an activity feed.
+
+## Schedules
+
+Schedules are recurring work. The route is `/schedules`.
+
+Schedules should show:
+
+- the plain-language request
+- when it repeats
+- where results will appear
+- whether review is needed before an external action
+- pause, edit, and archive controls
+
+Schedules should not expose cron syntax, worker routing, connector names, or technical schedule controls.
+
+## Contextual AI Sidebar
+
+The AI sidebar is page-aware help. It should understand the current page, selected item, active work item, or schedule and offer actions that fit that context.
+
+Expected behavior:
+
+- on Home, clarify the ask, search knowledge, or turn the conversation into work
+- in Work, summarize status, explain blockers, draft founder replies, and help with review decisions
+- in Library, answer from the selected item, compare related knowledge, and explain sources
+- in Schedules, explain cadence and help change or pause recurring work
+- in Settings, explain rules and connection effects in plain language
+
+The sidebar must remain founder-facing. It should not show hidden graph mechanics, raw orchestration, model choices, or internal state.
+
+## Pinned Intelligent Views
+
+Pinned views are saved business lenses over Work and Library, not folders. Examples include Open Reviews, This Week's Priorities, Recent Customer Signals, and Launch Materials.
+
+Pinned views should update from live data and can explain why an item is included. They should be small, useful entry points in navigation or Home, not a new dashboard layer.
+
+## Hidden Context Graph
+
+The frontend can benefit from a hidden context graph that relates conversations, work, outputs, schedules, decisions, people, and records. The founder-facing UI should only reveal useful context: related items, sources, and short reasons.
+
+Do not expose graph nodes, embeddings, retrieval scores, or relationship maintenance as user work.
 
 ## Settings
 
 Settings contains practical controls:
 
-- AI keys
+- account details
 - connected services
 - spending limits
 - review rules
+- standing preferences
 
-Settings copy should stay plain-language. It should not expose provider routing, internal worker controls, autonomy settings, or technical schedule rules.
+Settings copy should stay plain-language. It should not expose provider routing, internal worker controls, autonomy settings, graph controls, or technical schedule rules.
 
 ## Data Flow
 

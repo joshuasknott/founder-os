@@ -1,16 +1,21 @@
 # FounderOS Backend Schema
 
-FounderOS uses Convex for live workspace data. Some table names preserve earlier internal architecture, but user-facing UI should translate them into the simpler product model: Home, chats, tasks, Library, and settings.
+FounderOS uses Convex for live workspace data. Some table names preserve earlier internal architecture, but user-facing UI should translate them into the founder-facing product model: Home, Work, Library, Schedules, and Settings.
 
 ## Founder-Facing Mapping
 
 - `chatSessions` and `chatMessages` power conversations.
-- `directives` are visible task work items.
+- `directives` are visible Work items.
 - `tasks` are the steps inside a work item.
-- `documents` and `documentVersions` are editable Library items and versions.
-- `scheduleItems` with `kind: "automation"` are founder-facing automations.
+- `workRuns`, `workRunUpdates`, and `workArtifacts` are hidden execution records behind Work.
+- `items` and `itemVersions` are the unified FounderOS knowledge model.
+- `documents` and `documentVersions` remain the editable Library compatibility layer used by the current UI.
+- `itemRelations`, `entities`, and `facts` store relationships and structured knowledge behind Library search and context.
+- `savedViews` and `workflows` store pinned business views and repeatable business processes.
+- `scheduleItems` with the legacy internal kind `automation` are founder-facing Schedules.
 - `departments`, `agents`, and `playbooks` are internal foundations for assigning work to professional AI roles.
 - `projects` and `buildActivities` remain backend foundations but are not primary user-facing Home concepts.
+- Context relationships, embeddings, and retrieval metadata are hidden foundations for Library search, sidebar help, and pinned intelligent views.
 
 ## Initialization
 
@@ -39,9 +44,9 @@ It must not clear existing user data and must not seed fake Library items, fake 
 - `content`
 - `agentName`
 
-Chat mode is read-only business conversation. It may use Library context to answer but must not create outputs or mutate business records beyond storing the conversation itself.
+Conversation is read-only until the founder confirms a work, schedule, or business-data change. It may use Library context to answer but must not quietly create outputs or mutate business records beyond storing the conversation itself.
 
-## Tasks
+## Work
 
 `directives`
 
@@ -51,7 +56,7 @@ Chat mode is read-only business conversation. It may use Library context to answ
 - `status`
 - `tokenBudgetUSD`
 
-Task creation writes a visible work item and records a conversation note when a session is present. Clarification and completion messages are also written back to the linked conversation.
+Work creation writes a visible Work item and records a conversation note when a session is present. Clarification and completion messages are also written back to the linked conversation.
 
 `tasks`
 
@@ -65,15 +70,69 @@ Task creation writes a visible work item and records a conversation note when a 
 
 The UI should translate backend statuses into plain labels such as Preparing, In progress, Needs your answer, Waiting for review, Paused, and Completed.
 
+Work should be queryable in three founder-facing groups:
+
+- Active: queued or in-progress work.
+- Review: work needing an answer, approval, or decision.
+- Completed: finished or stopped work with outcomes and links.
+
+`workRuns`, `workRunUpdates`, and `workArtifacts` remain hidden runtime tables. The founder sees their business meaning through Work items, progress updates, review prompts, and saved outputs.
+
 ## Library
+
+`items`
+
+- `workspaceId`
+- `departmentId` optional internal business area
+- `title`
+- `kind`: supports created outputs, uploads, websites, decks, docs, emails, contacts, companies, decisions, research, automations, tools, task outputs, and legacy Library kinds
+- `status`: draft, active, under review, approved, finalized, archived, or deprecated
+- `source`: user, agent, upload, website, connector, migration, or system
+- `summary`
+- `currentVersionId`
+- `versionCount`
+- optional links to `directives`, `tasks`, and `workRuns`
+- optional source URL, storage ID, MIME type, tags, external ID, and metadata
+- `legacyDocumentId` when mirrored for the current Library UI
+- timestamps
+
+`itemVersions`
+
+- `itemId`
+- `versionNumber`
+- optional title and summary
+- content or external/storage reference
+- format: markdown, plain text, HTML, JSON, binary, or external
+- optional embedding for retrieval
+- `legacyDocumentVersionId` when mirrored for the current Library UI
+- creation metadata
+
+`itemRelations`
+
+- `fromItemId`
+- optional `toItemId` or `toEntityId`
+- relationship type such as references, derived from, output of, mentions, supports, contradicts, part of, duplicate of, or related
+- optional summary, strength, metadata, creator, and timestamp
+
+`entities`
+
+- canonical people, companies, customers, competitors, vendors, products, markets, tools, websites, emails, domains, and concepts
+- aliases, source item, optional external ID, metadata, and timestamps
+
+`facts`
+
+- subject, predicate, object, optional typed value
+- optional entity/item/source links
+- confidence, status, validity window, metadata, and timestamps
 
 `documents`
 
 - `workspaceId`
+- `itemId` optional link to the unified item record
 - `title`
 - `departmentTag`
 - `author`
-- `traceId` optional link to the task that created it
+- `traceId` optional link to the Work item that created it
 - `kind`
 - `summary`
 - `currentVersionId`
@@ -84,6 +143,7 @@ The UI should translate backend statuses into plain labels such as Preparing, In
 `documentVersions`
 
 - `documentId`
+- `itemVersionId` optional link to the unified item version
 - `content`
 - `versionNumber`
 - `createdAt`
@@ -91,31 +151,55 @@ The UI should translate backend statuses into plain labels such as Preparing, In
 - `summary`
 - optional embedding
 
-Library queries should hide archived records by default and expose saved outputs by task when Home needs task result links.
+Library queries should hide archived records by default and expose saved outputs by Work item when Home, Work, or the AI sidebar needs result links.
 
-Library item kinds can include documents, files, websites, presentations, tools, automations, task outputs, conversations, and records. The UI should group by these plain-language types first. Department tags are internal metadata only.
+Library item kinds can include documents, files, websites, presentations, tools, task outputs, conversations, decisions, research, customer notes, and records. New code should use `items.kind` for the canonical model, while `documents.kind` stays available for the current Library UI. Department tags are internal metadata only.
 
 `documentVersions` power manual edits and generated revisions. Version history should be queried only for the selected item view.
 
-## Automations
+Library should support queryable knowledge behavior. Structured summaries, source links, embeddings, relationship metadata, and retrieval signals may exist internally, but founders should see search results, answers, related items, and source explanations instead of graph mechanics.
+
+### Compatibility and Migration
+
+The current Library UI still calls `artifacts.list/create/update/revert/remove`, which returns document-shaped records and document version history. Those mutations now create and update linked `items` and `itemVersions` records at the same time.
+
+Existing `documents` without an `itemId` continue to work. Use `items.migrateLegacyDocuments` to backfill linked item records in batches without changing the Library UI route shape or stored document IDs.
+
+New integrations and workers should write to `items` directly when they do not need the current document editor, or request a document mirror when the output should appear immediately in the existing Library UI.
+
+## Schedules
 
 `scheduleItems`
 
 - `title`
-- `kind: "automation"` for founder-facing automations
+- `kind: "automation"` as the legacy internal value for a founder-facing Schedule
 - `status`
 - `startAt`
 - `prompt`
 - `cadence`
 
-Automations are stored as plain business requests such as daily priorities. The UI should show cadence and time in normal language, not cron syntax.
+Schedules are stored as plain business requests such as daily priorities. The UI should show cadence and time in normal language, not cron syntax.
+
+Schedule results should write to Work and Library when useful. A recurring request that needs review should create a Review item rather than quietly taking an external action.
+
+## Pinned Intelligent Views
+
+Pinned views should be stored in `savedViews` as saved business questions or criteria over Work, Library, Schedules, and hidden context relationships. They should not be stored as manual folders.
+
+The UI can show a short title, count, and item list. Internal query definitions, retrieval weights, and graph details should stay hidden.
+
+## Workflows
+
+`workflows` store repeatable business processes such as automations, playbooks, checklists, research processes, task pipelines, and integrations. A workflow defines a trigger and ordered steps, and each step can declare the kind of Library item it produces.
+
+Workflow execution should create Work and Library records through the same item model, with approval gates reserved for external, destructive, or spend-related actions.
 
 ## Approvals
 
 `approvalQueue` stores real review gates for sensitive actions. The UI should only show review UI when queue items are pending. Permanent approval panels on Home are not part of the product direction.
 
-Review gates are for risky external or destructive actions: public publishing, live asset changes, deleting important data, spending money, sending email, posting externally, or contacting third parties. Internal drafts, previews, documents, presentations, schedules, organization, and private tool previews should proceed without a review gate.
+Review gates are for risky external or destructive actions: public publishing, live asset changes, deleting important data, spending money, sending email, posting externally, or contacting third parties. Internal drafts, previews, documents, presentations, schedule preparation, organization, and private tool previews should proceed without a review gate.
 
 ## Overview Query
 
-`commandCenter.getOverview` is an internal overview query despite the legacy file name. It may aggregate workspace, recent task, Library, approval, and internal foundation counts, but the frontend should not surface legacy naming.
+`commandCenter.getOverview` is an internal overview query despite the legacy file name. It may aggregate workspace, recent work, Library, Schedules, approval, and internal foundation counts, but the frontend should not surface legacy naming.
