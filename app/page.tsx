@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock,
+  ExternalLink,
   ListTodo,
   Loader2,
   MessageSquare,
@@ -34,6 +35,9 @@ type WorkRun = {
   _id: Id<"workRuns">;
   title: string;
   status: string;
+  summary?: string;
+  previewUrl?: string;
+  updatedAt: number;
   updates: Array<{
     _id: Id<"workRunUpdates">;
     message: string;
@@ -451,6 +455,15 @@ function HomePageContent() {
 
           <ConversationPanel messages={messages ?? []} />
 
+          {taskParam && workRuns === undefined && (
+            <div className="mt-4 rounded-xl border border-black/[0.06] bg-white p-4 shadow-sm">
+              <div className="flex items-center gap-3">
+                <Loader2 size={15} className="animate-spin text-text-muted" />
+                <p className="text-sm font-medium text-text-secondary">Preparing task progress</p>
+              </div>
+            </div>
+          )}
+
           {taskParam && workRuns && workRuns.length > 0 && (
             <WorkRunPanel runs={workRuns} />
           )}
@@ -773,9 +786,9 @@ function ConversationPanel({ messages }: { messages: Message[] }) {
 
 function runStatusLabel(status: string) {
   switch (status) {
-    case "queued": return "Queued";
+    case "queued": return "Preparing";
     case "working": return "In progress";
-    case "needs_review": return "Needs review";
+    case "needs_review": return "Ready for review";
     case "waiting_for_approval": return "Waiting for approval";
     case "completed": return "Done";
     case "failed": return "Could not finish";
@@ -811,46 +824,83 @@ function updateDotClass(tone: string) {
 function WorkRunPanel({ runs }: { runs: WorkRun[] }) {
   return (
     <div className="mt-4 space-y-3">
-      {runs.map((run) => (
-        <div
-          key={run._id}
-          className="rounded-xl border border-black/[0.06] bg-gradient-to-b from-white to-slate-50/50 p-4 shadow-sm"
-        >
-          <div className="flex items-center gap-3">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-black/[0.03]">
-              {run.status === "working" ? (
-                <Loader2 size={14} className="text-blue-500 animate-spin" />
-              ) : run.status === "completed" ? (
-                <CheckCircle2 size={14} className="text-green-500" />
-              ) : run.status === "failed" ? (
-                <AlertCircle size={14} className="text-red-500" />
-              ) : (
-                <Clock size={14} className="text-text-muted" />
-              )}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <p className="text-sm font-medium text-text-primary truncate">{run.title}</p>
-                <span
-                  className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold leading-none ${runStatusClasses(run.status)}`}
-                >
-                  {runStatusLabel(run.status)}
-                </span>
+      {runs.map((run) => {
+        const recentUpdates = run.updates.slice(-5);
+
+        return (
+          <div
+            key={run._id}
+            className="rounded-xl border border-black/[0.06] bg-gradient-to-b from-white to-slate-50/50 p-4 shadow-sm"
+          >
+            <div className="flex items-start gap-3">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-black/[0.03]">
+                {run.status === "working" ? (
+                  <Loader2 size={14} className="text-blue-500 animate-spin" />
+                ) : run.status === "completed" ? (
+                  <CheckCircle2 size={14} className="text-green-500" />
+                ) : run.status === "failed" ? (
+                  <AlertCircle size={14} className="text-red-500" />
+                ) : (
+                  <Clock size={14} className="text-text-muted" />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-semibold text-text-primary">{run.title}</p>
+                  <span
+                    className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold leading-none ${runStatusClasses(run.status)}`}
+                  >
+                    {runStatusLabel(run.status)}
+                  </span>
+                </div>
+                {run.summary && (
+                  <p className="mt-1 text-xs leading-5 text-text-secondary">{run.summary}</p>
+                )}
               </div>
             </div>
-          </div>
-          {run.updates.length > 0 && (
-            <div className="mt-3 ml-10 space-y-1.5">
-              {run.updates.map((update) => (
-                <div key={update._id} className="flex items-start gap-2">
-                  <div className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${updateDotClass(update.tone)}`} />
-                  <p className="text-xs leading-5 text-text-secondary">{update.message}</p>
-                </div>
-              ))}
+
+            {recentUpdates.length > 0 && (
+              <div className="ml-10 mt-3 space-y-1.5">
+                {recentUpdates.map((update) => (
+                  <div key={update._id} className="flex items-start gap-2">
+                    <div className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${updateDotClass(update.tone)}`} />
+                    <p className="text-xs leading-5 text-text-secondary">{update.message}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="ml-10 mt-3 flex flex-wrap items-center gap-2">
+              {run.previewUrl && (
+                <a
+                  href={run.previewUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-black/[0.08] bg-white px-3 py-1.5 text-xs font-semibold text-text-primary transition hover:bg-black/[0.02]"
+                >
+                  <ExternalLink size={13} />
+                  Open preview
+                </a>
+              )}
+              {run.status === "waiting_for_approval" && (
+                <p className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700">
+                  Waiting for your approval before continuing.
+                </p>
+              )}
+              {run.status === "needs_review" && (
+                <p className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700">
+                  Ready for your review.
+                </p>
+              )}
+              {run.status === "failed" && (
+                <p className="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700">
+                  FounderOS could not finish this step yet.
+                </p>
+              )}
             </div>
-          )}
-        </div>
-      ))}
+          </div>
+        );
+      })}
     </div>
   );
 }
