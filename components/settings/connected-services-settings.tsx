@@ -41,6 +41,7 @@ const serviceIcons: Record<string, LucideIcon> = {
   publishing: Megaphone,
   knowledge: BookOpen,
   code_hosting: Code2,
+  vercel: Code2,
 };
 
 function statusCopy(status: ServiceStatus) {

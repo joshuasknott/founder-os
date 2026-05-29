@@ -178,6 +178,7 @@ export default defineSchema({
     credentialRef: v.optional(v.string()),
     credentialFingerprint: v.optional(v.string()),
     credentialPreview: v.optional(v.string()),
+    settings: v.optional(v.any()),
     connectedBy: v.optional(v.string()),
     connectedAt: v.optional(v.number()),
     lastTestedAt: v.optional(v.number()),

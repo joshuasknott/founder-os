@@ -34,6 +34,7 @@ test("sensitive publish and deploy requests are approval-gated", () => {
   assert.equal(live.actionKind, "change_live_asset");
 
   assert.equal(detectSensitiveExternalAction("Build a private website preview"), null);
+  assert.equal(detectSensitiveExternalAction("Build and deploy a preview link for review"), null);
 });
 
 test("task spec keeps build connector hidden and structured", () => {

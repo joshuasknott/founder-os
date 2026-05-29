@@ -23,6 +23,14 @@ import { fileURLToPath } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
 import { Codex } from "@openai/codex-sdk";
 import { api } from "../../convex/_generated/api.js";
+import {
+  createVercelPreviewDeployment,
+  outputKindCanDeployPreview,
+  publishVercelDeployment,
+  safeVercelFailureMessage,
+  vercelIsConfigured,
+  vercelSettingsFromEnv,
+} from "./vercelConnector.mjs";
 
 const POLL_INTERVAL_MS = Number(process.env.BUILDER_POLL_INTERVAL_MS ?? 5000);
 const PREVIEW_URL = process.env.BUILDER_PREVIEW_URL ?? "http://localhost:3000";
@@ -195,6 +203,7 @@ function toPlainFounderText(message, fallback = "A first review version is ready
     .replace(/\bcommands?\b/gi, "checks")
     .replace(/\bterminal\b|\bstdout\b|\bstderr\b|\bstack trace\b/gi, "workspace")
     .replace(/\bAPI\b|\bSDK\b|\bCLI\b/gi, "connection")
+    .replace(/\bVercel\b/gi, "preview service")
     .replace(/\bCodex\b/gi, "FounderOS")
     .replace(/\bcommit\b|\bbranch\b/gi, "version")
     .replace(/\bartifact(s)?\b/gi, "Library item$1")
@@ -279,12 +288,20 @@ async function sourceMetadata(workspaceDir = ROOT_WORKSPACE_DIR) {
   };
 }
 
-function deploymentMetadata(previewUrl) {
+function deploymentMetadata(previewStatus) {
+  const deployment = previewStatus?.deployment ?? {};
   return {
-    provider: process.env.BUILDER_PREVIEW_PROVIDER ?? "local",
+    provider: deployment.provider ?? previewStatus?.provider ?? process.env.BUILDER_PREVIEW_PROVIDER ?? "local",
     projectId: process.env.VERCEL_PROJECT_ID ?? null,
     teamId: process.env.VERCEL_TEAM_ID ?? null,
-    previewUrl,
+    target: deployment.target ?? "preview",
+    status: deployment.status ?? (previewStatus?.available ? "ready" : "failed"),
+    deploymentId: deployment.deploymentId ?? null,
+    previewUrl: deployment.previewUrl ?? previewStatus?.url ?? null,
+    liveUrl: deployment.liveUrl ?? null,
+    safeError: deployment.safeError,
+    safeMessage: deployment.safeMessage,
+    createdAt: deployment.createdAt ?? Date.now(),
     publishRequiresApproval: true,
   };
 }
@@ -357,6 +374,55 @@ async function ensurePreviewStatus(workspaceDir = ROOT_WORKSPACE_DIR) {
     url: null,
     provider: process.env.BUILDER_PREVIEW_PROVIDER ?? "local",
   };
+}
+
+function outputKindForPreviewDeployment(run, directive) {
+  return run?.classification?.outputItemKind ?? outputKindForRun(run, directive);
+}
+
+async function createReviewPreviewStatus(workspaceDir = ROOT_WORKSPACE_DIR, run, directive) {
+  const localStatus = await ensurePreviewStatus(workspaceDir);
+  const outputKind = outputKindForPreviewDeployment(run, directive);
+  const settings = vercelSettingsFromEnv();
+
+  if (!outputKindCanDeployPreview(outputKind) || !vercelIsConfigured(settings)) {
+    return localStatus;
+  }
+
+  try {
+    const deployment = await createVercelPreviewDeployment({
+      workspaceDir,
+      settings,
+      metadata: {
+        runId: String(run?._id ?? ""),
+        outputKind,
+        approvalRequiredForLive: "true",
+      },
+    });
+
+    return {
+      available: true,
+      started: localStatus.started,
+      url: deployment.previewUrl,
+      provider: deployment.provider,
+      deployment,
+    };
+  } catch (error) {
+    const safeError = safeVercelFailureMessage(error);
+    return {
+      ...localStatus,
+      deployment: {
+        provider: "vercel",
+        target: "preview",
+        status: "failed",
+        safeError,
+        previewUrl: localStatus.url,
+        publishRequiresApproval: true,
+        createdAt: Date.now(),
+      },
+      safeMessage: safeError,
+    };
+  }
 }
 
 async function append(client, runId, message, tone = "progress") {
@@ -691,6 +757,11 @@ async function runTestCommands(workingDirectory) {
 
 function detectSensitiveExternalAction(objective = "") {
   const text = objective.toLowerCase();
+  const previewOnly =
+    /\b(preview|review link|review version)\b/.test(text) &&
+    !/\b(go live|live|production|publicly publish|publish publicly|ship live)\b/.test(text);
+  if (previewOnly && /\b(deploy|deployment|share|publish)\b/.test(text)) return null;
+
   if (/\b(deploy|deployment|go live|launch live|ship live|publish|publicly publish)\b/.test(text)) {
     return {
       actionKind: "publish_preview",
@@ -861,6 +932,9 @@ function buildFounderSummary(result, previewStatus, testResults) {
   if (testResults.status === "failed" || testResults.status === "timed_out") {
     notes.push("One check needs attention before this is used more broadly.");
   }
+  if (previewStatus.safeMessage) {
+    notes.push(previewStatus.safeMessage);
+  }
   if (!previewStatus.available) {
     notes.push("I could not open the preview yet.");
   }
@@ -875,9 +949,10 @@ function buildLibraryContent(args) {
   const reviewNotes = [
     ...args.codexResult.reviewNotes,
     args.testResults.summary,
-    args.previewStatus.available
+    args.previewStatus.safeMessage ??
+      (args.previewStatus.available
       ? "The preview is ready to open."
-      : "The preview could not be opened yet.",
+      : "The preview could not be opened yet."),
     "No public publishing or live changes were made.",
   ];
 
@@ -907,7 +982,7 @@ function buildResultMetadata(args) {
       branch: args.workspace.branch,
       workingDirectory: args.workspace.workingDirectory,
     },
-    deployment: deploymentMetadata(args.previewStatus.url),
+    deployment: deploymentMetadata(args.previewStatus),
     preview: args.previewStatus,
     changedFileCount: args.changedFiles.length,
     changedFiles: args.changedFiles,
@@ -921,7 +996,7 @@ function buildResultMetadata(args) {
   };
 }
 
-async function createApprovalIfNeeded(client, run, externalAction) {
+async function createApprovalIfNeeded(client, run, externalAction, previewStatus) {
   if (!externalAction) return null;
 
   return await client.mutation(api.approvals.createForRun, {
@@ -933,8 +1008,134 @@ async function createApprovalIfNeeded(client, run, externalAction) {
     actionPayload: {
       requestedBy: "builder",
       externalActionPerformed: false,
+      deployment: previewStatus ? deploymentMetadata(previewStatus) : undefined,
     },
   });
+}
+
+function readRunMetadata(run) {
+  try {
+    return run.internalNotes ? JSON.parse(run.internalNotes) : {};
+  } catch {
+    return {};
+  }
+}
+
+function canPublishApprovedDeployment(actionKind) {
+  return actionKind === "publish_preview" || actionKind === "change_live_asset";
+}
+
+function buildPublishedLibraryContent(args) {
+  return [
+    `# ${args.title}`,
+    "",
+    args.summary,
+    "",
+    "## Published link",
+    args.liveUrl ? `Live: ${args.liveUrl}` : "The approved update was published.",
+    "",
+    "## Approval",
+    args.actionTitle ?? "The live update was approved before publishing.",
+  ].join("\n");
+}
+
+async function publishApprovedDeployment(client, run, approvedAction) {
+  if (!canPublishApprovedDeployment(approvedAction.actionKind)) return false;
+
+  const settings = vercelSettingsFromEnv();
+  if (!vercelIsConfigured(settings)) return false;
+
+  const metadata = readRunMetadata(run);
+  const deployment = metadata.deployment ?? approvedAction.actionPayload?.deployment ?? {};
+  const deploymentId = deployment.deploymentId;
+
+  try {
+    const result = await publishVercelDeployment({
+      deploymentId,
+      settings,
+      productionDomain: deployment.productionDomain ?? settings.productionDomain,
+    });
+    const liveUrl = result.liveUrl ?? run.previewUrl;
+    const summary = "The approved site update is live.";
+    const nextMetadata = {
+      ...metadata,
+      deployment: {
+        ...deployment,
+        ...result,
+        liveUrl,
+        previewUrl: deployment.previewUrl ?? run.previewUrl,
+        publishRequiresApproval: false,
+      },
+      safety: {
+        ...(metadata.safety ?? {}),
+        requestedExternalAction: approvedAction,
+        externalActionPerformed: true,
+      },
+    };
+
+    await client.mutation(api.approvals.markApprovedActionHandled, {
+      approvalId: approvedAction.approvalId,
+    });
+    await client.mutation(api.workRuns.completeWithResult, {
+      runId: run._id,
+      leaseId: run.leaseId,
+      summary,
+      content: buildPublishedLibraryContent({
+        title: run.title,
+        summary,
+        liveUrl,
+        actionTitle: approvedAction.actionTitle,
+      }),
+      previewUrl: liveUrl,
+      internalNotes: JSON.stringify(nextMetadata),
+      metadata: nextMetadata,
+    });
+    return true;
+  } catch (error) {
+    const safeError = safeVercelFailureMessage(
+      error,
+      "The approved publishing step could not finish. No live changes were made.",
+    );
+    const nextMetadata = {
+      ...metadata,
+      deployment: {
+        ...deployment,
+        provider: deployment.provider ?? "vercel",
+        target: "production",
+        status: "failed",
+        safeError,
+        previewUrl: deployment.previewUrl ?? run.previewUrl,
+        publishRequiresApproval: true,
+        createdAt: Date.now(),
+      },
+      safety: {
+        ...(metadata.safety ?? {}),
+        requestedExternalAction: approvedAction,
+        externalActionPerformed: false,
+      },
+    };
+
+    await client.mutation(api.approvals.markApprovedActionHandled, {
+      approvalId: approvedAction.approvalId,
+    });
+    await client.mutation(api.workRuns.markNeedsReviewWithResult, {
+      runId: run._id,
+      leaseId: run.leaseId,
+      summary: safeError,
+      content: [
+        `# ${run.title}`,
+        "",
+        safeError,
+        "",
+        "No live changes were made.",
+      ].join("\n"),
+      previewUrl: run.previewUrl,
+      internalNotes: JSON.stringify(nextMetadata),
+      metadata: nextMetadata,
+      message: safeError,
+    });
+    return true;
+  }
 }
 
 async function simulateRun(client, run) {
@@ -947,7 +1148,7 @@ async function simulateRun(client, run) {
   await sleep(600);
   await append(client, run._id, "I'm checking the preview.");
 
-  const previewStatus = await ensurePreviewStatus(ROOT_WORKSPACE_DIR);
+  const previewStatus = await createReviewPreviewStatus(ROOT_WORKSPACE_DIR, run);
   const hasPreview = previewStatus.available;
   const summary = hasPreview
     ? "A first review version is ready. This development setup is using a sample result."
@@ -1076,7 +1277,7 @@ async function runCodex(client, run, directive) {
       [...eventChangedFiles],
     );
     const testResults = await runTestCommands(workspace.workingDirectory);
-    const previewStatus = await ensurePreviewStatus(workspace.workingDirectory);
+    const previewStatus = await createReviewPreviewStatus(workspace.workingDirectory, run, directive);
     const codexResult = extractCodexResult(finalResponse);
     if (externalAction) {
       codexResult.externalActionRequested = true;
@@ -1119,7 +1320,7 @@ async function runCodex(client, run, directive) {
     });
 
     try {
-      await createApprovalIfNeeded(client, run, externalAction);
+      await createApprovalIfNeeded(client, run, externalAction, previewStatus);
     } catch (error) {
       console.error(
         `Hidden builder could not queue approval: ${error instanceof Error ? error.message : String(error)}`,
@@ -1146,6 +1347,10 @@ async function processRun(client, run) {
   if (approvedAction) {
     await append(client, run._id, "I'm resuming the approved step.");
     await sleep(400);
+    if (await publishApprovedDeployment(client, run, approvedAction)) {
+      console.log(`Hidden builder run completed approved deployment: ${run._id}`);
+      return;
+    }
     await client.mutation(api.approvals.resumeApprovedActionWithoutConnector, {
       approvalId: approvedAction.approvalId,
       runId: run._id,
@@ -1228,6 +1433,7 @@ export {
   buildTaskSpec,
   captureChangedFiles,
   createBuildWorkspace,
+  createReviewPreviewStatus,
   detectSensitiveExternalAction,
   diffWorkspaceSnapshots,
   ensurePreviewStatus,

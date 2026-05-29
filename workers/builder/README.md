@@ -11,10 +11,12 @@ Current behavior:
 - runs Codex in an isolated branch/workspace or safe copied directory
 - passes Codex a structured task spec
 - captures changed files, configured checks, summary, and preview status
+- can create a shareable Vercel preview when the internal connector is configured
 - stores the review result as a Website or Tool Library item
+- records deployment history on the saved item
 - falls back to a simulated review result for local development
 - marks the run ready for review
-- asks for approval before any publish, deploy, or live-change step
+- asks for approval before any live publish or live-change step
 
 Run once:
 
@@ -49,6 +51,12 @@ Configuration:
 - `BUILDER_PREVIEW_COMMAND`: command used when `BUILDER_START_PREVIEW=true`. Defaults to `npm run dev`.
 - `BUILDER_PREVIEW_TIMEOUT_MS`: how long to wait for a local preview. Defaults to `30000`.
 - `BUILDER_POLL_INTERVAL_MS`: optional polling interval. Defaults to `5000`.
-- `VERCEL_PROJECT_ID` and `VERCEL_TEAM_ID`: optional internal deployment metadata for future approved publishing flows.
+- `BUILDER_VERCEL_PREVIEWS`: set to `true` to create shareable Vercel review links for Website and Tool outputs.
+- `VERCEL_TOKEN` or `BUILDER_VERCEL_TOKEN`: Vercel access token used by the hidden connector.
+- `VERCEL_PROJECT_ID` or `BUILDER_VERCEL_PROJECT_ID`: Vercel project used for preview deployments and approved live publishing.
+- `VERCEL_PROJECT_NAME` or `BUILDER_VERCEL_PROJECT_NAME`: optional project name sent with deployments.
+- `VERCEL_TEAM_ID` or `BUILDER_VERCEL_TEAM_ID`: optional team scope.
+- `VERCEL_PRODUCTION_DOMAIN` or `BUILDER_VERCEL_PRODUCTION_DOMAIN`: optional domain used only after the founder approves publishing.
+- `VERCEL_ROOT_DIRECTORY`, `VERCEL_FRAMEWORK`, `VERCEL_BUILD_COMMAND`, `VERCEL_INSTALL_COMMAND`, and `VERCEL_OUTPUT_DIRECTORY`: optional internal project settings for Vercel deployments.
 
-The worker must only write plain-language updates to `workRunUpdates`. Internal logs, source metadata, deployment metadata, changed file metadata, command counts, usage, and thread ids stay in internal run notes. Publishing or deployment must remain approval-gated.
+The worker must only write plain-language updates to `workRunUpdates`. Internal logs, source metadata, deployment metadata, changed file metadata, command counts, usage, and thread ids stay in internal run notes. Shareable preview deployment can run without approval when configured. Live publishing must only run after the approval queue resumes the work.

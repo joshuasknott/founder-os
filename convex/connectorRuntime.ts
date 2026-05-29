@@ -9,6 +9,7 @@ export const connectorCapabilities = [
   "change_live_asset",
   "read_business_records",
   "write_business_records",
+  "create_preview_deployment",
   "publish_preview",
 ] as const;
 
@@ -34,7 +35,9 @@ export type ConnectorActionType =
   | "update_live_asset"
   | "read_records"
   | "write_record"
-  | "publish_preview";
+  | "create_preview_deployment"
+  | "publish_preview"
+  | "publish_live_deployment";
 
 export type ConnectorActionDefinition = {
   type: ConnectorActionType;
@@ -70,6 +73,7 @@ export type ConnectorConnectionLike = {
   status?: ConnectorConnectionStatus | string;
   grantedScopes?: string[];
   credentialRef?: string;
+  settings?: unknown;
   disabledAt?: number;
   lastSafeMessage?: string;
   connectedAt?: number;
@@ -105,6 +109,18 @@ export type ConnectorCredentialEnvelope = {
   keyVersion: string;
   secretPreview: string;
   createdAt: number;
+};
+
+export type VercelConnectionSettings = {
+  projectId?: string;
+  projectName?: string;
+  teamId?: string;
+  productionDomain?: string;
+  rootDirectory?: string;
+  framework?: string;
+  buildCommand?: string;
+  installCommand?: string;
+  outputDirectory?: string;
 };
 
 type ConnectorActionHandlerResult = {
@@ -309,6 +325,36 @@ export const connectorRegistry: Record<string, ConnectorDefinition> = {
       },
     ],
   },
+  vercel: {
+    id: "vercel",
+    safeDisplayName: "Website previews",
+    description: "Create review links for sites and tools, and update live sites after approval.",
+    authType: "api_key",
+    capabilities: ["create_preview_deployment", "change_live_asset"],
+    requiredScopes: ["web.preview", "web.publish"],
+    scopeLabels: ["Create review links", "Update approved live sites"],
+    connectionStatus: "not_connected",
+    approvalPolicy: "per_sensitive_action",
+    actions: [
+      {
+        type: "create_preview_deployment",
+        safeLabel: "Create review links",
+        requiredCapabilities: ["create_preview_deployment"],
+        requiredScopes: ["web.preview"],
+        approval: "never",
+        handlerKey: "vercel.preview",
+      },
+      {
+        type: "publish_live_deployment",
+        safeLabel: "Update approved live sites",
+        requiredCapabilities: ["change_live_asset"],
+        requiredScopes: ["web.publish"],
+        approval: "always",
+        sensitiveActionKind: "change_live_asset",
+        handlerKey: "vercel.publish",
+      },
+    ],
+  },
 };
 
 export function listConnectorDefinitions() {
@@ -364,6 +410,64 @@ export function missingRequiredScopes(requiredScopes: string[], grantedScopes?: 
   return requiredScopes.filter((scope) => !granted.has(scope));
 }
 
+function cleanSettingString(value: unknown, maxLength = 160) {
+  if (typeof value !== "string") return undefined;
+  const cleaned = value.trim().replace(/\s+/g, " ").slice(0, maxLength);
+  return cleaned || undefined;
+}
+
+function cleanPathSetting(value: unknown) {
+  const cleaned = cleanSettingString(value, 180);
+  if (!cleaned) return undefined;
+  return cleaned.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\.\.(\/|$)/g, "");
+}
+
+function cleanDomainSetting(value: unknown) {
+  const cleaned = cleanSettingString(value, 180);
+  if (!cleaned) return undefined;
+  return cleaned
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/.*$/, "")
+    .toLowerCase();
+}
+
+export function sanitizeVercelConnectionSettings(settings?: unknown): VercelConnectionSettings {
+  const source = settings && typeof settings === "object" && !Array.isArray(settings)
+    ? settings as Record<string, unknown>
+    : {};
+
+  return {
+    projectId: cleanSettingString(source.projectId),
+    projectName: cleanSettingString(source.projectName),
+    teamId: cleanSettingString(source.teamId),
+    productionDomain: cleanDomainSetting(source.productionDomain),
+    rootDirectory: cleanPathSetting(source.rootDirectory),
+    framework: cleanSettingString(source.framework, 80),
+    buildCommand: cleanSettingString(source.buildCommand, 240),
+    installCommand: cleanSettingString(source.installCommand, 240),
+    outputDirectory: cleanPathSetting(source.outputDirectory),
+  };
+}
+
+export function sanitizeConnectorConnectionSettings(connectorId: string, settings?: unknown) {
+  if (connectorId === "vercel") {
+    const sanitized = sanitizeVercelConnectionSettings(settings);
+    const entries = Object.entries(sanitized).filter(
+      ([, value]) => typeof value === "string" && value.length > 0,
+    );
+    return entries.length > 0 ? Object.fromEntries(
+      entries,
+    ) : undefined;
+  }
+
+  return undefined;
+}
+
+function hasVercelProjectSettings(settings?: unknown) {
+  const sanitized = sanitizeVercelConnectionSettings(settings);
+  return Boolean(sanitized.projectId || sanitized.projectName);
+}
+
 export function testConnectorConnection(
   definition: ConnectorDefinition,
   connection?: ConnectorConnectionLike | null,
@@ -388,6 +492,14 @@ export function testConnectorConnection(
     return {
       status: "needs_attention",
       safeMessage: "Finish connecting this service before FounderOS uses it.",
+      healthy: false,
+    };
+  }
+
+  if (definition.id === "vercel" && !hasVercelProjectSettings(connection.settings)) {
+    return {
+      status: "needs_attention",
+      safeMessage: "Choose the site or tool before FounderOS uses this connection.",
       healthy: false,
     };
   }
@@ -623,6 +735,8 @@ export const connectorActionHandlers: Record<string, ConnectorActionHandler> = {
   "knowledge.write": safeNoopHandler,
   "code.preview": safeNoopHandler,
   "code.update": safeNoopHandler,
+  "vercel.preview": safeNoopHandler,
+  "vercel.publish": safeNoopHandler,
 };
 
 export function getConnectorActionHandler(handlerKey: string) {
@@ -641,7 +755,9 @@ export function safeActionSummary(actionType: string) {
     update_live_asset: "The approved live update is ready.",
     read_records: "Business records access is ready.",
     write_record: "The record update is ready.",
+    create_preview_deployment: "The review link is ready.",
     publish_preview: "The approved preview step is ready.",
+    publish_live_deployment: "The approved live update is ready.",
   };
 
   return labels[actionType] ?? "The approved step is ready.";

@@ -19,6 +19,7 @@ import type * as commandCenter from "../commandCenter.js";
 import type * as connectorRuntime from "../connectorRuntime.js";
 import type * as connectors from "../connectors.js";
 import type * as crons from "../crons.js";
+import type * as deploymentRuntime from "../deploymentRuntime.js";
 import type * as directives from "../directives.js";
 import type * as http from "../http.js";
 import type * as init from "../init.js";
@@ -57,6 +58,7 @@ declare const fullApi: ApiFromModules<{
   connectorRuntime: typeof connectorRuntime;
   connectors: typeof connectors;
   crons: typeof crons;
+  deploymentRuntime: typeof deploymentRuntime;
   directives: typeof directives;
   http: typeof http;
   init: typeof init;

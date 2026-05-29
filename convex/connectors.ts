@@ -11,6 +11,7 @@ import {
   publicConnectorDefinition,
   safeActionSummary,
   safeConnectorError,
+  sanitizeConnectorConnectionSettings,
   testConnectorConnection,
   type ConnectorActionType,
   type ConnectorConnectionStatus,
@@ -74,6 +75,7 @@ export const startConnection = mutation({
   args: {
     workspaceId: v.id("workspaces"),
     connectorId: v.string(),
+    settings: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
     const definition = getConnectorDefinition(args.connectorId);
@@ -93,6 +95,7 @@ export const startConnection = mutation({
       capabilities: definition.capabilities,
       requiredScopes: definition.requiredScopes,
       grantedScopes: existing?.grantedScopes ?? [],
+      settings: sanitizeConnectorConnectionSettings(definition.id, args.settings) ?? existing?.settings,
       approvalPolicy: definition.approvalPolicy,
       status: "needs_attention" as const,
       lastSafeMessage: "Finish connecting this service before FounderOS uses it.",
@@ -131,6 +134,7 @@ export const completeManagedConnection = mutation({
     connectorId: v.string(),
     credentialHandle: v.string(),
     grantedScopes: v.array(v.string()),
+    settings: v.optional(v.any()),
     connectedBy: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -157,16 +161,18 @@ export const completeManagedConnection = mutation({
       createdAt: now,
     });
 
-    const result = testConnectorConnection(definition, {
-      credentialRef: envelope.vaultKey,
-      grantedScopes: args.grantedScopes,
-    });
     const existing = await ctx.db
       .query("connectorConnections")
       .withIndex("by_workspace_connector", (q) =>
         q.eq("workspaceId", args.workspaceId).eq("connectorId", args.connectorId),
       )
       .first();
+    const settings = sanitizeConnectorConnectionSettings(definition.id, args.settings) ?? existing?.settings;
+    const result = testConnectorConnection(definition, {
+      credentialRef: envelope.vaultKey,
+      grantedScopes: args.grantedScopes,
+      settings,
+    });
 
     const patch = {
       safeDisplayName: definition.safeDisplayName,
@@ -179,6 +185,7 @@ export const completeManagedConnection = mutation({
       credentialRef: envelope.vaultKey,
       credentialFingerprint: envelope.fingerprint,
       credentialPreview: envelope.secretPreview,
+      settings,
       connectedBy: args.connectedBy,
       connectedAt: now,
       lastTestedAt: now,
@@ -210,6 +217,50 @@ export const completeManagedConnection = mutation({
     });
 
     return connectionId;
+  },
+});
+
+export const updateConnectionSettings = mutation({
+  args: {
+    connectionId: v.id("connectorConnections"),
+    settings: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    const connection = await ctx.db.get(args.connectionId);
+    if (!connection) throw new Error("Connection not found.");
+
+    const definition = getConnectorDefinition(connection.connectorId);
+    if (!definition) throw new Error("That service is not available yet.");
+
+    const now = Date.now();
+    const settings = sanitizeConnectorConnectionSettings(definition.id, args.settings);
+    const result = testConnectorConnection(definition, {
+      ...connection,
+      settings,
+    });
+
+    await ctx.db.patch(args.connectionId, {
+      settings,
+      status: storedStatus(result.status),
+      lastTestedAt: now,
+      lastHealthyAt: result.healthy ? now : connection.lastHealthyAt,
+      lastSafeMessage: result.safeMessage,
+      updatedAt: now,
+    });
+
+    await ctx.db.insert("connectorActionLogs", {
+      workspaceId: connection.workspaceId,
+      connectionId: args.connectionId,
+      connectorId: connection.connectorId,
+      actionType: "update_settings",
+      status: result.healthy ? "completed" : "needs_attention",
+      approvalRequired: false,
+      safeSummary: result.safeMessage,
+      createdAt: now,
+      completedAt: now,
+    });
+
+    return result;
   },
 });
 

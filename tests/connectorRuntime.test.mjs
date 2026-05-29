@@ -122,6 +122,82 @@ test("sensitive actions require approval and approved actions are allowed", () =
   assert.equal(readOnly.approvalRequired, false);
 });
 
+test("vercel connector creates previews without approval and gates live publishing", () => {
+  const vercel = runtime.getConnectorDefinition("vercel");
+  assert.equal(vercel.safeDisplayName, "Website previews");
+  assert.equal(vercel.authType, "api_key");
+  assert.equal(JSON.stringify(runtime.publicConnectorDefinition(vercel)).includes("Vercel"), false);
+
+  const connection = {
+    status: "connected",
+    credentialRef: "vault:vercel",
+    grantedScopes: ["web.preview", "web.publish"],
+    settings: {
+      projectId: "prj_123",
+      productionDomain: "founder.example",
+    },
+  };
+
+  const preview = runtime.evaluateConnectorActionRequest({
+    connectorId: "vercel",
+    actionType: "create_preview_deployment",
+    connection,
+  });
+  assert.equal(preview.allowed, true);
+  assert.equal(preview.approvalRequired, false);
+
+  const live = runtime.evaluateConnectorActionRequest({
+    connectorId: "vercel",
+    actionType: "publish_live_deployment",
+    connection,
+  });
+  assert.equal(live.allowed, false);
+  assert.equal(live.reason, "approval_required");
+  assert.equal(live.sensitiveActionKind, "change_live_asset");
+
+  const approved = runtime.evaluateConnectorActionRequest({
+    connectorId: "vercel",
+    actionType: "publish_live_deployment",
+    connection,
+    approvalGranted: true,
+  });
+  assert.equal(approved.allowed, true);
+  assert.equal(approved.approvalRequired, true);
+});
+
+test("vercel connection settings are internal, sanitized, and required", () => {
+  const vercel = runtime.getConnectorDefinition("vercel");
+  const sanitized = runtime.sanitizeConnectorConnectionSettings("vercel", {
+    projectId: " prj_abc ",
+    projectName: " founder-os ",
+    teamId: " team_123 ",
+    productionDomain: "https://Founder.example/path",
+    rootDirectory: "../apps/web",
+    token: "vercel_secret_should_not_store",
+  });
+
+  assert.equal(sanitized.projectId, "prj_abc");
+  assert.equal(sanitized.productionDomain, "founder.example");
+  assert.equal(JSON.stringify(sanitized).includes("secret"), false);
+  assert.equal(JSON.stringify(runtime.publicConnectionCard(vercel, { settings: sanitized })).includes("prj_abc"), false);
+
+  const missingSettings = runtime.testConnectorConnection(vercel, {
+    status: "connected",
+    credentialRef: "vault:vercel",
+    grantedScopes: ["web.preview", "web.publish"],
+  });
+  assert.equal(missingSettings.status, "needs_attention");
+  assert.equal(missingSettings.safeMessage.includes("project"), false);
+
+  const ready = runtime.testConnectorConnection(vercel, {
+    status: "connected",
+    credentialRef: "vault:vercel",
+    grantedScopes: ["web.preview", "web.publish"],
+    settings: sanitized,
+  });
+  assert.equal(ready.status, "connected");
+});
+
 test("credential storage abstraction returns only safe metadata", () => {
   const rawSecret = "sk_live_super_secret_1234567890";
   const envelope = runtime.connectorCredentialStorage.seal({

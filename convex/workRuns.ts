@@ -6,6 +6,7 @@ import {
   appendItemVersion,
   createItemWithVersion,
 } from "./itemModel";
+import { appendDeploymentHistory } from "./deploymentRuntime";
 import {
   buildRunOutputModel,
   canLeaseRun,
@@ -256,6 +257,14 @@ async function saveRunOutputToLibrary(
   const existingItem = itemId ? await ctx.db.get(itemId) : null;
   const canUpdateExistingItem =
     existingItem && existingItem.status !== "archived" && existingItem.status !== "deprecated";
+  const itemMetadata = appendDeploymentHistory(
+    canUpdateExistingItem ? existingItem.metadata : { classification: run.classification },
+    result?.metadata,
+    now,
+  );
+  const latestDeploymentHistory = Array.isArray(itemMetadata.deploymentHistory)
+    ? itemMetadata.deploymentHistory.at(-1)
+    : undefined;
 
   if (itemId && canUpdateExistingItem) {
     itemVersionId = await appendItemVersion(ctx, {
@@ -270,7 +279,13 @@ async function saveRunOutputToLibrary(
         directiveId: run.directiveId,
         taskId: run.taskId,
         runId: run._id,
+        deployment: latestDeploymentHistory,
       },
+    });
+    await ctx.db.patch(itemId, {
+      metadata: itemMetadata,
+      ...(output.previewUrl ? { sourceUrl: output.previewUrl } : {}),
+      updatedAt: now,
     });
   } else {
     const created = await createItemWithVersion(ctx, {
@@ -288,9 +303,7 @@ async function saveRunOutputToLibrary(
       taskId: run.taskId,
       runId: run._id,
       sourceUrl: output.previewUrl,
-      metadata: {
-        classification: run.classification,
-      },
+      metadata: itemMetadata,
       createdAt: now,
     });
     itemId = created.itemId;
