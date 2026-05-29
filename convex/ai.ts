@@ -1,19 +1,9 @@
-import { internal } from "./_generated/api";
-
 const DEFAULT_DEEPSEEK_MODEL = "deepseek-chat";
 const DEFAULT_DEEPSEEK_REASONING_MODEL = "deepseek-reasoner";
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 const DEFAULT_GEMINI_EMBEDDING_MODEL = "text-embedding-004";
-const RATE_LIMIT_RESCHEDULED = "[AI Router] 429 Rate Limit hit. Task rescheduled with exponential backoff.";
 
 type RoutePurpose = "standard" | "reasoning" | "creative" | "long-context";
-
-type RetryContext = {
-  runQuery: (queryRef: unknown, args: Record<string, unknown>) => Promise<unknown>;
-  scheduler: {
-    runAfter: (delayMs: number, actionRef: unknown, args: Record<string, unknown>) => Promise<unknown>;
-  };
-};
 
 type DeepSeekChoice = {
   message?: {
@@ -47,13 +37,6 @@ type GeminiResponse = {
   };
 };
 
-function isRetryContext(ctx: unknown): ctx is RetryContext {
-  if (!ctx || typeof ctx !== "object") return false;
-  const candidate = ctx as Record<string, unknown>;
-  const scheduler = candidate.scheduler as Record<string, unknown> | undefined;
-  return typeof candidate.runQuery === "function" && typeof scheduler?.runAfter === "function";
-}
-
 function routePurpose(tier: number): RoutePurpose {
   if (tier === 4) return "reasoning";
   if (tier === 3) return "long-context";
@@ -68,25 +51,6 @@ function deepSeekModelForPurpose(purpose: RoutePurpose): string {
   return process.env.DEEPSEEK_MODEL ?? DEFAULT_DEEPSEEK_MODEL;
 }
 
-async function maybeReschedule(ctx: unknown, taskId: unknown): Promise<boolean> {
-  if (!isRetryContext(ctx) || !taskId) return false;
-
-  let retryCount = 0;
-  try {
-    const task = await ctx.runQuery(internal.engine.getTaskById, { taskId });
-    if (task && typeof task === "object" && "retryCount" in task) {
-      const value = (task as { retryCount?: unknown }).retryCount;
-      retryCount = typeof value === "number" ? value : 0;
-    }
-  } catch {
-    retryCount = 0;
-  }
-
-  const backoffMs = Math.min(Math.pow(2, retryCount) * 1000, 30000);
-  await ctx.scheduler.runAfter(backoffMs, internal.engine.executeTask, { taskId });
-  return true;
-}
-
 async function readJson<T>(response: Response): Promise<T> {
   try {
     return (await response.json()) as T;
@@ -99,8 +63,6 @@ async function callDeepSeek(
   purpose: RoutePurpose,
   systemPrompt: string,
   userPrompt: string,
-  ctx?: unknown,
-  taskId?: unknown,
 ): Promise<string> {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) throw new Error("Primary AI key is not configured.");
@@ -125,9 +87,6 @@ async function callDeepSeek(
   const data = await readJson<DeepSeekResponse>(response);
 
   if (!response.ok) {
-    if (response.status === 429 && (await maybeReschedule(ctx, taskId))) {
-      return RATE_LIMIT_RESCHEDULED;
-    }
     throw new Error(data.error?.message ?? `Primary AI request failed (${response.status}).`);
   }
 
@@ -139,8 +98,6 @@ async function callDeepSeek(
 async function callGemini(
   systemPrompt: string,
   userPrompt: string,
-  ctx?: unknown,
-  taskId?: unknown,
 ): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("Backup AI key is not configured.");
@@ -161,9 +118,6 @@ async function callGemini(
   const data = await readJson<GeminiResponse>(response);
 
   if (!response.ok) {
-    if (response.status === 429 && (await maybeReschedule(ctx, taskId))) {
-      return RATE_LIMIT_RESCHEDULED;
-    }
     throw new Error(data.error?.message ?? `Backup AI request failed (${response.status}).`);
   }
 
@@ -187,16 +141,14 @@ export async function executeAITask(
   tier: number,
   systemPrompt: string,
   userPrompt: string,
-  ctx?: unknown,
-  taskId?: unknown,
 ): Promise<string> {
   const purpose = routePurpose(tier);
 
   try {
-    return await callDeepSeek(purpose, systemPrompt, userPrompt, ctx, taskId);
+    return await callDeepSeek(purpose, systemPrompt, userPrompt);
   } catch {
     try {
-      return await callGemini(systemPrompt, userPrompt, ctx, taskId);
+      return await callGemini(systemPrompt, userPrompt);
     } catch {
       return [
         "I could not reach the AI service yet.",

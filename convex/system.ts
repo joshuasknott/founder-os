@@ -5,7 +5,7 @@ import { v, ConvexError } from "convex/values";
 // =========================================================================
 // SYSTEM HALT — The Kill Switch (Doc 7 §1)
 //
-// Emergency stop. Aborts all in-progress directives and tasks, then logs
+// Emergency stop. Aborts all in-progress directives and work runs, then logs
 // a SYSTEM_HALT event through the sanitized telemetry writer.
 // =========================================================================
 
@@ -28,7 +28,7 @@ export const systemHalt = mutation({
       await ctx.db.patch(directive._id, { status: "aborted_by_principal" });
     }
 
-    // 3. Abort all in-progress and queued tasks
+    // 3. Abort legacy task rows and active work runs
     const activeTasks = await ctx.db
       .query("tasks")
       .filter((q) =>
@@ -44,6 +44,21 @@ export const systemHalt = mutation({
       await ctx.db.patch(task._id, { status: "blocked" });
     }
 
+    const activeRuns = await ctx.db
+      .query("workRuns")
+      .filter((q) =>
+        q.or(
+          q.eq(q.field("status"), "queued"),
+          q.eq(q.field("status"), "working"),
+          q.eq(q.field("status"), "waiting_for_approval")
+        )
+      )
+      .collect();
+
+    for (const run of activeRuns) {
+      await ctx.db.patch(run._id, { status: "stopped", updatedAt: Date.now() });
+    }
+
     // 4. Log the SYSTEM_HALT event via sanitized telemetry
     //    We need a traceId — use the first aborted directive, or a placeholder
     const traceDirective = activeDirectives[0];
@@ -57,6 +72,7 @@ export const systemHalt = mutation({
           reason: args.reason ?? "Emergency stop triggered by Principal",
           directivesAborted: activeDirectives.length,
           tasksBlocked: activeTasks.length,
+          runsStopped: activeRuns.length,
         },
       });
     }
@@ -64,7 +80,8 @@ export const systemHalt = mutation({
     return {
       directivesAborted: activeDirectives.length,
       tasksBlocked: activeTasks.length,
-      message: "SYSTEM HALT executed. All active work has been stopped.",
+      runsStopped: activeRuns.length,
+      message: "All active work has been stopped.",
     };
   },
 });
