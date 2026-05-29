@@ -480,7 +480,16 @@ function HomePageContent() {
                   <div className="mt-3 space-y-2">
                     {overview.approvals.map((approval) => (
                       <div key={approval._id} className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2">
-                        <span className="text-xs font-medium text-text-secondary">Approval request</span>
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-text-primary">
+                            {approval.actionTitle ?? "Approval request"}
+                          </p>
+                          {approval.actionDescription && (
+                            <p className="mt-0.5 text-[11px] leading-4 text-text-muted">
+                              {approval.actionDescription}
+                            </p>
+                          )}
+                        </div>
                         <div className="flex gap-2">
                           <button
                             type="button"

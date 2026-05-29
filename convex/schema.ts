@@ -167,6 +167,20 @@ export default defineSchema({
     ),
     directiveId: v.id("directives"),
     taskId: v.optional(v.id("tasks")),
+    runId: v.optional(v.id("workRuns")),
+    actionKind: v.optional(
+      v.union(
+        v.literal("publish_preview"),
+        v.literal("send_email"),
+        v.literal("post_externally"),
+        v.literal("spend_money"),
+        v.literal("delete_data"),
+        v.literal("change_live_asset"),
+        v.literal("generic")
+      )
+    ),
+    actionTitle: v.optional(v.string()),
+    actionDescription: v.optional(v.string()),
     status: v.union(
       v.literal("pending"),
       v.literal("shadow_pending"),
