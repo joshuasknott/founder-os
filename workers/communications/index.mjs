@@ -4,6 +4,8 @@ import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api.js";
 
 const POLL_INTERVAL_MS = Number(process.env.COMMUNICATIONS_WORKER_POLL_INTERVAL_MS ?? 5000);
+const WORKER_ID = process.env.COMMUNICATIONS_WORKER_ID ?? `communications:${process.pid}`;
+const LEASE_MS = Number(process.env.COMMUNICATIONS_WORKER_LEASE_MS ?? 10 * 60 * 1000);
 
 function readLocalEnv(name) {
   const filePath = resolve(process.cwd(), ".env.local");
@@ -83,7 +85,21 @@ function communicationDraft(run, directive) {
 
 async function processRun(client, run) {
   console.log(`Starting hidden communications run: ${run._id}`);
-  await client.mutation(api.workRuns.markWorking, { runId: run._id });
+  const approvedAction = await client.query(api.approvals.getApprovedActionForRun, {
+    runId: run._id,
+  });
+  if (approvedAction) {
+    await append(client, run._id, "I'm resuming the approved step.");
+    await sleep(400);
+    await client.mutation(api.approvals.resumeApprovedActionWithoutConnector, {
+      approvalId: approvedAction.approvalId,
+      runId: run._id,
+      leaseId: run.leaseId,
+    });
+    console.log(`Hidden communications run returned approved action to review: ${run._id}`);
+    return;
+  }
+
   await append(
     client,
     run._id,
@@ -103,6 +119,7 @@ async function processRun(client, run) {
   await sleep(400);
   await client.mutation(api.workRuns.markNeedsReviewWithResult, {
     runId: run._id,
+    leaseId: run.leaseId,
     summary: result.summary,
     content: result.content,
     internalNotes: JSON.stringify({
@@ -117,8 +134,11 @@ async function processRun(client, run) {
 }
 
 async function tick(client) {
-  const runs = await client.query(api.workRuns.listQueuedCommunications, { limit: 1 });
-  const run = runs[0];
+  const run = await client.mutation(api.workRuns.leaseNext, {
+    kinds: ["email", "schedule"],
+    workerId: WORKER_ID,
+    leaseMs: LEASE_MS,
+  });
   if (!run) return false;
 
   try {
@@ -128,7 +148,9 @@ async function tick(client) {
     console.error(`Hidden communications run failed: ${message}`);
     await client.mutation(api.workRuns.markFailed, {
       runId: run._id,
-      message: "FounderOS could not prepare this for review yet.",
+      leaseId: run.leaseId,
+      failureReason: "FounderOS could not prepare this for review yet.",
+      internalError: message,
     });
   }
 

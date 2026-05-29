@@ -71,19 +71,15 @@ export const sendMessage = action({
       .map((message) => `${message.role === "user" ? "Human" : agent.name}: ${message.content}`)
       .join("\n");
 
-    let libraryContext = "No relevant Library context found.";
+    let libraryContext = "No relevant workspace context found.";
     try {
-      const results = await ctx.runAction(internal.memory.queryMemory, {
+      const context = await ctx.runAction(internal.search.retrieveContext, {
         queryText: args.content,
-        limit: 4,
+        limit: 8,
       });
-      if (results.length > 0) {
-        libraryContext = results
-          .map((result, index) => `[Library ${index + 1}: ${result.title}]\n${result.content}`)
-          .join("\n\n");
-      }
+      libraryContext = context.text;
     } catch {
-      libraryContext = "Library context is unavailable right now.";
+      libraryContext = "Workspace context is unavailable right now.";
     }
 
     const capabilityToTier: Record<string, number> = {
@@ -91,15 +87,40 @@ export const sendMessage = action({
     };
     const tier = capabilityToTier[agent.routingRequest] ?? 1;
 
-    const systemPrompt = `${agent.systemPrompt}\n\nYou are in CHAT MODE. This is a read-only conversation with the founder. Help them understand, plan, and think through problems. You cannot execute tasks, create outputs, schedule work, publish, send messages, or make changes in this mode. If the founder wants work performed, help them shape a clear task instead.\n\nRelevant Library context:\n${libraryContext}\n\nConversation so far:\n${historyContext}`;
+    const systemPrompt = `${agent.systemPrompt}\n\nYou are in CHAT MODE. This is a read-only conversation with the founder. Help them understand, plan, and think through problems. You cannot execute tasks, create outputs, schedule work, publish, send messages, or make changes in this mode. If the founder wants work performed, help them shape a clear task instead.\n\nRelevant workspace context:\n${libraryContext}\n\nConversation so far:\n${historyContext}`;
 
-    const { executeAITask } = await import("./ai");
+    const { executeChat, safeAIErrorMessage } = await import("./ai");
     let response: string;
     try {
-      response = await executeAITask(tier, systemPrompt, args.content);
+      const result = await executeChat({
+        tier,
+        systemPrompt,
+        userPrompt: args.content,
+        onUsage: async (usage) => {
+          await ctx.runMutation(internal.telemetry.logEvent, {
+            traceId: args.sessionId as string,
+            actor: `agent: ${agent.name}`,
+            eventType: "AI_REQUEST",
+            rawPayload: {
+              useCase: usage.useCase,
+              mode: "chat",
+              readOnly: true,
+            },
+            metrics: {
+              latencyMs: usage.latencyMs,
+              tokensUsed: usage.tokensUsed,
+              model: usage.model,
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              costUSD: usage.costUSD,
+              useCase: usage.useCase,
+            },
+          });
+        },
+      });
+      response = result.content;
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Failed to get response. Check settings.";
-      response = `FounderOS could not complete that response yet. ${message}`;
+      response = safeAIErrorMessage(error);
     }
 
     await ctx.runMutation(internal.chat.storeMessage, {
@@ -121,6 +142,19 @@ export const storeMessage = internalMutation({
     role: v.union(v.literal("user"), v.literal("assistant")),
     content: v.string(),
     agentName: v.optional(v.string()),
+    card: v.optional(
+      v.object({
+        type: v.union(v.literal("task_result"), v.literal("item_navigation")),
+        title: v.string(),
+        summary: v.optional(v.string()),
+        href: v.optional(v.string()),
+        label: v.optional(v.string()),
+        itemId: v.optional(v.id("items")),
+        documentId: v.optional(v.id("documents")),
+        runId: v.optional(v.id("workRuns")),
+        directiveId: v.optional(v.id("directives")),
+      }),
+    ),
   },
   handler: async (ctx, args) => {
     return await ctx.db.insert("chatMessages", {
@@ -128,6 +162,7 @@ export const storeMessage = internalMutation({
       role: args.role,
       content: args.content,
       agentName: args.agentName,
+      card: args.card,
     });
   },
 });

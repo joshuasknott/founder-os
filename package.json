@@ -14,7 +14,10 @@
     "worker:design": "node workers/design/index.mjs",
     "worker:design:once": "node workers/design/index.mjs --once",
     "worker:communications": "node workers/communications/index.mjs",
-    "worker:communications:once": "node workers/communications/index.mjs --once"
+    "worker:communications:once": "node workers/communications/index.mjs --once",
+    "worker:generic": "node workers/generic/index.mjs",
+    "worker:generic:once": "node workers/generic/index.mjs --once",
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@convex-dev/better-auth": "^0.10.13",

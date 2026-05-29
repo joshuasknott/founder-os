@@ -1,5 +1,133 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import {
+  entityType,
+  factStatus,
+  itemKind,
+  itemSource,
+  itemStatus,
+  relationType,
+  savedViewScope,
+  versionFormat,
+  workflowKind,
+  workflowStatus,
+} from "./itemValidators";
+
+const workRunKind = v.union(
+  v.literal("code_preview"),
+  v.literal("document"),
+  v.literal("design"),
+  v.literal("email"),
+  v.literal("schedule"),
+  v.literal("data_update"),
+  v.literal("generic")
+);
+
+const workerKind = v.union(
+  v.literal("builder"),
+  v.literal("document"),
+  v.literal("design"),
+  v.literal("communications"),
+  v.literal("generic")
+);
+
+const taskCategory = v.union(
+  v.literal("build"),
+  v.literal("document"),
+  v.literal("design"),
+  v.literal("communication"),
+  v.literal("schedule"),
+  v.literal("data"),
+  v.literal("generic")
+);
+
+const outputDocumentKind = v.union(
+  v.literal("document"),
+  v.literal("file"),
+  v.literal("website"),
+  v.literal("internal_tool"),
+  v.literal("tool"),
+  v.literal("presentation"),
+  v.literal("automation"),
+  v.literal("task_output"),
+  v.literal("conversation"),
+  v.literal("record"),
+  v.literal("brief"),
+  v.literal("plan")
+);
+
+const taskClassification = v.object({
+  category: taskCategory,
+  runKind: workRunKind,
+  workerKind,
+  outputItemKind: itemKind,
+  outputDocumentKind,
+  requiresReview: v.boolean(),
+  confidence: v.number(),
+  signals: v.array(v.string()),
+});
+
+const sensitiveActionKind = v.union(
+  v.literal("publish_preview"),
+  v.literal("send_email"),
+  v.literal("post_externally"),
+  v.literal("spend_money"),
+  v.literal("delete_data"),
+  v.literal("change_live_asset"),
+  v.literal("generic")
+);
+
+const connectorAuthType = v.union(
+  v.literal("oauth2"),
+  v.literal("api_key"),
+  v.literal("webhook"),
+  v.literal("managed")
+);
+
+const connectorConnectionStatus = v.union(
+  v.literal("needs_attention"),
+  v.literal("connected"),
+  v.literal("disabled")
+);
+
+const connectorApprovalPolicy = v.union(
+  v.literal("never"),
+  v.literal("per_sensitive_action"),
+  v.literal("always")
+);
+
+const connectorActionStatus = v.union(
+  v.literal("pending"),
+  v.literal("completed"),
+  v.literal("needs_attention"),
+  v.literal("approval_required"),
+  v.literal("failed")
+);
+
+const approvalAuditEvent = v.object({
+  event: v.union(
+    v.literal("requested"),
+    v.literal("approved"),
+    v.literal("denied"),
+    v.literal("handled")
+  ),
+  at: v.number(),
+  actor: v.string(),
+  actionKind: v.optional(sensitiveActionKind),
+  message: v.optional(v.string()),
+});
+
+const chatMessageCard = v.object({
+  type: v.union(v.literal("task_result"), v.literal("item_navigation")),
+  title: v.string(),
+  summary: v.optional(v.string()),
+  href: v.optional(v.string()),
+  label: v.optional(v.string()),
+  itemId: v.optional(v.id("items")),
+  documentId: v.optional(v.id("documents")),
+  runId: v.optional(v.id("workRuns")),
+  directiveId: v.optional(v.id("directives")),
+});
 
 export default defineSchema({
   // ===========================================================================
@@ -20,6 +148,70 @@ export default defineSchema({
     value: v.string(),
     createdAt: v.optional(v.number()),
   }).index("by_workspace", ["workspaceId"]),
+
+  connectorCredentials: defineTable({
+    workspaceId: v.id("workspaces"),
+    connectorId: v.string(),
+    storageProvider: v.string(),
+    vaultKey: v.string(),
+    sealedReference: v.string(),
+    fingerprint: v.string(),
+    keyVersion: v.string(),
+    secretPreview: v.string(),
+    createdAt: v.number(),
+    rotatedAt: v.optional(v.number()),
+  })
+    .index("by_workspace", ["workspaceId"])
+    .index("by_workspace_connector", ["workspaceId", "connectorId"])
+    .index("by_vault_key", ["vaultKey"]),
+
+  connectorConnections: defineTable({
+    workspaceId: v.id("workspaces"),
+    connectorId: v.string(),
+    safeDisplayName: v.string(),
+    authType: connectorAuthType,
+    capabilities: v.array(v.string()),
+    requiredScopes: v.array(v.string()),
+    grantedScopes: v.array(v.string()),
+    approvalPolicy: connectorApprovalPolicy,
+    status: connectorConnectionStatus,
+    credentialRef: v.optional(v.string()),
+    credentialFingerprint: v.optional(v.string()),
+    credentialPreview: v.optional(v.string()),
+    connectedBy: v.optional(v.string()),
+    connectedAt: v.optional(v.number()),
+    lastTestedAt: v.optional(v.number()),
+    lastHealthyAt: v.optional(v.number()),
+    lastSafeMessage: v.optional(v.string()),
+    disabledAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_workspace", ["workspaceId"])
+    .index("by_workspace_connector", ["workspaceId", "connectorId"])
+    .index("by_status", ["workspaceId", "status"]),
+
+  connectorActionLogs: defineTable({
+    workspaceId: v.id("workspaces"),
+    connectionId: v.optional(v.id("connectorConnections")),
+    connectorId: v.string(),
+    actionType: v.string(),
+    requestedBy: v.optional(v.string()),
+    directiveId: v.optional(v.id("directives")),
+    runId: v.optional(v.id("workRuns")),
+    approvalId: v.optional(v.id("approvalQueue")),
+    status: connectorActionStatus,
+    approvalRequired: v.boolean(),
+    safeSummary: v.string(),
+    safeError: v.optional(v.string()),
+    internalErrorCode: v.optional(v.string()),
+    createdAt: v.number(),
+    completedAt: v.optional(v.number()),
+  })
+    .index("by_workspace", ["workspaceId"])
+    .index("by_connection", ["connectionId"])
+    .index("by_run", ["runId"])
+    .index("by_created", ["createdAt"]),
 
   users: defineTable({
     externalId: v.string(),
@@ -139,7 +331,7 @@ export default defineSchema({
     directiveId: v.id("directives"),
     title: v.string(),
     description: v.string(),
-    assignedAgentId: v.id("agents"),
+    assignedAgentId: v.optional(v.id("agents")),
     status: v.union(
       v.literal("queued"),
       v.literal("in_progress"),
@@ -150,8 +342,17 @@ export default defineSchema({
     ),
     autonomyLevel: v.union(v.literal(1), v.literal(2), v.literal(3)),
     dependencies: v.array(v.id("tasks")),
+    classification: v.optional(taskClassification),
+    workerKind: v.optional(workerKind),
+    outputItemId: v.optional(v.id("items")),
+    outputDocumentId: v.optional(v.id("documents")),
+    failureReason: v.optional(v.string()),
     retryCount: v.optional(v.number()),
     executionToken: v.optional(v.string()),
+    startedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    failedAt: v.optional(v.number()),
+    updatedAt: v.optional(v.number()),
   }).index("by_directive", ["directiveId"]),
 
   // ===========================================================================
@@ -168,19 +369,10 @@ export default defineSchema({
     directiveId: v.id("directives"),
     taskId: v.optional(v.id("tasks")),
     runId: v.optional(v.id("workRuns")),
-    actionKind: v.optional(
-      v.union(
-        v.literal("publish_preview"),
-        v.literal("send_email"),
-        v.literal("post_externally"),
-        v.literal("spend_money"),
-        v.literal("delete_data"),
-        v.literal("change_live_asset"),
-        v.literal("generic")
-      )
-    ),
+    actionKind: v.optional(sensitiveActionKind),
     actionTitle: v.optional(v.string()),
     actionDescription: v.optional(v.string()),
+    actionPayload: v.optional(v.any()),
     status: v.union(
       v.literal("pending"),
       v.literal("shadow_pending"),
@@ -189,6 +381,10 @@ export default defineSchema({
     ),
     payloadHash: v.optional(v.string()),
     principalSignature: v.optional(v.string()),
+    createdAt: v.optional(v.number()),
+    decidedAt: v.optional(v.number()),
+    handledAt: v.optional(v.number()),
+    auditHistory: v.optional(v.array(approvalAuditEvent)),
     autonomyLevel: v.union(v.literal(1), v.literal(2), v.literal(3)),
   }).index("by_directive", ["directiveId"]),
 
@@ -203,14 +399,176 @@ export default defineSchema({
     role: v.union(v.literal("user"), v.literal("assistant")),
     content: v.string(),
     agentName: v.optional(v.string()),
+    card: v.optional(chatMessageCard),
   }).index("by_session", ["sessionId"]),
 
   // ===========================================================================
   // 4. THE INTELLIGENCE LAYER (Sovereign Knowledge Vault — RAG)
   // ===========================================================================
 
+  items: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
+    departmentId: v.optional(v.id("departments")),
+    title: v.string(),
+    kind: itemKind,
+    status: itemStatus,
+    source: itemSource,
+    author: v.optional(v.string()),
+    summary: v.optional(v.string()),
+    currentVersionId: v.optional(v.id("itemVersions")),
+    versionCount: v.optional(v.number()),
+    legacyDocumentId: v.optional(v.id("documents")),
+    traceId: v.optional(v.id("directives")),
+    taskId: v.optional(v.id("tasks")),
+    runId: v.optional(v.id("workRuns")),
+    sourceUrl: v.optional(v.string()),
+    externalId: v.optional(v.string()),
+    storageId: v.optional(v.id("_storage")),
+    mimeType: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
+    metadata: v.optional(v.any()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    archivedAt: v.optional(v.number()),
+  })
+    .index("by_workspace", ["workspaceId"])
+    .index("by_workspace_kind", ["workspaceId", "kind"])
+    .index("by_workspace_status", ["workspaceId", "status"])
+    .index("by_department", ["departmentId"])
+    .index("by_trace", ["traceId"])
+    .index("by_run", ["runId"])
+    .index("by_updated", ["updatedAt"])
+    .index("by_external", ["source", "externalId"]),
+
+  itemVersions: defineTable({
+    itemId: v.id("items"),
+    versionNumber: v.number(),
+    title: v.optional(v.string()),
+    summary: v.optional(v.string()),
+    content: v.optional(v.string()),
+    format: versionFormat,
+    sourceUrl: v.optional(v.string()),
+    storageId: v.optional(v.id("_storage")),
+    mimeType: v.optional(v.string()),
+    sizeBytes: v.optional(v.number()),
+    checksum: v.optional(v.string()),
+    createdBy: v.optional(v.string()),
+    createdAt: v.number(),
+    metadata: v.optional(v.any()),
+    legacyDocumentVersionId: v.optional(v.id("documentVersions")),
+    embedding: v.optional(v.array(v.float64())),
+  })
+    .index("by_item", ["itemId"])
+    .vectorIndex("by_embedding", {
+      vectorField: "embedding",
+      dimensions: 768,
+      filterFields: ["itemId"],
+    }),
+
+  itemRelations: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
+    fromItemId: v.id("items"),
+    toItemId: v.optional(v.id("items")),
+    toEntityId: v.optional(v.id("entities")),
+    relationType,
+    summary: v.optional(v.string()),
+    strength: v.optional(v.number()),
+    metadata: v.optional(v.any()),
+    createdBy: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_from", ["fromItemId"])
+    .index("by_to_item", ["toItemId"])
+    .index("by_to_entity", ["toEntityId"])
+    .index("by_workspace_type", ["workspaceId", "relationType"]),
+
+  entities: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
+    type: entityType,
+    name: v.string(),
+    canonicalName: v.string(),
+    aliases: v.optional(v.array(v.string())),
+    description: v.optional(v.string()),
+    sourceItemId: v.optional(v.id("items")),
+    externalId: v.optional(v.string()),
+    metadata: v.optional(v.any()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_workspace", ["workspaceId"])
+    .index("by_workspace_type", ["workspaceId", "type"])
+    .index("by_canonical", ["workspaceId", "canonicalName"])
+    .index("by_external", ["type", "externalId"]),
+
+  facts: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
+    entityId: v.optional(v.id("entities")),
+    itemId: v.optional(v.id("items")),
+    subject: v.string(),
+    predicate: v.string(),
+    object: v.string(),
+    value: v.optional(v.any()),
+    confidence: v.optional(v.number()),
+    status: factStatus,
+    sourceItemId: v.optional(v.id("items")),
+    sourceVersionId: v.optional(v.id("itemVersions")),
+    validFrom: v.optional(v.number()),
+    validTo: v.optional(v.number()),
+    metadata: v.optional(v.any()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_entity", ["entityId"])
+    .index("by_item", ["itemId"])
+    .index("by_source_item", ["sourceItemId"])
+    .index("by_workspace_predicate", ["workspaceId", "predicate"]),
+
+  savedViews: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
+    title: v.string(),
+    description: v.optional(v.string()),
+    scope: savedViewScope,
+    query: v.optional(v.string()),
+    itemKinds: v.optional(v.array(itemKind)),
+    filters: v.optional(v.any()),
+    sort: v.optional(v.any()),
+    isPinned: v.boolean(),
+    createdBy: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_workspace", ["workspaceId"])
+    .index("by_pinned", ["workspaceId", "isPinned"])
+    .index("by_scope", ["workspaceId", "scope"]),
+
+  workflows: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
+    title: v.string(),
+    description: v.optional(v.string()),
+    kind: workflowKind,
+    status: workflowStatus,
+    trigger: v.optional(v.any()),
+    steps: v.array(
+      v.object({
+        key: v.string(),
+        title: v.string(),
+        kind: v.string(),
+        config: v.optional(v.any()),
+        outputItemKind: v.optional(itemKind),
+      })
+    ),
+    ownerId: v.optional(v.id("users")),
+    metadata: v.optional(v.any()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_workspace", ["workspaceId"])
+    .index("by_status", ["workspaceId", "status"])
+    .index("by_kind", ["workspaceId", "kind"]),
+
   documents: defineTable({
     workspaceId: v.optional(v.id("workspaces")),
+    itemId: v.optional(v.id("items")),
     title: v.string(),
     departmentTag: v.id("departments"),
     author: v.string(),
@@ -251,6 +609,7 @@ export default defineSchema({
 
   documentVersions: defineTable({
     documentId: v.id("documents"),
+    itemVersionId: v.optional(v.id("itemVersions")),
     content: v.string(),
     versionNumber: v.optional(v.number()),
     createdAt: v.optional(v.number()),
@@ -285,6 +644,7 @@ export default defineSchema({
     workspaceId: v.optional(v.id("workspaces")),
     departmentId: v.optional(v.id("departments")),
     projectId: v.optional(v.id("projects")),
+    workflowId: v.optional(v.id("workflows")),
     title: v.string(),
     kind: v.union(
       v.literal("follow_up"),
@@ -295,8 +655,10 @@ export default defineSchema({
     ),
     status: v.union(
       v.literal("scheduled"),
+      v.literal("paused"),
       v.literal("done"),
-      v.literal("skipped")
+      v.literal("skipped"),
+      v.literal("deleted")
     ),
     startAt: v.number(),
     endAt: v.optional(v.number()),
@@ -309,9 +671,17 @@ export default defineSchema({
         v.literal("weekly")
       )
     ),
+    timezone: v.optional(v.string()),
+    nextRunAt: v.optional(v.number()),
+    lastRunAt: v.optional(v.number()),
+    runCount: v.optional(v.number()),
+    deletedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.optional(v.number()),
-  }).index("by_start", ["startAt"]),
+  })
+    .index("by_start", ["startAt"])
+    .index("by_next_run", ["status", "nextRunAt"])
+    .index("by_workflow", ["workflowId"]),
 
   buildActivities: defineTable({
     workspaceId: v.optional(v.id("workspaces")),
@@ -337,15 +707,20 @@ export default defineSchema({
   workRuns: defineTable({
     directiveId: v.id("directives"),
     taskId: v.optional(v.id("tasks")),
-    kind: v.union(
-      v.literal("code_preview"),
-      v.literal("document"),
-      v.literal("design"),
-      v.literal("email"),
-      v.literal("schedule"),
-      v.literal("data_update"),
-      v.literal("generic")
+    scheduleItemId: v.optional(v.id("scheduleItems")),
+    workflowId: v.optional(v.id("workflows")),
+    scheduledFor: v.optional(v.number()),
+    trigger: v.optional(
+      v.union(
+        v.literal("manual"),
+        v.literal("schedule"),
+        v.literal("retry"),
+        v.literal("chat")
+      )
     ),
+    kind: workRunKind,
+    workerKind: v.optional(workerKind),
+    classification: v.optional(taskClassification),
     status: v.union(
       v.literal("queued"),
       v.literal("working"),
@@ -359,11 +734,28 @@ export default defineSchema({
     summary: v.optional(v.string()),
     internalNotes: v.optional(v.string()),
     previewUrl: v.optional(v.string()),
+    outputItemId: v.optional(v.id("items")),
+    outputDocumentId: v.optional(v.id("documents")),
+    resultCardMessageId: v.optional(v.id("chatMessages")),
+    navigationCardMessageId: v.optional(v.id("chatMessages")),
+    attemptCount: v.optional(v.number()),
+    maxAttempts: v.optional(v.number()),
+    failureReason: v.optional(v.string()),
+    lastError: v.optional(v.string()),
+    leaseId: v.optional(v.string()),
+    leaseOwner: v.optional(v.string()),
+    leaseExpiresAt: v.optional(v.number()),
+    startedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    failedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_directive", ["directiveId"])
-    .index("by_status", ["status"]),
+    .index("by_schedule", ["scheduleItemId"])
+    .index("by_workflow", ["workflowId"])
+    .index("by_status", ["status"])
+    .index("by_kind_status", ["kind", "status"]),
 
   workRunUpdates: defineTable({
     runId: v.id("workRuns"),
@@ -386,6 +778,7 @@ export default defineSchema({
     kind: v.string(),
     summary: v.optional(v.string()),
     url: v.optional(v.string()),
+    libraryItemId: v.optional(v.id("items")),
     libraryDocumentId: v.optional(v.id("documents")),
     metadata: v.optional(v.any()),
     createdAt: v.number(),
@@ -403,6 +796,7 @@ export default defineSchema({
     eventType: v.union(
       v.literal("STATE_TRANSITION"),
       v.literal("TOOL_INVOCATION"),
+      v.literal("AI_REQUEST"),
       v.literal("RAG_QUERY"),
       v.literal("ERROR_ESCALATION"),
       v.literal("SYSTEM_HALT")
@@ -415,6 +809,8 @@ export default defineSchema({
         model: v.optional(v.string()),
         inputTokens: v.optional(v.number()),
         outputTokens: v.optional(v.number()),
+        costUSD: v.optional(v.number()),
+        useCase: v.optional(v.string()),
       })
     ),
   }).index("by_traceId", ["traceId"]),

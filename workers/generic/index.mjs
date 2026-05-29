@@ -3,10 +3,9 @@ import { resolve } from "node:path";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api.js";
 
-const POLL_INTERVAL_MS = Number(process.env.DESIGN_WORKER_POLL_INTERVAL_MS ?? 5000);
-const REVIEW_URL = process.env.DESIGN_REVIEW_URL;
-const WORKER_ID = process.env.DESIGN_WORKER_ID ?? `design:${process.pid}`;
-const LEASE_MS = Number(process.env.DESIGN_WORKER_LEASE_MS ?? 10 * 60 * 1000);
+const POLL_INTERVAL_MS = Number(process.env.GENERIC_WORKER_POLL_INTERVAL_MS ?? 5000);
+const WORKER_ID = process.env.GENERIC_WORKER_ID ?? `generic:${process.pid}`;
+const LEASE_MS = Number(process.env.GENERIC_WORKER_LEASE_MS ?? 10 * 60 * 1000);
 
 function readLocalEnv(name) {
   const filePath = resolve(process.cwd(), ".env.local");
@@ -45,28 +44,38 @@ async function append(client, runId, message, tone = "progress") {
   });
 }
 
-function designBrief(run, directive) {
-  const summary = "A first design direction is ready for review and saved in your Library.";
-  const content = [
-    `# ${run.title}`,
-    "",
-    "## Design Brief",
-    directive.objective,
-    "",
-    "## Draft Concepts",
-    "- Clear, business-focused layout.",
-    "- Reusable visual direction for the requested asset.",
-    "- Prepared as a review placeholder before a full design connector is added.",
-    "",
-    "## Review Notes",
-    "Review the direction, then ask FounderOS for refinements or final asset production.",
-  ].join("\n");
+function genericResult(run, directive) {
+  if (run.kind === "data_update") {
+    return {
+      summary: "The workspace record is ready and saved in your Library.",
+      content: [
+        `# ${run.title}`,
+        "",
+        "## Record Update",
+        directive.objective,
+        "",
+        "## Result",
+        "FounderOS prepared this as a saved workspace record so it can be reused later.",
+      ].join("\n"),
+    };
+  }
 
-  return { summary, content };
+  return {
+    summary: "The requested work is ready and saved in your Library.",
+    content: [
+      `# ${run.title}`,
+      "",
+      "## Request",
+      directive.objective,
+      "",
+      "## Result",
+      "FounderOS prepared this as a general task output. Ask for a revision if you want it changed.",
+    ].join("\n"),
+  };
 }
 
 async function processRun(client, run) {
-  console.log(`Starting hidden design run: ${run._id}`);
+  console.log(`Starting hidden generic run: ${run._id}`);
   const approvedAction = await client.query(api.approvals.getApprovedActionForRun, {
     runId: run._id,
   });
@@ -78,11 +87,11 @@ async function processRun(client, run) {
       runId: run._id,
       leaseId: run.leaseId,
     });
-    console.log(`Hidden design run returned approved action to review: ${run._id}`);
+    console.log(`Hidden generic run returned approved action to review: ${run._id}`);
     return;
   }
 
-  await append(client, run._id, "I'm preparing the design brief.");
+  await append(client, run._id, "I'm preparing this work.");
 
   const directive = await client.query(api.directives.getDirectiveById, {
     directiveId: run.directiveId,
@@ -90,31 +99,28 @@ async function processRun(client, run) {
   if (!directive) throw new Error("Task not found.");
 
   await sleep(400);
-  await append(client, run._id, "I'm shaping the first visual direction.");
+  await append(client, run._id, "I'm saving the result.");
 
-  const result = designBrief(run, directive);
+  const result = genericResult(run, directive);
 
   await sleep(400);
-  await client.mutation(api.workRuns.markNeedsReviewWithResult, {
+  await client.mutation(api.workRuns.completeWithResult, {
     runId: run._id,
     leaseId: run.leaseId,
     summary: result.summary,
     content: result.content,
-    previewUrl: REVIEW_URL,
     internalNotes: JSON.stringify({
-      mode: "design_worker",
-      reviewUrl: REVIEW_URL ?? null,
-      connector: "placeholder",
+      mode: "generic_worker",
+      kind: run.kind,
     }),
-    message: "The design direction is ready to review.",
   });
 
-  console.log(`Hidden design run ready for review: ${run._id}`);
+  console.log(`Hidden generic run completed: ${run._id}`);
 }
 
 async function tick(client) {
   const run = await client.mutation(api.workRuns.leaseNext, {
-    kinds: ["design"],
+    kinds: ["generic", "data_update"],
     workerId: WORKER_ID,
     leaseMs: LEASE_MS,
   });
@@ -124,11 +130,11 @@ async function tick(client) {
     await processRun(client, run);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`Hidden design run failed: ${message}`);
+    console.error(`Hidden generic run failed: ${message}`);
     await client.mutation(api.workRuns.markFailed, {
       runId: run._id,
       leaseId: run.leaseId,
-      failureReason: "FounderOS could not prepare the design draft yet.",
+      failureReason: "FounderOS could not finish this task yet.",
       internalError: message,
     });
   }
@@ -139,7 +145,7 @@ async function tick(client) {
 async function main() {
   const url = convexUrl();
   if (!url) {
-    throw new Error("Set CONVEX_URL or NEXT_PUBLIC_CONVEX_URL before running the design worker.");
+    throw new Error("Set CONVEX_URL or NEXT_PUBLIC_CONVEX_URL before running the generic worker.");
   }
 
   const client = new ConvexHttpClient(url);

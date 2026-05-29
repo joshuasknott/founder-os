@@ -88,6 +88,7 @@ export const logEvent = internalMutation({
     eventType: v.union(
       v.literal("STATE_TRANSITION"),
       v.literal("TOOL_INVOCATION"),
+      v.literal("AI_REQUEST"),
       v.literal("RAG_QUERY"),
       v.literal("ERROR_ESCALATION"),
       v.literal("SYSTEM_HALT")
@@ -100,6 +101,8 @@ export const logEvent = internalMutation({
         model: v.optional(v.string()),
         inputTokens: v.optional(v.number()),
         outputTokens: v.optional(v.number()),
+        costUSD: v.optional(v.number()),
+        useCase: v.optional(v.string()),
       })
     ),
   },
@@ -116,6 +119,8 @@ export const logEvent = internalMutation({
           model: args.metrics.model,
           inputTokens: args.metrics.inputTokens,
           outputTokens: args.metrics.outputTokens,
+          costUSD: args.metrics.costUSD,
+          useCase: args.metrics.useCase,
         }
       : undefined;
 

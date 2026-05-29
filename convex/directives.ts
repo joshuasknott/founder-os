@@ -1,87 +1,42 @@
 import { mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
+import type { Doc } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
+import {
+  classifyTaskObjective,
+  normalizePlainWorkerMessage,
+  type TaskClassification,
+} from "./taskRuntime";
 
-function initialRunKind(
-  objective: string,
-): "code_preview" | "document" | "design" | "email" | "schedule" | "generic" {
-  const normalized = objective.toLowerCase();
-  const buildSignals = [
-    "build",
-    "create a page",
-    "create page",
-    "landing page",
-    "website",
-    "app",
-    "internal tool",
-    "preview",
-    "code",
-    "fix",
-    "bug",
-  ];
+function autonomyForClassification(classification: TaskClassification): 1 | 2 | 3 {
+  if (classification.workerKind === "builder") return 3;
+  if (classification.requiresReview) return 2;
+  return 1;
+}
 
-  if (buildSignals.some((signal) => normalized.includes(signal))) {
-    return "code_preview";
-  }
+async function chooseAssignedAgent(
+  ctx: MutationCtx,
+  classification: TaskClassification,
+): Promise<Doc<"agents"> | null> {
+  const agents = await ctx.db.query("agents").collect();
+  if (agents.length === 0) return null;
 
-  const designSignals = [
-    "design",
-    "graphic",
-    "social post",
-    "social posts",
-    "brand asset",
-    "visual",
-    "image",
-    "presentation",
-    "slide",
-    "deck",
-  ];
+  const preferredRouting: Record<TaskClassification["workerKind"], Array<Doc<"agents">["routingRequest"]>> = {
+    builder: ["coding", "reasoning"],
+    document: ["long-context", "reasoning", "triage"],
+    design: ["creative", "reasoning"],
+    communications: ["triage", "creative", "reasoning"],
+    generic: ["triage", "reasoning"],
+  };
 
-  if (designSignals.some((signal) => normalized.includes(signal))) {
-    return "design";
-  }
-
-  const emailSignals = [
-    "email",
-    "outreach",
-    "reply",
-    "follow-up email",
-    "follow up email",
-  ];
-
-  if (emailSignals.some((signal) => normalized.includes(signal))) {
-    return "email";
-  }
-
-  const scheduleSignals = [
-    "schedule",
-    "reminder",
-    "calendar",
-    "meeting time",
-    "meeting times",
-    "follow-up",
-    "follow up",
-  ];
-
-  if (scheduleSignals.some((signal) => normalized.includes(signal))) {
-    return "schedule";
-  }
-
-  const documentSignals = [
-    "brief",
-    "plan",
-    "checklist",
-    "proposal",
-    "meeting notes",
-    "launch plan",
-    "draft",
-    "write",
-    "summarize",
-  ];
-
-  return documentSignals.some((signal) => normalized.includes(signal))
-    ? "document"
-    : "generic";
+  return (
+    agents.find((agent) =>
+      preferredRouting[classification.workerKind].includes(agent.routingRequest),
+    ) ??
+    agents.find((agent) => agent.isActive) ??
+    agents[0]
+  );
 }
 
 export const createDirective = mutation({
@@ -91,6 +46,11 @@ export const createDirective = mutation({
     sessionId: v.optional(v.id("chatSessions")),
   },
   handler: async (ctx, args) => {
+    const classification = classifyTaskObjective({
+      title: args.title,
+      objective: args.objective,
+    });
+    const assignedAgent = await chooseAssignedAgent(ctx, classification);
     const directiveId = await ctx.db.insert("directives", {
       title: args.title,
       objective: args.objective,
@@ -99,18 +59,37 @@ export const createDirective = mutation({
     });
 
     const now = Date.now();
+    const taskId = await ctx.db.insert("tasks", {
+      directiveId,
+      title: args.title,
+      description: args.objective,
+      ...(assignedAgent ? { assignedAgentId: assignedAgent._id } : {}),
+      status: "queued",
+      autonomyLevel: autonomyForClassification(classification),
+      dependencies: [],
+      classification,
+      workerKind: classification.workerKind,
+      retryCount: 0,
+      updatedAt: now,
+    });
+
     const runId = await ctx.db.insert("workRuns", {
       directiveId,
-      kind: initialRunKind(args.objective),
+      taskId,
+      kind: classification.runKind,
+      workerKind: classification.workerKind,
+      classification,
       status: "queued",
       title: args.title,
+      attemptCount: 0,
+      maxAttempts: 3,
       createdAt: now,
       updatedAt: now,
     });
 
     await ctx.db.insert("workRunUpdates", {
       runId,
-      message: "I've added this to your workspace and I'm preparing the next step.",
+      message: normalizePlainWorkerMessage("I've added this to your workspace and I'm preparing the next step."),
       tone: "info",
       createdAt: now,
     });
@@ -126,7 +105,7 @@ export const createDirective = mutation({
         sessionId: args.sessionId,
         role: "assistant",
         agentName: "FounderOS",
-        content: `I've added this to your workspace and I'm preparing the next step.`,
+        content: normalizePlainWorkerMessage("I've added this to your workspace and I'm preparing the next step."),
       });
 
       await ctx.db.patch(args.sessionId, { lastMessageAt: Date.now() });
@@ -138,7 +117,7 @@ export const createDirective = mutation({
       eventType: "STATE_TRANSITION" as const,
       rawPayload: {
         directive: args.title,
-        transition: "created → pending_spec",
+        transition: "created -> pending_spec",
       },
     });
 
@@ -176,7 +155,7 @@ export const addClarification = mutation({
         sessionId,
         role: "assistant",
         agentName: "FounderOS",
-        content: "Thanks. I added that answer to the task and will continue from here.",
+        content: normalizePlainWorkerMessage("Thanks. I added that answer to the task and will continue from here."),
       });
 
       await ctx.db.patch(sessionId, { lastMessageAt: Date.now() });
@@ -229,7 +208,13 @@ export const stopDirective = mutation({
 
     for (const run of workRuns) {
       if (run.status !== "completed" && run.status !== "stopped" && run.status !== "failed") {
-        await ctx.db.patch(run._id, { status: "stopped", updatedAt: Date.now() });
+        await ctx.db.patch(run._id, {
+          status: "stopped",
+          leaseId: undefined,
+          leaseOwner: undefined,
+          leaseExpiresAt: undefined,
+          updatedAt: Date.now(),
+        });
       }
     }
 
@@ -238,7 +223,7 @@ export const stopDirective = mutation({
         sessionId: directive.sessionId,
         role: "assistant",
         agentName: "FounderOS",
-        content: `Stopped: ${directive.title}`,
+        content: normalizePlainWorkerMessage(`Stopped: ${directive.title}`),
       });
       await ctx.db.patch(directive.sessionId, { lastMessageAt: Date.now() });
     }

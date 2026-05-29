@@ -4,6 +4,8 @@ import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api.js";
 
 const POLL_INTERVAL_MS = Number(process.env.DOCUMENT_WORKER_POLL_INTERVAL_MS ?? 5000);
+const WORKER_ID = process.env.DOCUMENT_WORKER_ID ?? `document:${process.pid}`;
+const LEASE_MS = Number(process.env.DOCUMENT_WORKER_LEASE_MS ?? 10 * 60 * 1000);
 
 function readLocalEnv(name) {
   const filePath = resolve(process.cwd(), ".env.local");
@@ -75,7 +77,21 @@ function draftDocument(run, directive) {
 
 async function processRun(client, run) {
   console.log(`Starting hidden document run: ${run._id}`);
-  await client.mutation(api.workRuns.markWorking, { runId: run._id });
+  const approvedAction = await client.query(api.approvals.getApprovedActionForRun, {
+    runId: run._id,
+  });
+  if (approvedAction) {
+    await append(client, run._id, "I'm resuming the approved step.");
+    await sleep(400);
+    await client.mutation(api.approvals.resumeApprovedActionWithoutConnector, {
+      approvalId: approvedAction.approvalId,
+      runId: run._id,
+      leaseId: run.leaseId,
+    });
+    console.log(`Hidden document run returned approved action to review: ${run._id}`);
+    return;
+  }
+
   await append(client, run._id, "I'm preparing the draft.");
 
   const directive = await client.query(api.directives.getDirectiveById, {
@@ -91,6 +107,7 @@ async function processRun(client, run) {
   await sleep(400);
   await client.mutation(api.workRuns.completeWithResult, {
     runId: run._id,
+    leaseId: run.leaseId,
     summary: result.summary,
     content: result.content,
     internalNotes: JSON.stringify({
@@ -104,8 +121,11 @@ async function processRun(client, run) {
 }
 
 async function tick(client) {
-  const runs = await client.query(api.workRuns.listQueuedDocuments, { limit: 1 });
-  const run = runs[0];
+  const run = await client.mutation(api.workRuns.leaseNext, {
+    kinds: ["document"],
+    workerId: WORKER_ID,
+    leaseMs: LEASE_MS,
+  });
   if (!run) return false;
 
   try {
@@ -115,7 +135,9 @@ async function tick(client) {
     console.error(`Hidden document run failed: ${message}`);
     await client.mutation(api.workRuns.markFailed, {
       runId: run._id,
-      message: "FounderOS could not prepare the document yet.",
+      leaseId: run.leaseId,
+      failureReason: "FounderOS could not prepare the document yet.",
+      internalError: message,
     });
   }
 

@@ -1,5 +1,10 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import {
+  appendItemVersion,
+  createItemWithVersion,
+  documentKindToItemKind,
+} from "./itemModel";
 
 const artifactKind = v.union(
   v.literal("document"),
@@ -130,13 +135,28 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const department = await ctx.db.get(args.departmentId);
     const now = Date.now();
+    const kind = args.kind ?? "document";
+    const { itemId, versionId: itemVersionId } = await createItemWithVersion(ctx, {
+      workspaceId: department?.workspaceId,
+      departmentId: args.departmentId,
+      title: args.title,
+      kind: documentKindToItemKind(kind),
+      status: "draft",
+      source: "user",
+      author: "FounderOS",
+      summary: args.summary,
+      content: args.content,
+      format: "markdown",
+      createdAt: now,
+    });
 
     const docId = await ctx.db.insert("documents", {
       workspaceId: department?.workspaceId,
+      itemId,
       title: args.title,
       departmentTag: args.departmentId,
       author: "FounderOS",
-      kind: args.kind ?? "document",
+      kind,
       summary: args.summary,
       status: "draft",
       isArchived: false,
@@ -147,6 +167,7 @@ export const create = mutation({
 
     const versionId = await ctx.db.insert("documentVersions", {
       documentId: docId,
+      itemVersionId,
       content: args.content,
       versionNumber: 1,
       createdAt: now,
@@ -155,6 +176,8 @@ export const create = mutation({
     });
 
     await ctx.db.patch(docId, { currentVersionId: versionId });
+    await ctx.db.patch(itemId, { legacyDocumentId: docId });
+    await ctx.db.patch(itemVersionId, { legacyDocumentVersionId: versionId });
     return docId;
   },
 });
@@ -176,8 +199,19 @@ export const update = mutation({
 
     const versionNumber = versions.length + 1;
     const now = Date.now();
+    const itemVersionId = doc.itemId
+      ? await appendItemVersion(ctx, {
+          itemId: doc.itemId,
+          summary: args.summary ?? `Version ${versionNumber}`,
+          content: args.content,
+          format: "markdown",
+          createdBy: "FounderOS",
+        })
+      : undefined;
+
     const versionId = await ctx.db.insert("documentVersions", {
       documentId: args.artifactId,
+      itemVersionId,
       content: args.content,
       versionNumber,
       createdAt: now,
@@ -191,6 +225,10 @@ export const update = mutation({
       summary: args.summary ?? doc.summary,
       updatedAt: now,
     });
+
+    if (itemVersionId) {
+      await ctx.db.patch(itemVersionId, { legacyDocumentVersionId: versionId });
+    }
 
     return versionId;
   },
@@ -211,7 +249,79 @@ export const remove = mutation({
       await ctx.db.delete(version._id);
     }
 
+    if (doc.itemId) {
+      const itemVersions = await ctx.db
+        .query("itemVersions")
+        .withIndex("by_item", (q) => q.eq("itemId", doc.itemId!))
+        .collect();
+      for (const itemVersion of itemVersions) {
+        await ctx.db.delete(itemVersion._id);
+      }
+
+      const outgoingRelations = await ctx.db
+        .query("itemRelations")
+        .withIndex("by_from", (q) => q.eq("fromItemId", doc.itemId!))
+        .collect();
+      for (const relation of outgoingRelations) {
+        await ctx.db.delete(relation._id);
+      }
+
+      const incomingRelations = await ctx.db
+        .query("itemRelations")
+        .withIndex("by_to_item", (q) => q.eq("toItemId", doc.itemId!))
+        .collect();
+      for (const relation of incomingRelations) {
+        await ctx.db.delete(relation._id);
+      }
+
+      await ctx.db.delete(doc.itemId);
+    }
+
     await ctx.db.delete(args.artifactId);
+  },
+});
+
+export const archive = mutation({
+  args: { artifactId: v.id("documents") },
+  handler: async (ctx, args) => {
+    const doc = await ctx.db.get(args.artifactId);
+    if (!doc) throw new Error("Library item not found.");
+    const now = Date.now();
+    await ctx.db.patch(args.artifactId, {
+      isArchived: true,
+      status: "deprecated",
+      deprecatedAt: now,
+      updatedAt: now,
+    });
+    if (doc.itemId) {
+      await ctx.db.patch(doc.itemId, {
+        status: "archived",
+        archivedAt: now,
+        updatedAt: now,
+      });
+    }
+  },
+});
+
+export const restore = mutation({
+  args: { artifactId: v.id("documents") },
+  handler: async (ctx, args) => {
+    const doc = await ctx.db.get(args.artifactId);
+    if (!doc) throw new Error("Library item not found.");
+    const now = Date.now();
+    await ctx.db.patch(args.artifactId, {
+      isArchived: false,
+      status: "draft",
+      deprecatedAt: undefined,
+      updatedAt: now,
+    });
+    if (doc.itemId) {
+      await ctx.db.patch(doc.itemId, {
+        status: "active",
+        archivedAt: undefined,
+        updatedAt: now,
+      });
+    }
   },
 });
 
@@ -234,8 +344,19 @@ export const revert = mutation({
 
     const versionNumber = versions.length + 1;
     const now = Date.now();
+    const itemVersionId = doc.itemId
+      ? await appendItemVersion(ctx, {
+          itemId: doc.itemId,
+          summary: `Restored from version ${target.versionNumber ?? "selected"}.`,
+          content: target.content,
+          format: "markdown",
+          createdBy: "FounderOS",
+        })
+      : undefined;
+
     const revertedVersionId = await ctx.db.insert("documentVersions", {
       documentId: args.artifactId,
+      itemVersionId,
       content: target.content,
       versionNumber,
       createdAt: now,
@@ -248,6 +369,10 @@ export const revert = mutation({
       versionCount: versionNumber,
       updatedAt: now,
     });
+
+    if (itemVersionId) {
+      await ctx.db.patch(itemVersionId, { legacyDocumentVersionId: revertedVersionId });
+    }
 
     return revertedVersionId;
   },

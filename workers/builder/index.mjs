@@ -1,17 +1,106 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { execFile, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import {
+  cp,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from "node:path";
+import { fileURLToPath } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
 import { Codex } from "@openai/codex-sdk";
 import { api } from "../../convex/_generated/api.js";
 
 const POLL_INTERVAL_MS = Number(process.env.BUILDER_POLL_INTERVAL_MS ?? 5000);
 const PREVIEW_URL = process.env.BUILDER_PREVIEW_URL ?? "http://localhost:3000";
-const WORKSPACE_DIR = resolve(process.env.BUILDER_WORKSPACE_DIR ?? process.cwd());
+const ROOT_WORKSPACE_DIR = resolve(process.env.BUILDER_WORKSPACE_DIR ?? process.cwd());
 const USE_CODEX = process.env.BUILDER_USE_CODEX === "true";
 const START_PREVIEW = process.env.BUILDER_START_PREVIEW === "true";
 const PREVIEW_COMMAND = process.env.BUILDER_PREVIEW_COMMAND ?? "npm run dev";
 const PREVIEW_TIMEOUT_MS = Number(process.env.BUILDER_PREVIEW_TIMEOUT_MS ?? 30000);
+const WORKER_ID = process.env.BUILDER_WORKER_ID ?? `builder:${process.pid}`;
+const LEASE_MS = Number(process.env.BUILDER_LEASE_MS ?? 10 * 60 * 1000);
+const ISOLATION_MODE = process.env.BUILDER_ISOLATION_MODE ?? "auto";
+const BUILD_RUNS_DIR = resolve(
+  process.env.BUILDER_RUNS_DIR ?? join(tmpdir(), "founderos-builder-runs"),
+);
+const BRANCH_PREFIX = process.env.BUILDER_BRANCH_PREFIX ?? "codex/founderos-build";
+const CLEAN_WORKSPACE_AFTER_RUN = process.env.BUILDER_CLEAN_WORKSPACE_AFTER_RUN === "true";
+const TEST_TIMEOUT_MS = Number(process.env.BUILDER_TEST_TIMEOUT_MS ?? 120000);
+const MAX_CAPTURED_OUTPUT_CHARS = 6000;
+const MAX_SNAPSHOT_FILE_BYTES = Number(process.env.BUILDER_SNAPSHOT_FILE_BYTES ?? 5 * 1024 * 1024);
+
+const CODEX_RESULT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    summary: {
+      type: "string",
+      description: "One short plain-language summary of what is ready.",
+    },
+    reviewNotes: {
+      type: "array",
+      items: { type: "string" },
+      description: "Plain-language notes the founder should know before approval or launch.",
+    },
+    externalActionRequested: {
+      type: "boolean",
+      description: "Whether the founder asked for publishing, deployment, sending, spending, deletion, or outreach.",
+    },
+    publishOrDeployBlocked: {
+      type: "boolean",
+      description: "True when any publish, deploy, or live-site update was requested but not performed.",
+    },
+  },
+  required: ["summary", "reviewNotes", "externalActionRequested", "publishOrDeployBlocked"],
+};
+
+const COPY_EXCLUDED_NAMES = new Set([
+  ".git",
+  ".founderos",
+  ".next",
+  ".turbo",
+  ".vercel",
+  "coverage",
+  "dist",
+  "build",
+  "node_modules",
+]);
+
+const SNAPSHOT_EXCLUDED_NAMES = new Set([
+  ".git",
+  ".founderos",
+  ".next",
+  ".turbo",
+  ".vercel",
+  "coverage",
+  "dist",
+  "build",
+  "node_modules",
+]);
+
+const PROHIBITED_EXTERNAL_ACTIONS = [
+  "Do not publish publicly.",
+  "Do not deploy.",
+  "Do not push to a remote repository.",
+  "Do not change a live asset.",
+  "Do not send messages or contact external people.",
+  "Do not spend money.",
+  "Do not delete important data.",
+];
 
 function readLocalEnv(name) {
   const filePath = resolve(process.cwd(), ".env.local");
@@ -46,30 +135,147 @@ function sleep(ms) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
 
-function execGit(args) {
-  return new Promise((resolveGit) => {
-    execFile("git", args, { cwd: WORKSPACE_DIR, windowsHide: true }, (error, stdout) => {
-      if (error) {
-        resolveGit(null);
-        return;
-      }
-      resolveGit(stdout.trim());
-    });
+function normalizePath(value) {
+  return value.replace(/\\/g, "/");
+}
+
+function sanitizeSlug(value) {
+  return String(value ?? "run")
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "run";
+}
+
+function sanitizeBranchName(value) {
+  return String(value)
+    .replace(/[^A-Za-z0-9/_-]+/g, "-")
+    .replace(/\/+/g, "/")
+    .replace(/(^\/+|\/+$)/g, "")
+    .replace(/\.\.+/g, "-")
+    .replace(/\.lock$/i, "-lock");
+}
+
+function buildRunSlug(run) {
+  return sanitizeSlug(`${run?._id ?? "run"}-${run?.attemptCount ?? 0}-${Date.now()}`);
+}
+
+function assertNotRootDirectory(directory, label) {
+  const resolved = resolve(directory);
+  if (dirname(resolved) === resolved) {
+    throw new Error(`${label} cannot be the filesystem root.`);
+  }
+}
+
+function assertChildPath(parent, child) {
+  const rel = relative(resolve(parent), resolve(child));
+  if (!rel || rel.startsWith("..") || isAbsolute(rel)) {
+    throw new Error("Build workspace path is outside the configured runs directory.");
+  }
+}
+
+function isSafeRelativePath(value) {
+  if (!value || typeof value !== "string") return false;
+  if (isAbsolute(value)) return false;
+  const normalized = normalizePath(value);
+  return !normalized.split("/").some((part) => part === "..");
+}
+
+function safeRelativePath(value) {
+  if (!isSafeRelativePath(value)) return null;
+  return normalizePath(value).replace(/^\.\/+/, "");
+}
+
+function toPlainFounderText(message, fallback = "A first review version is ready.") {
+  const cleaned = String(message ?? "")
+    .replace(/\bwork\s*runs?\b|\bworkRuns\b/gi, "work")
+    .replace(/\bdirectives?\b/gi, "tasks")
+    .replace(/\bconnectors?\b/gi, "connections")
+    .replace(/\btool calls?\b|\btool invocations?\b/gi, "steps")
+    .replace(/\bcommands?\b/gi, "checks")
+    .replace(/\bterminal\b|\bstdout\b|\bstderr\b|\bstack trace\b/gi, "workspace")
+    .replace(/\bAPI\b|\bSDK\b|\bCLI\b/gi, "connection")
+    .replace(/\bCodex\b/gi, "FounderOS")
+    .replace(/\bcommit\b|\bbranch\b/gi, "version")
+    .replace(/\bartifact(s)?\b/gi, "Library item$1")
+    .replace(/[A-Za-z]:[\\/][^\s)]+/g, "the workspace")
+    .replace(/(?:^|\s)(?:\.\.?[\\/])?[^\s`'"]+\.(?:tsx?|jsx?|mjs|cjs|css|json|md)(?=\s|$)/g, " a saved file")
+    .replace(/`+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return cleaned || fallback;
+}
+
+function sanitizeInternalLog(value) {
+  return String(value ?? "")
+    .replace(/sk-[A-Za-z0-9_-]{8,}/g, "sk-***")
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer ***")
+    .slice(-MAX_CAPTURED_OUTPUT_CHARS);
+}
+
+function execFileCapture(command, args, options = {}) {
+  return new Promise((resolveCapture, rejectCapture) => {
+    execFile(
+      command,
+      args,
+      {
+        cwd: options.cwd,
+        windowsHide: true,
+        timeout: options.timeoutMs ?? 60000,
+        maxBuffer: options.maxBuffer ?? 5 * 1024 * 1024,
+      },
+      (error, stdout, stderr) => {
+        const result = {
+          ok: !error,
+          stdout: stdout.trim(),
+          stderr: stderr.trim(),
+          exitCode: typeof error?.code === "number" ? error.code : error ? 1 : 0,
+          timedOut: Boolean(error?.killed),
+        };
+
+        if (error && !options.allowFailure) {
+          const message = stderr.trim() || stdout.trim() || error.message;
+          rejectCapture(new Error(message));
+          return;
+        }
+
+        resolveCapture(result);
+      },
+    );
   });
 }
 
-async function sourceMetadata() {
+async function execGit(args, options = {}) {
+  try {
+    return await execFileCapture("git", args, {
+      cwd: options.cwd ?? ROOT_WORKSPACE_DIR,
+      allowFailure: true,
+      timeoutMs: options.timeoutMs ?? 60000,
+    });
+  } catch {
+    return {
+      ok: false,
+      stdout: "",
+      stderr: "",
+      exitCode: 1,
+      timedOut: false,
+    };
+  }
+}
+
+async function sourceMetadata(workspaceDir = ROOT_WORKSPACE_DIR) {
   const [branch, commitSha, status] = await Promise.all([
-    execGit(["rev-parse", "--abbrev-ref", "HEAD"]),
-    execGit(["rev-parse", "HEAD"]),
-    execGit(["status", "--short"]),
+    execGit(["rev-parse", "--abbrev-ref", "HEAD"], { cwd: workspaceDir }),
+    execGit(["rev-parse", "HEAD"], { cwd: workspaceDir }),
+    execGit(["status", "--short"], { cwd: workspaceDir }),
   ]);
 
   return {
-    source: "local_git",
-    branch,
-    commitSha,
-    hasUncommittedChanges: Boolean(status),
+    source: branch.ok ? "local_git" : "safe_workspace",
+    branch: branch.ok ? branch.stdout : null,
+    commitSha: commitSha.ok ? commitSha.stdout : null,
+    hasUncommittedChanges: Boolean(status.stdout),
   };
 }
 
@@ -100,9 +306,9 @@ async function isPreviewReachable(url) {
   }
 }
 
-function startPreviewProcess() {
+function startPreviewProcess(workspaceDir) {
   const child = spawn(PREVIEW_COMMAND, {
-    cwd: WORKSPACE_DIR,
+    cwd: workspaceDir,
     detached: true,
     shell: true,
     stdio: "ignore",
@@ -111,20 +317,46 @@ function startPreviewProcess() {
   child.unref();
 }
 
-async function ensurePreviewUrl() {
-  if (await isPreviewReachable(PREVIEW_URL)) return PREVIEW_URL;
+async function ensurePreviewStatus(workspaceDir = ROOT_WORKSPACE_DIR) {
+  if (await isPreviewReachable(PREVIEW_URL)) {
+    return {
+      available: true,
+      started: false,
+      url: PREVIEW_URL,
+      provider: process.env.BUILDER_PREVIEW_PROVIDER ?? "local",
+    };
+  }
 
-  if (!START_PREVIEW) return null;
+  if (!START_PREVIEW) {
+    return {
+      available: false,
+      started: false,
+      url: null,
+      provider: process.env.BUILDER_PREVIEW_PROVIDER ?? "local",
+    };
+  }
 
-  startPreviewProcess();
+  startPreviewProcess(workspaceDir);
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < PREVIEW_TIMEOUT_MS) {
     await sleep(1000);
-    if (await isPreviewReachable(PREVIEW_URL)) return PREVIEW_URL;
+    if (await isPreviewReachable(PREVIEW_URL)) {
+      return {
+        available: true,
+        started: true,
+        url: PREVIEW_URL,
+        provider: process.env.BUILDER_PREVIEW_PROVIDER ?? "local",
+      };
+    }
   }
 
-  return null;
+  return {
+    available: false,
+    started: true,
+    url: null,
+    provider: process.env.BUILDER_PREVIEW_PROVIDER ?? "local",
+  };
 }
 
 async function append(client, runId, message, tone = "progress") {
@@ -135,56 +367,428 @@ async function append(client, runId, message, tone = "progress") {
   });
 }
 
-async function simulateRun(client, run) {
-  await sleep(600);
-  await append(client, run._id, "I'm preparing the workspace.");
+function shouldExcludeRelativePath(relPath, excludedNames) {
+  if (!relPath) return false;
+  const parts = normalizePath(relPath).split("/");
+  return parts.some((part) => excludedNames.has(part));
+}
 
-  await sleep(600);
-  await append(client, run._id, "I'm making the requested changes.");
+async function linkSharedDependencyDirs(sourceDir, workingDirectory) {
+  const sourceNodeModules = join(sourceDir, "node_modules");
+  const targetNodeModules = join(workingDirectory, "node_modules");
+  if (!existsSync(sourceNodeModules) || existsSync(targetNodeModules)) return false;
 
-  await sleep(600);
-  await append(client, run._id, "I'm checking the preview.");
+  try {
+    await symlink(
+      sourceNodeModules,
+      targetNodeModules,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
 
-  const previewUrl = await ensurePreviewUrl();
-  const hasPreview = Boolean(previewUrl);
+async function copyWorkspace(sourceDir, workingDirectory) {
+  await mkdir(dirname(workingDirectory), { recursive: true });
+  await cp(sourceDir, workingDirectory, {
+    recursive: true,
+    dereference: false,
+    filter: (source) => {
+      const relPath = relative(sourceDir, source);
+      return !shouldExcludeRelativePath(relPath, COPY_EXCLUDED_NAMES);
+    },
+  });
+  await linkSharedDependencyDirs(sourceDir, workingDirectory);
+}
 
-  await sleep(600);
-  await client.mutation(api.workRuns.markNeedsReviewWithResult, {
-    runId: run._id,
-    summary: hasPreview
-      ? "A first review version is ready. This local builder is still using a simulated result."
-      : "A first review version is ready, but FounderOS could not open a preview yet.",
-    previewUrl: previewUrl ?? undefined,
-    internalNotes: JSON.stringify({
-      mode: "simulated",
-      source: await sourceMetadata(),
-      deployment: deploymentMetadata(previewUrl),
-      previewUrl,
-      previewAvailable: hasPreview,
-    }),
-    message: hasPreview
-      ? "Your preview is ready to review."
-      : "The work is ready for review, but I could not open the preview yet.",
+async function createGitWorktree(sourceDir, workingDirectory, slug) {
+  const branchName = sanitizeBranchName(`${BRANCH_PREFIX}/${slug}`);
+  const result = await execGit(
+    ["worktree", "add", "-b", branchName, workingDirectory, "HEAD"],
+    { cwd: sourceDir, timeoutMs: 120000 },
+  );
+
+  if (!result.ok) {
+    throw new Error(result.stderr || result.stdout || "Could not create isolated workspace.");
+  }
+
+  await linkSharedDependencyDirs(sourceDir, workingDirectory);
+  return {
+    isolation: "git_worktree",
+    branch: branchName,
+  };
+}
+
+async function createBuildWorkspace(run, options = {}) {
+  const sourceDir = resolve(options.sourceDir ?? ROOT_WORKSPACE_DIR);
+  const mode = options.mode ?? ISOLATION_MODE;
+  const runsDir = resolve(options.runsDir ?? BUILD_RUNS_DIR);
+
+  assertNotRootDirectory(sourceDir, "Builder workspace");
+  assertNotRootDirectory(runsDir, "Builder runs directory");
+  await mkdir(runsDir, { recursive: true });
+
+  if (mode === "workspace") {
+    return {
+      isolation: "workspace",
+      workingDirectory: sourceDir,
+      sourceDirectory: sourceDir,
+      branch: null,
+      cleanup: async () => {},
+    };
+  }
+
+  const slug = options.slug ?? buildRunSlug(run);
+  const workingDirectory = resolve(join(runsDir, slug));
+  assertChildPath(runsDir, workingDirectory);
+
+  const gitStatus = await execGit(["status", "--porcelain"], { cwd: sourceDir });
+  const canUseWorktree =
+    gitStatus.ok &&
+    (mode === "worktree" || (mode === "auto" && !gitStatus.stdout.trim()));
+
+  if (canUseWorktree) {
+    try {
+      const worktree = await createGitWorktree(sourceDir, workingDirectory, slug);
+      return {
+        ...worktree,
+        workingDirectory,
+        sourceDirectory: sourceDir,
+        cleanup: async () => {
+          if (!CLEAN_WORKSPACE_AFTER_RUN) return;
+          await execGit(["worktree", "remove", "--force", workingDirectory], { cwd: sourceDir });
+        },
+      };
+    } catch (error) {
+      if (mode === "worktree") throw error;
+    }
+  }
+
+  if (mode !== "auto" && mode !== "copy") {
+    throw new Error("Builder isolation mode must be auto, worktree, copy, or workspace.");
+  }
+
+  await copyWorkspace(sourceDir, workingDirectory);
+  return {
+    isolation: "safe_copy",
+    workingDirectory,
+    sourceDirectory: sourceDir,
+    branch: null,
+    cleanup: async () => {
+      if (!CLEAN_WORKSPACE_AFTER_RUN) return;
+      await rm(workingDirectory, { recursive: true, force: true });
+    },
+  };
+}
+
+async function hashFile(filePath) {
+  const file = await readFile(filePath);
+  return createHash("sha256").update(file).digest("hex");
+}
+
+async function snapshotWorkspaceFiles(rootDir) {
+  const root = resolve(rootDir);
+  const snapshot = new Map();
+
+  async function walk(directory) {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const absolutePath = join(directory, entry.name);
+      const relPath = normalizePath(relative(root, absolutePath));
+      if (shouldExcludeRelativePath(relPath, SNAPSHOT_EXCLUDED_NAMES)) continue;
+
+      const entryStat = entry.isSymbolicLink()
+        ? await lstat(absolutePath)
+        : await stat(absolutePath);
+
+      if (entryStat.isSymbolicLink()) continue;
+      if (entryStat.isDirectory()) {
+        await walk(absolutePath);
+        continue;
+      }
+      if (!entryStat.isFile()) continue;
+
+      snapshot.set(relPath, {
+        size: entryStat.size,
+        hash:
+          entryStat.size <= MAX_SNAPSHOT_FILE_BYTES
+            ? await hashFile(absolutePath)
+            : `large:${entryStat.size}:${Math.floor(entryStat.mtimeMs)}`,
+      });
+    }
+  }
+
+  await walk(root);
+  return snapshot;
+}
+
+function diffWorkspaceSnapshots(before, after) {
+  const changed = [];
+  const allPaths = new Set([...before.keys(), ...after.keys()]);
+
+  for (const filePath of [...allPaths].sort()) {
+    const previous = before.get(filePath);
+    const current = after.get(filePath);
+    if (!previous && current) {
+      changed.push({ path: filePath, status: "added" });
+      continue;
+    }
+    if (previous && !current) {
+      changed.push({ path: filePath, status: "deleted" });
+      continue;
+    }
+    if (previous && current && (previous.hash !== current.hash || previous.size !== current.size)) {
+      changed.push({ path: filePath, status: "modified" });
+    }
+  }
+
+  return changed;
+}
+
+async function captureChangedFiles(workingDirectory, baselineSnapshot, eventPaths = []) {
+  const afterSnapshot = await snapshotWorkspaceFiles(workingDirectory);
+  const diff = diffWorkspaceSnapshots(baselineSnapshot, afterSnapshot);
+  const byPath = new Map(diff.map((change) => [change.path, change]));
+
+  for (const eventPath of eventPaths) {
+    const safePath = safeRelativePath(eventPath);
+    if (safePath && !byPath.has(safePath)) {
+      byPath.set(safePath, { path: safePath, status: "modified" });
+    }
+  }
+
+  return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
+function parseConfiguredTestCommands() {
+  if (process.env.BUILDER_SKIP_TESTS === "true") return [];
+  const configured = process.env.BUILDER_TEST_COMMANDS;
+  if (!configured) return null;
+
+  try {
+    const parsed = JSON.parse(configured);
+    if (Array.isArray(parsed)) {
+      return parsed.filter((value) => typeof value === "string" && value.trim());
+    }
+  } catch {
+    // Fall back to a simple separator format for local setup.
+  }
+
+  return configured
+    .split(/\r?\n|;/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+async function defaultTestCommands(workingDirectory) {
+  const configured = parseConfiguredTestCommands();
+  if (configured) return configured;
+
+  try {
+    const packageJson = JSON.parse(await readFile(join(workingDirectory, "package.json"), "utf8"));
+    if (packageJson?.scripts?.test) return ["npm test"];
+  } catch {
+    return [];
+  }
+
+  return [];
+}
+
+function runShellCommand(command, workingDirectory, timeoutMs) {
+  return new Promise((resolveRun) => {
+    const startedAt = Date.now();
+    const child = spawn(command, {
+      cwd: workingDirectory,
+      shell: true,
+      windowsHide: true,
+      env: {
+        ...process.env,
+        CI: process.env.CI ?? "true",
+      },
+    });
+    const chunks = [];
+
+    function capture(chunk) {
+      chunks.push(Buffer.from(chunk));
+      const totalLength = chunks.reduce((sum, item) => sum + item.length, 0);
+      while (totalLength > MAX_CAPTURED_OUTPUT_CHARS * 2 && chunks.length > 1) {
+        chunks.shift();
+      }
+    }
+
+    child.stdout?.on("data", capture);
+    child.stderr?.on("data", capture);
+
+    const timeout = setTimeout(() => {
+      child.kill();
+      resolveRun({
+        command,
+        status: "timed_out",
+        exitCode: null,
+        durationMs: Date.now() - startedAt,
+        outputTail: sanitizeInternalLog(Buffer.concat(chunks).toString("utf8")),
+      });
+    }, timeoutMs);
+
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      resolveRun({
+        command,
+        status: "failed",
+        exitCode: null,
+        durationMs: Date.now() - startedAt,
+        outputTail: sanitizeInternalLog(error.message),
+      });
+    });
+
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      resolveRun({
+        command,
+        status: code === 0 ? "passed" : "failed",
+        exitCode: code,
+        durationMs: Date.now() - startedAt,
+        outputTail: sanitizeInternalLog(Buffer.concat(chunks).toString("utf8")),
+      });
+    });
   });
 }
 
-function buildCodexPrompt(directive) {
+async function runTestCommands(workingDirectory) {
+  const commands = await defaultTestCommands(workingDirectory);
+  if (commands.length === 0) {
+    return {
+      status: "skipped",
+      summary: "No checks were configured for this preview.",
+      commands: [],
+    };
+  }
+
+  const results = [];
+  for (const command of commands.slice(0, 3)) {
+    const result = await runShellCommand(command, workingDirectory, TEST_TIMEOUT_MS);
+    results.push(result);
+    if (result.status !== "passed") break;
+  }
+
+  const status = results.every((result) => result.status === "passed")
+    ? "passed"
+    : results.some((result) => result.status === "timed_out")
+      ? "timed_out"
+      : "failed";
+
+  const summary =
+    status === "passed"
+      ? "Checks passed."
+      : status === "timed_out"
+        ? "A check took too long and needs attention."
+        : "A check needs attention.";
+
+  return { status, summary, commands: results };
+}
+
+function detectSensitiveExternalAction(objective = "") {
+  const text = objective.toLowerCase();
+  if (/\b(deploy|deployment|go live|launch live|ship live|publish|publicly publish)\b/.test(text)) {
+    return {
+      actionKind: "publish_preview",
+      actionTitle: "Publish this preview",
+      actionDescription: "This will make the preview visible outside your private workspace.",
+    };
+  }
+  if (/\b(update|change|replace)\b.*\b(live|production|public)\b/.test(text)) {
+    return {
+      actionKind: "change_live_asset",
+      actionTitle: "Update the live version",
+      actionDescription: "This will change something already visible outside your private workspace.",
+    };
+  }
+  if (/\b(send|email|message|contact)\b.*\b(customer|client|lead|user|external|partner|vendor)\b/.test(text)) {
+    return {
+      actionKind: "send_email",
+      actionTitle: "Contact someone outside the workspace",
+      actionDescription: "This will send a message or contact someone outside your workspace.",
+    };
+  }
+  if (/\b(spend|charge|buy|purchase|subscribe|paid)\b/.test(text)) {
+    return {
+      actionKind: "spend_money",
+      actionTitle: "Spend money",
+      actionDescription: "This may create a charge or commit budget.",
+    };
+  }
+  if (/\b(delete|remove|destroy)\b.*\b(data|record|customer|file|database)\b/.test(text)) {
+    return {
+      actionKind: "delete_data",
+      actionTitle: "Delete data",
+      actionDescription: "This can remove business data.",
+    };
+  }
+
+  return null;
+}
+
+function outputKindForRun(run, directive) {
+  const classifiedKind = run?.classification?.outputItemKind;
+  if (classifiedKind === "tool" || classifiedKind === "internal_tool") return classifiedKind;
+  if (classifiedKind === "website") return "website";
+
+  const text = `${run?.title ?? ""} ${directive?.title ?? ""} ${directive?.objective ?? ""}`.toLowerCase();
+  if (/\b(internal tool|tool|dashboard|calculator|crm|admin|web app|app)\b/.test(text)) {
+    return text.includes("internal tool") ? "internal_tool" : "tool";
+  }
+  return "website";
+}
+
+function buildTaskSpec(run, directive, workspace) {
+  const externalAction = detectSensitiveExternalAction(directive.objective);
+  const outputKind = outputKindForRun(run, directive);
+
+  return {
+    task: {
+      title: run.title || directive.title,
+      objective: directive.objective,
+      runKind: run.kind,
+      outputKind,
+    },
+    workspace: {
+      isolation: workspace.isolation,
+      safeWorkingDirectory: true,
+    },
+    founderExperience: {
+      updates: "plain, short, non-technical",
+      finalOutput: `Save as a ${outputKind === "website" ? "website" : "tool"} Library item for review.`,
+    },
+    safety: {
+      approvalRequiredBeforeExternalAction: true,
+      requestedExternalAction: externalAction,
+      prohibitedExternalActions: PROHIBITED_EXTERNAL_ACTIONS,
+    },
+    expectedResult: {
+      includePlainSummary: true,
+      includeReviewNotes: true,
+      keepTechnicalDetailsInternal: true,
+    },
+  };
+}
+
+function buildCodexPrompt(taskSpec) {
   return [
     "You are the hidden build worker for FounderOS.",
     "",
-    "Make the requested project change in this workspace.",
-    "Keep all final user-facing wording plain and non-technical.",
+    "Make the requested project change in this isolated workspace.",
+    "Use the task spec below as the source of truth.",
+    "Keep final user-facing wording plain and non-technical.",
     "Do not mention Codex, tools, commands, terminals, git branches, commits, models, raw logs, APIs, or provider names.",
-    "Do not push, deploy, publish, send messages, spend money, delete important data, or contact external people.",
-    "If the request needs one of those external actions, prepare the work and state that it is ready for review.",
+    "Do not push, deploy, publish, send messages, spend money, delete important data, change live assets, or contact external people.",
+    "If the request asks for one of those actions, prepare the review version only and mark that action as blocked until approval.",
     "",
-    "Founder request:",
-    directive.objective,
+    "Task spec JSON:",
+    JSON.stringify(taskSpec, null, 2),
     "",
-    "Expected final response:",
-    "- One short plain-language summary of what is ready.",
-    "- Any review notes the founder should know.",
-    "- No technical details.",
+    "Return the structured result requested by the output schema.",
   ].join("\n");
 }
 
@@ -215,6 +819,185 @@ function eventProgress(event) {
   return null;
 }
 
+function extractCodexResult(finalResponse) {
+  const fallback = {
+    summary: toPlainFounderText(finalResponse),
+    reviewNotes: [],
+    externalActionRequested: false,
+    publishOrDeployBlocked: false,
+  };
+
+  if (!finalResponse) return fallback;
+
+  const trimmed = finalResponse.trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
+  const candidates = [trimmed];
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push(trimmed.slice(firstBrace, lastBrace + 1));
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      return {
+        summary: toPlainFounderText(parsed.summary, fallback.summary),
+        reviewNotes: Array.isArray(parsed.reviewNotes)
+          ? parsed.reviewNotes.map((note) => toPlainFounderText(note)).filter(Boolean).slice(0, 5)
+          : [],
+        externalActionRequested: Boolean(parsed.externalActionRequested),
+        publishOrDeployBlocked: Boolean(parsed.publishOrDeployBlocked),
+      };
+    } catch {
+      // Keep trying fallback shapes.
+    }
+  }
+
+  return fallback;
+}
+
+function buildFounderSummary(result, previewStatus, testResults) {
+  const notes = [];
+  if (testResults.status === "failed" || testResults.status === "timed_out") {
+    notes.push("One check needs attention before this is used more broadly.");
+  }
+  if (!previewStatus.available) {
+    notes.push("I could not open the preview yet.");
+  }
+  if (result.publishOrDeployBlocked) {
+    notes.push("Nothing was published or changed live.");
+  }
+
+  return toPlainFounderText([result.summary, ...notes].filter(Boolean).join(" "));
+}
+
+function buildLibraryContent(args) {
+  const reviewNotes = [
+    ...args.codexResult.reviewNotes,
+    args.testResults.summary,
+    args.previewStatus.available
+      ? "The preview is ready to open."
+      : "The preview could not be opened yet.",
+    "No public publishing or live changes were made.",
+  ];
+
+  return [
+    `# ${args.title}`,
+    "",
+    args.summary,
+    "",
+    "## Preview",
+    args.previewStatus.available && args.previewStatus.url
+      ? `Preview: ${args.previewStatus.url}`
+      : "The review version is saved, but the preview could not be opened yet.",
+    "",
+    "## Review notes",
+    ...reviewNotes.map((note) => `- ${toPlainFounderText(note)}`),
+  ].join("\n");
+}
+
+function buildResultMetadata(args) {
+  return {
+    mode: args.mode,
+    connector: "hidden_build",
+    taskSpec: args.taskSpec,
+    source: args.source,
+    isolation: {
+      mode: args.workspace.isolation,
+      branch: args.workspace.branch,
+      workingDirectory: args.workspace.workingDirectory,
+    },
+    deployment: deploymentMetadata(args.previewStatus.url),
+    preview: args.previewStatus,
+    changedFileCount: args.changedFiles.length,
+    changedFiles: args.changedFiles,
+    tests: args.testResults,
+    codex: args.codex,
+    safety: {
+      publishRequiresApproval: true,
+      requestedExternalAction: args.externalAction,
+      externalActionPerformed: false,
+    },
+  };
+}
+
+async function createApprovalIfNeeded(client, run, externalAction) {
+  if (!externalAction) return null;
+
+  return await client.mutation(api.approvals.createForRun, {
+    directiveId: run.directiveId,
+    runId: run._id,
+    actionKind: externalAction.actionKind,
+    actionTitle: externalAction.actionTitle,
+    actionDescription: externalAction.actionDescription,
+    actionPayload: {
+      requestedBy: "builder",
+      externalActionPerformed: false,
+    },
+  });
+}
+
+async function simulateRun(client, run) {
+  await sleep(600);
+  await append(client, run._id, "I'm preparing the workspace.");
+
+  await sleep(600);
+  await append(client, run._id, "I'm making the requested changes.");
+
+  await sleep(600);
+  await append(client, run._id, "I'm checking the preview.");
+
+  const previewStatus = await ensurePreviewStatus(ROOT_WORKSPACE_DIR);
+  const hasPreview = previewStatus.available;
+  const summary = hasPreview
+    ? "A first review version is ready. This development setup is using a sample result."
+    : "A first review version is ready, but FounderOS could not open a preview yet.";
+  const metadata = buildResultMetadata({
+    mode: "simulated",
+    taskSpec: null,
+    source: await sourceMetadata(ROOT_WORKSPACE_DIR),
+    workspace: {
+      isolation: "workspace",
+      branch: null,
+      workingDirectory: ROOT_WORKSPACE_DIR,
+    },
+    previewStatus,
+    changedFiles: [],
+    testResults: {
+      status: "skipped",
+      summary: "No checks were run for the sample result.",
+      commands: [],
+    },
+    codex: null,
+    externalAction: null,
+  });
+
+  await sleep(600);
+  await client.mutation(api.workRuns.markNeedsReviewWithResult, {
+    runId: run._id,
+    leaseId: run.leaseId,
+    summary,
+    content: buildLibraryContent({
+      title: run.title,
+      summary,
+      codexResult: {
+        summary,
+        reviewNotes: ["This is a sample result for local development."],
+        externalActionRequested: false,
+        publishOrDeployBlocked: false,
+      },
+      previewStatus,
+      testResults: metadata.tests,
+    }),
+    previewUrl: previewStatus.url ?? undefined,
+    internalNotes: JSON.stringify(metadata),
+    metadata,
+    message: hasPreview
+      ? "Your preview is ready to review."
+      : "The work is ready for review, but I could not open the preview yet.",
+  });
+}
+
 async function runCodex(client, run, directive) {
   const apiKey = openAiKey();
   if (!apiKey) {
@@ -223,89 +1006,154 @@ async function runCodex(client, run, directive) {
     return;
   }
 
-  const codex = new Codex({ apiKey });
-  const thread = codex.startThread({
-    workingDirectory: WORKSPACE_DIR,
-    sandboxMode: "workspace-write",
-    approvalPolicy: "never",
-    networkAccessEnabled: false,
-    model: process.env.BUILDER_CODEX_MODEL,
-    modelReasoningEffort: process.env.BUILDER_CODEX_REASONING_EFFORT ?? "medium",
-  });
+  let workspace = null;
+  try {
+    workspace = await createBuildWorkspace(run);
+    const taskSpec = buildTaskSpec(run, directive, workspace);
+    const baselineSnapshot = await snapshotWorkspaceFiles(workspace.workingDirectory);
+    const externalAction = taskSpec.safety.requestedExternalAction;
+    const codex = new Codex({ apiKey });
+    const thread = codex.startThread({
+      workingDirectory: workspace.workingDirectory,
+      sandboxMode: "workspace-write",
+      approvalPolicy: "never",
+      networkAccessEnabled: false,
+      skipGitRepoCheck: workspace.isolation !== "git_worktree",
+      model: process.env.BUILDER_CODEX_MODEL,
+      modelReasoningEffort: process.env.BUILDER_CODEX_REASONING_EFFORT ?? "medium",
+    });
 
-  await append(client, run._id, "I'm preparing the workspace.");
+    await append(client, run._id, "I'm preparing the workspace.");
 
-  const streamed = await thread.runStreamed(buildCodexPrompt(directive));
-  const progressSeen = new Set();
-  const changedFiles = new Set();
-  let commandCount = 0;
-  let finalSummary = "";
-  let usage = null;
+    const streamed = await thread.runStreamed(buildCodexPrompt(taskSpec), {
+      outputSchema: CODEX_RESULT_SCHEMA,
+    });
+    const progressSeen = new Set();
+    const eventChangedFiles = new Set();
+    let commandCount = 0;
+    let finalResponse = "";
+    let usage = null;
 
-  for await (const event of streamed.events) {
-    const message = eventProgress(event);
-    if (message && !progressSeen.has(message)) {
-      progressSeen.add(message);
-      await append(client, run._id, message);
-    }
+    for await (const event of streamed.events) {
+      const message = eventProgress(event);
+      if (message && !progressSeen.has(message)) {
+        progressSeen.add(message);
+        await append(client, run._id, message);
+      }
 
-    if (
-      event.type === "item.completed" &&
-      event.item?.type === "file_change" &&
-      Array.isArray(event.item.changes)
-    ) {
-      for (const change of event.item.changes) {
-        if (typeof change.path === "string") changedFiles.add(change.path);
+      if (
+        event.type === "item.completed" &&
+        event.item?.type === "file_change" &&
+        Array.isArray(event.item.changes)
+      ) {
+        for (const change of event.item.changes) {
+          const safePath = safeRelativePath(change.path);
+          if (safePath) eventChangedFiles.add(safePath);
+        }
+      }
+
+      if (event.type === "item.completed" && event.item?.type === "command_execution") {
+        commandCount += 1;
+      }
+
+      if (event.type === "item.completed" && event.item?.type === "agent_message") {
+        finalResponse = event.item.text.trim();
+      }
+
+      if (event.type === "turn.completed") {
+        usage = event.usage;
+      }
+
+      if (event.type === "turn.failed") {
+        throw new Error(event.error.message);
       }
     }
 
-    if (event.type === "item.completed" && event.item?.type === "command_execution") {
-      commandCount += 1;
+    await append(client, run._id, "I'm checking the review version.");
+    const changedFiles = await captureChangedFiles(
+      workspace.workingDirectory,
+      baselineSnapshot,
+      [...eventChangedFiles],
+    );
+    const testResults = await runTestCommands(workspace.workingDirectory);
+    const previewStatus = await ensurePreviewStatus(workspace.workingDirectory);
+    const codexResult = extractCodexResult(finalResponse);
+    if (externalAction) {
+      codexResult.externalActionRequested = true;
+      codexResult.publishOrDeployBlocked = true;
     }
-
-    if (event.type === "item.completed" && event.item?.type === "agent_message") {
-      finalSummary = event.item.text.trim();
-    }
-
-    if (event.type === "turn.completed") {
-      usage = event.usage;
-    }
-
-    if (event.type === "turn.failed") {
-      throw new Error(event.error.message);
-    }
-  }
-
-  const previewUrl = await ensurePreviewUrl();
-  const hasPreview = Boolean(previewUrl);
-
-  await client.mutation(api.workRuns.markNeedsReviewWithResult, {
-    runId: run._id,
-    summary: finalSummary || (hasPreview
-      ? "A first review version is ready."
-      : "A first review version is ready, but FounderOS could not open a preview yet."),
-    previewUrl: previewUrl ?? undefined,
-    internalNotes: JSON.stringify({
+    const summary = buildFounderSummary(codexResult, previewStatus, testResults);
+    const metadata = buildResultMetadata({
       mode: "codex",
-      threadId: thread.id,
-      source: await sourceMetadata(),
-      deployment: deploymentMetadata(previewUrl),
-      changedFileCount: changedFiles.size,
-      changedFiles: [...changedFiles],
-      commandCount,
-      previewUrl,
-      previewAvailable: hasPreview,
-      usage,
-    }),
-    message: hasPreview
-      ? "Your preview is ready to review."
-      : "The work is ready for review, but I could not open the preview yet.",
-  });
+      taskSpec,
+      source: await sourceMetadata(workspace.workingDirectory),
+      workspace,
+      previewStatus,
+      changedFiles,
+      testResults,
+      codex: {
+        threadId: thread.id,
+        usage,
+        commandCount,
+      },
+      externalAction,
+    });
+
+    await client.mutation(api.workRuns.markNeedsReviewWithResult, {
+      runId: run._id,
+      leaseId: run.leaseId,
+      summary,
+      content: buildLibraryContent({
+        title: run.title,
+        summary,
+        codexResult,
+        previewStatus,
+        testResults,
+      }),
+      previewUrl: previewStatus.url ?? undefined,
+      internalNotes: JSON.stringify(metadata),
+      metadata,
+      message: previewStatus.available
+        ? "Your preview is ready to review."
+        : "The work is ready for review, but I could not open the preview yet.",
+    });
+
+    try {
+      await createApprovalIfNeeded(client, run, externalAction);
+    } catch (error) {
+      console.error(
+        `Hidden builder could not queue approval: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      if (externalAction) {
+        await append(
+          client,
+          run._id,
+          "The review version is ready. Approval is still needed before anything goes live.",
+          "blocked",
+        );
+      }
+    }
+  } finally {
+    await workspace?.cleanup();
+  }
 }
 
 async function processRun(client, run) {
   console.log(`Starting hidden builder run: ${run._id}`);
-  await client.mutation(api.workRuns.markWorking, { runId: run._id });
+  const approvedAction = await client.query(api.approvals.getApprovedActionForRun, {
+    runId: run._id,
+  });
+  if (approvedAction) {
+    await append(client, run._id, "I'm resuming the approved step.");
+    await sleep(400);
+    await client.mutation(api.approvals.resumeApprovedActionWithoutConnector, {
+      approvalId: approvedAction.approvalId,
+      runId: run._id,
+      leaseId: run.leaseId,
+    });
+    console.log(`Hidden builder run returned approved action to review: ${run._id}`);
+    return;
+  }
 
   if (!USE_CODEX) {
     await simulateRun(client, run);
@@ -323,8 +1171,11 @@ async function processRun(client, run) {
 }
 
 async function tick(client) {
-  const runs = await client.query(api.workRuns.listQueuedCodePreview, { limit: 1 });
-  const run = runs[0];
+  const run = await client.mutation(api.workRuns.leaseNext, {
+    kinds: ["code_preview"],
+    workerId: WORKER_ID,
+    leaseMs: LEASE_MS,
+  });
   if (!run) return false;
 
   try {
@@ -334,7 +1185,9 @@ async function tick(client) {
     console.error(`Hidden builder run failed: ${message}`);
     await client.mutation(api.workRuns.markFailed, {
       runId: run._id,
-      message: "FounderOS could not prepare the preview yet.",
+      leaseId: run.leaseId,
+      failureReason: "FounderOS could not prepare the preview yet.",
+      internalError: message,
     });
   }
 
@@ -357,7 +1210,30 @@ async function main() {
   } while (true);
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+const isDirectRun = process.argv[1]
+  ? resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+  : false;
+
+if (isDirectRun) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
+
+export {
+  buildCodexPrompt,
+  buildLibraryContent,
+  buildResultMetadata,
+  buildTaskSpec,
+  captureChangedFiles,
+  createBuildWorkspace,
+  detectSensitiveExternalAction,
+  diffWorkspaceSnapshots,
+  ensurePreviewStatus,
+  extractCodexResult,
+  outputKindForRun,
+  runTestCommands,
+  snapshotWorkspaceFiles,
+  toPlainFounderText,
+};

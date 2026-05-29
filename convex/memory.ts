@@ -12,8 +12,8 @@ export const indexDocument = internalAction({
     const version = await ctx.runQuery(internal.memory.getVersion, { id: args.versionId });
     if (!version || version.embedding) return;
 
-    const { executeEmbedding } = await import("./ai");
-    const embedding = await executeEmbedding(version.content);
+    const { executeEmbeddingWithUsage } = await import("./ai");
+    const { embedding, usage } = await executeEmbeddingWithUsage(version.content);
 
     await ctx.runMutation(internal.memory.saveEmbedding, {
       versionId: args.versionId,
@@ -32,8 +32,13 @@ export const indexDocument = internalAction({
           versionId: args.versionId,
         },
         metrics: {
-          latencyMs: 0,
-          tokensUsed: 0,
+          latencyMs: usage.latencyMs,
+          tokensUsed: usage.tokensUsed,
+          model: usage.model,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          costUSD: usage.costUSD,
+          useCase: usage.useCase,
         },
       });
     }
@@ -53,8 +58,29 @@ export const queryMemory = internalAction({
   handler: async (ctx, args) => {
     const limit = args.limit ?? 5;
 
-    const { executeEmbedding } = await import("./ai");
-    const queryEmbedding = await executeEmbedding(args.queryText);
+    const { executeEmbeddingWithUsage } = await import("./ai");
+    const { embedding: queryEmbedding } = await executeEmbeddingWithUsage(args.queryText, {
+      onUsage: async (metrics) => {
+        await ctx.runMutation(internal.telemetry.logEvent, {
+          traceId: "memory_query",
+          actor: "system: Sentinel",
+          eventType: "AI_REQUEST",
+          rawPayload: {
+            useCase: metrics.useCase,
+            action: "query_memory",
+          },
+          metrics: {
+            latencyMs: metrics.latencyMs,
+            tokensUsed: metrics.tokensUsed,
+            model: metrics.model,
+            inputTokens: metrics.inputTokens,
+            outputTokens: metrics.outputTokens,
+            costUSD: metrics.costUSD,
+            useCase: metrics.useCase,
+          },
+        });
+      },
+    });
 
     const rawResults = await ctx.vectorSearch("documentVersions", "by_embedding", {
       vector: queryEmbedding,

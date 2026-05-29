@@ -8,8 +8,13 @@ Current behavior:
 - marks them in progress
 - writes plain-language progress updates
 - uses Codex when explicitly enabled
+- runs Codex in an isolated branch/workspace or safe copied directory
+- passes Codex a structured task spec
+- captures changed files, configured checks, summary, and preview status
+- stores the review result as a Website or Tool Library item
 - falls back to a simulated review result for local development
 - marks the run ready for review
+- asks for approval before any publish, deploy, or live-change step
 
 Run once:
 
@@ -29,8 +34,15 @@ Configuration:
 - `BUILDER_USE_CODEX`: set to `true` to run Codex instead of the local simulation.
 - `OPENAI_API_KEY`: required when `BUILDER_USE_CODEX=true`.
 - `BUILDER_WORKSPACE_DIR`: optional project workspace for Codex. Defaults to the current directory.
+- `BUILDER_ISOLATION_MODE`: `auto`, `worktree`, `copy`, or `workspace`. Defaults to `auto`.
+- `BUILDER_RUNS_DIR`: optional directory for isolated build workspaces. Defaults to a system temp directory.
+- `BUILDER_BRANCH_PREFIX`: branch prefix for isolated git worktrees. Defaults to `codex/founderos-build`.
+- `BUILDER_CLEAN_WORKSPACE_AFTER_RUN`: set to `true` to remove isolated workspaces after capture.
 - `BUILDER_CODEX_MODEL`: optional Codex model override.
 - `BUILDER_CODEX_REASONING_EFFORT`: optional reasoning effort. Defaults to `medium`.
+- `BUILDER_TEST_COMMANDS`: optional JSON array or newline/semicolon-separated list of checks. Defaults to `npm test` when available.
+- `BUILDER_SKIP_TESTS`: set to `true` to skip checks.
+- `BUILDER_TEST_TIMEOUT_MS`: per-check timeout. Defaults to `120000`.
 - `BUILDER_PREVIEW_URL`: local preview URL to check. Defaults to `http://localhost:3000`.
 - `BUILDER_PREVIEW_PROVIDER`: internal preview provider label. Defaults to `local`.
 - `BUILDER_START_PREVIEW`: set to `true` to let the worker start a local preview if one is not already running.
