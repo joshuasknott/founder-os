@@ -207,7 +207,9 @@ test("approved action fallback keeps external actions unperformed without a conn
   );
   assert.equal(result.content.includes("no data was deleted"), true);
   assert.equal(runtime.labelForSensitiveActionKind("spend_money"), "Spend money");
+  assert.equal(runtime.labelForSensitiveActionKind("create_calendar_event"), "Create calendar event");
   assert.equal(runtime.approvalRiskCopy("post_externally").includes("external channel"), true);
+  assert.equal(runtime.approvalRiskCopy("create_calendar_event").includes("calendar"), true);
 });
 
 test("failures retry until the final allowed attempt and keep messages plain", () => {

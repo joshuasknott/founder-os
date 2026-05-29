@@ -70,6 +70,7 @@ const taskClassification = v.object({
 const sensitiveActionKind = v.union(
   v.literal("publish_preview"),
   v.literal("send_email"),
+  v.literal("create_calendar_event"),
   v.literal("post_externally"),
   v.literal("spend_money"),
   v.literal("delete_data"),

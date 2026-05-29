@@ -98,6 +98,7 @@ export type RunLike = {
 
 export const sensitiveActionKinds = [
   "send_email",
+  "create_calendar_event",
   "publish_preview",
   "post_externally",
   "spend_money",
@@ -378,6 +379,7 @@ export function isSensitiveActionKind(value?: string): value is SensitiveActionK
 export function labelForSensitiveActionKind(kind?: string) {
   const labels: Record<SensitiveActionKind, string> = {
     send_email: "Send email",
+    create_calendar_event: "Create calendar event",
     publish_preview: "Publish preview",
     post_externally: "Post externally",
     spend_money: "Spend money",
@@ -392,6 +394,7 @@ export function labelForSensitiveActionKind(kind?: string) {
 export function approvalRiskCopy(kind?: string) {
   const copy: Record<SensitiveActionKind, string> = {
     send_email: "This will contact someone outside your workspace.",
+    create_calendar_event: "This will add an event to an external calendar and may invite other people.",
     publish_preview: "This will make a preview or draft visible outside your private workspace.",
     post_externally: "This will publish content to an external channel.",
     spend_money: "This may create a charge or commit budget.",
@@ -472,7 +475,7 @@ export function approvedActionFallbackResult(args: {
     "## Result",
     "FounderOS resumed the approved step and kept it in review because there is no live connection available for this action yet.",
     "",
-    "No email was sent, no post was published, no money was spent, no data was deleted, and no live asset was changed.",
+    "No email was sent, no calendar event was created, no post was published, no money was spent, no data was deleted, and no live asset was changed.",
   ].join("\n");
 
   return { summary, content };

@@ -33,14 +33,85 @@ test("registry exposes safe connector metadata and action handlers", () => {
 
   const publicEmail = runtime.publicConnectorDefinition(email);
   assert.equal(publicEmail.safeDisplayName, "Email");
+  assert.equal("requiredScopes" in publicEmail, false);
   assert.equal(JSON.stringify(publicEmail).includes("handlerKey"), false);
   assert.equal(JSON.stringify(publicEmail).includes("private credential"), false);
+
+  const gmail = runtime.getConnectorDefinition("gmail");
+  assert.equal(gmail.safeDisplayName, "Gmail");
+  assert.deepEqual(gmail.capabilities, ["read_email", "draft_email", "send_email"]);
+  assert.equal(gmail.approvalPolicy, "per_sensitive_action");
+  assert.equal(JSON.stringify(runtime.publicConnectorDefinition(gmail)).includes("google.gmail"), false);
+
+  const googleCalendar = runtime.getConnectorDefinition("google_calendar");
+  assert.equal(googleCalendar.safeDisplayName, "Google Calendar");
+  assert.deepEqual(googleCalendar.capabilities, [
+    "read_calendar",
+    "check_availability",
+    "create_calendar_event",
+  ]);
+  assert.equal(JSON.stringify(runtime.publicConnectorDefinition(googleCalendar)).includes("google.calendar"), false);
 
   for (const connector of runtime.listConnectorDefinitions()) {
     for (const action of connector.actions) {
       assert.equal(typeof runtime.getConnectorActionHandler(action.handlerKey), "function");
     }
   }
+});
+
+test("google workspace connectors draft/import freely and gate external actions", () => {
+  const gmailConnection = {
+    status: "connected",
+    credentialRef: "vault:gmail",
+    grantedScopes: ["google.gmail.read", "google.gmail.compose", "google.gmail.send"],
+  };
+
+  const read = runtime.evaluateConnectorActionRequest({
+    connectorId: "gmail",
+    actionType: "read_email",
+    connection: gmailConnection,
+  });
+  assert.equal(read.allowed, true);
+  assert.equal(read.approvalRequired, false);
+
+  const draft = runtime.evaluateConnectorActionRequest({
+    connectorId: "gmail",
+    actionType: "draft_email",
+    connection: gmailConnection,
+  });
+  assert.equal(draft.allowed, true);
+  assert.equal(draft.approvalRequired, false);
+
+  const pendingSend = runtime.evaluateConnectorActionRequest({
+    connectorId: "gmail",
+    actionType: "send_email",
+    connection: gmailConnection,
+  });
+  assert.equal(pendingSend.allowed, false);
+  assert.equal(pendingSend.reason, "approval_required");
+  assert.equal(pendingSend.sensitiveActionKind, "send_email");
+
+  const calendarConnection = {
+    status: "connected",
+    credentialRef: "vault:google-calendar",
+    grantedScopes: ["google.calendar.read", "google.calendar.events"],
+  };
+  const availability = runtime.evaluateConnectorActionRequest({
+    connectorId: "google_calendar",
+    actionType: "check_availability",
+    connection: calendarConnection,
+  });
+  assert.equal(availability.allowed, true);
+  assert.equal(availability.approvalRequired, false);
+
+  const pendingEvent = runtime.evaluateConnectorActionRequest({
+    connectorId: "google_calendar",
+    actionType: "create_calendar_event",
+    connection: calendarConnection,
+  });
+  assert.equal(pendingEvent.allowed, false);
+  assert.equal(pendingEvent.reason, "approval_required");
+  assert.equal(pendingEvent.sensitiveActionKind, "create_calendar_event");
 });
 
 test("connection status is safe and does not expose raw permission names", () => {
@@ -196,6 +267,20 @@ test("vercel connection settings are internal, sanitized, and required", () => {
     settings: sanitized,
   });
   assert.equal(ready.status, "connected");
+});
+
+test("google workspace settings are sanitized and kept out of public cards", () => {
+  const gmail = runtime.getConnectorDefinition("gmail");
+  const sanitized = runtime.sanitizeConnectorConnectionSettings("gmail", {
+    accountEmail: " Founder@Example.COM ",
+    calendarName: " Primary calendar ",
+    accessToken: "ya29.private_token_should_not_store",
+  });
+
+  assert.equal(sanitized.accountEmail, "founder@example.com");
+  assert.equal(sanitized.calendarName, "Primary calendar");
+  assert.equal(JSON.stringify(sanitized).includes("private_token"), false);
+  assert.equal(JSON.stringify(runtime.publicConnectionCard(gmail, { settings: sanitized })).includes("founder@example.com"), false);
 });
 
 test("credential storage abstraction returns only safe metadata", () => {

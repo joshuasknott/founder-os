@@ -36,7 +36,9 @@ type ServiceCard = {
 
 const serviceIcons: Record<string, LucideIcon> = {
   email: Mail,
+  gmail: Mail,
   calendar: CalendarDays,
+  google_calendar: CalendarDays,
   payments: CreditCard,
   publishing: Megaphone,
   knowledge: BookOpen,

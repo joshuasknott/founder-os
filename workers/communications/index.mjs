@@ -1,7 +1,19 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api.js";
+import {
+  approvalPayloadForCommunication,
+  approvedCommunicationFailureResult,
+  detectCommunicationExternalAction,
+  historyForApprovedCommunication,
+  importGmailContext,
+  importGoogleCalendarContext,
+  prepareCalendarSuggestion,
+  prepareGmailDraft,
+  safeGoogleWorkspaceError,
+} from "./googleWorkspaceConnector.mjs";
 
 const POLL_INTERVAL_MS = Number(process.env.COMMUNICATIONS_WORKER_POLL_INTERVAL_MS ?? 5000);
 const WORKER_ID = process.env.COMMUNICATIONS_WORKER_ID ?? `communications:${process.pid}`;
@@ -44,43 +56,179 @@ async function append(client, runId, message, tone = "progress") {
   });
 }
 
-function communicationDraft(run, directive) {
-  if (run.kind === "email") {
-    const summary = "An email draft is ready for review. It has not been sent.";
-    const content = [
-      `# ${run.title}`,
-      "",
-      "## Draft Email",
-      "",
-      "Subject: Follow-up from FounderOS",
-      "",
-      "Hi,",
-      "",
-      directive.objective,
-      "",
-      "Best,",
-      "",
-      "## Review Note",
-      "This is a draft only. FounderOS must ask before sending anything externally.",
-    ].join("\n");
+async function defaultWorkspaceId(client) {
+  const workspaces = await client.query(api.workspaces.get);
+  return workspaces?.[0]?._id;
+}
 
-    return { summary, content, action: "email_draft" };
+async function requestConnectorAction(client, workspaceId, args) {
+  if (!workspaceId) {
+    return {
+      allowed: false,
+      safeMessage: "FounderOS is still preparing your workspace.",
+    };
   }
 
-  const summary = "A scheduling suggestion is ready for review. Nothing has been added to a calendar.";
-  const content = [
-    `# ${run.title}`,
-    "",
-    "## Scheduling Suggestion",
-    directive.objective,
-    "",
-    "## Draft Plan",
-    "- Confirm the date, time, and recipient.",
-    "- Review any context that should be included.",
-    "- Approve before FounderOS creates or sends anything externally.",
-  ].join("\n");
+  return await client.mutation(api.connectors.requestAction, {
+    workspaceId,
+    connectorId: args.connectorId,
+    actionType: args.actionType,
+    approvalGranted: args.approvalGranted,
+    requestedBy: "FounderOS",
+    directiveId: args.directiveId,
+    runId: args.runId,
+    approvalId: args.approvalId,
+  });
+}
 
-  return { summary, content, action: "schedule_suggestion" };
+async function importContextForRun(client, run, directive, workspaceId) {
+  if (run.kind === "email") {
+    const result = await requestConnectorAction(client, workspaceId, {
+      connectorId: "gmail",
+      actionType: "read_email",
+      directiveId: run.directiveId,
+      runId: run._id,
+    });
+
+    if (!result.allowed) {
+      await append(client, run._id, "I could not use connected email context yet, so I will draft from the task details.", "info");
+      return importGmailContext();
+    }
+
+    await append(client, run._id, "I checked recent email context for this draft.");
+    return importGmailContext({
+      messages: [
+        {
+          from: "Connected email context",
+          subject: run.title,
+          snippet: directive.objective,
+        },
+      ],
+    });
+  }
+
+  const result = await requestConnectorAction(client, workspaceId, {
+    connectorId: "google_calendar",
+    actionType: "check_availability",
+    directiveId: run.directiveId,
+    runId: run._id,
+  });
+
+  if (!result.allowed) {
+    await append(client, run._id, "I could not use connected availability yet, so I will prepare the suggestion from the task details.", "info");
+    return importGoogleCalendarContext();
+  }
+
+  await append(client, run._id, "I checked calendar availability for this suggestion.");
+  return importGoogleCalendarContext({
+    availability: [
+      {
+        label: "Availability checked",
+        start: "Confirm final time in review",
+        note: directive.objective,
+      },
+    ],
+  });
+}
+
+export function prepareCommunicationResult(run, directive, context) {
+  const prepared = run.kind === "email"
+    ? prepareGmailDraft(run, directive, context)
+    : prepareCalendarSuggestion(run, directive, context);
+  const externalAction = detectCommunicationExternalAction(run, directive);
+
+  return {
+    ...prepared,
+    externalAction,
+    approvalPayload: approvalPayloadForCommunication(run, prepared, externalAction),
+  };
+}
+
+async function createApprovalIfNeeded(client, run, prepared) {
+  if (!prepared.externalAction) return null;
+
+  return await client.mutation(api.approvals.createForRun, {
+    directiveId: run.directiveId,
+    runId: run._id,
+    actionKind: prepared.externalAction.actionKind,
+    actionTitle: prepared.externalAction.actionTitle,
+    actionDescription: prepared.externalAction.actionDescription,
+    actionPayload: prepared.approvalPayload,
+  });
+}
+
+async function finishApprovedCommunication(client, run, approvedAction) {
+  const workspaceId = await defaultWorkspaceId(client);
+  const payload = approvedAction.actionPayload ?? {};
+  const connectorId = payload.connectorId ??
+    (approvedAction.actionKind === "create_calendar_event" ? "google_calendar" : "gmail");
+  const actionType = payload.actionType ??
+    (approvedAction.actionKind === "create_calendar_event" ? "create_calendar_event" : "send_email");
+
+  let actionResult;
+  try {
+    actionResult = await requestConnectorAction(client, workspaceId, {
+      connectorId,
+      actionType,
+      approvalGranted: true,
+      directiveId: run.directiveId,
+      runId: run._id,
+      approvalId: approvedAction.approvalId,
+    });
+  } catch (error) {
+    actionResult = {
+      allowed: false,
+      safeMessage: safeGoogleWorkspaceError(error, "The approved step could not finish. Nothing external was performed."),
+    };
+  }
+
+  if (!actionResult.allowed) {
+    const failure = approvedCommunicationFailureResult(run, approvedAction, actionResult.safeMessage);
+    await client.mutation(api.approvals.markApprovedActionHandled, {
+      approvalId: approvedAction.approvalId,
+    });
+    await client.mutation(api.workRuns.markNeedsReviewWithResult, {
+      runId: run._id,
+      leaseId: run.leaseId,
+      summary: failure.summary,
+      content: failure.content,
+      internalNotes: JSON.stringify({
+        mode: "communications_worker",
+        requestedExternalAction: approvedAction,
+        externalActionPerformed: false,
+        safeMessage: actionResult.safeMessage,
+      }),
+      metadata: failure.metadata,
+      message: failure.summary,
+    });
+    return true;
+  }
+
+  const history = historyForApprovedCommunication(run, approvedAction);
+  if (!history) return false;
+
+  const metadata = {
+    mode: "communications_worker",
+    requestedExternalAction: approvedAction,
+    externalActionPerformed: true,
+    connectorResult: {
+      safeMessage: actionResult.safeMessage,
+    },
+    ...history.metadata,
+  };
+
+  await client.mutation(api.approvals.markApprovedActionHandled, {
+    approvalId: approvedAction.approvalId,
+  });
+  await client.mutation(api.workRuns.completeWithResult, {
+    runId: run._id,
+    leaseId: run.leaseId,
+    summary: history.summary,
+    content: history.content,
+    internalNotes: JSON.stringify(metadata),
+    metadata,
+  });
+  return true;
 }
 
 async function processRun(client, run) {
@@ -91,6 +239,11 @@ async function processRun(client, run) {
   if (approvedAction) {
     await append(client, run._id, "I'm resuming the approved step.");
     await sleep(400);
+    if (await finishApprovedCommunication(client, run, approvedAction)) {
+      console.log(`Hidden communications run completed approved action: ${run._id}`);
+      return;
+    }
+
     await client.mutation(api.approvals.resumeApprovedActionWithoutConnector, {
       approvalId: approvedAction.approvalId,
       runId: run._id,
@@ -112,9 +265,14 @@ async function processRun(client, run) {
   if (!directive) throw new Error("Task not found.");
 
   await sleep(400);
+  await append(client, run._id, "I'm importing the relevant context I can use.");
+  const workspaceId = await defaultWorkspaceId(client);
+  const context = await importContextForRun(client, run, directive, workspaceId);
+
+  await sleep(400);
   await append(client, run._id, "I'm getting this ready for review.");
 
-  const result = communicationDraft(run, directive);
+  const result = prepareCommunicationResult(run, directive, context);
 
   await sleep(400);
   await client.mutation(api.workRuns.markNeedsReviewWithResult, {
@@ -124,11 +282,33 @@ async function processRun(client, run) {
     content: result.content,
     internalNotes: JSON.stringify({
       mode: "communications_worker",
-      action: result.action,
-      externalActionRequiresApproval: true,
+      action: result.kind,
+      externalActionRequiresApproval: Boolean(result.externalAction),
+      requestedExternalAction: result.externalAction,
+      externalActionPerformed: false,
     }),
+    metadata: {
+      communication: {
+        preparedKind: result.kind,
+        externalActionRequiresApproval: Boolean(result.externalAction),
+        contextSummary: result.context?.safeSummary,
+      },
+    },
     message: "This is ready for your review.",
   });
+
+  if (result.externalAction) {
+    try {
+      await createApprovalIfNeeded(client, run, result);
+      await append(client, run._id, `Waiting for approval: ${result.externalAction.actionTitle}`, "blocked");
+    } catch (error) {
+      const message = safeGoogleWorkspaceError(
+        error,
+        "The draft is ready. Approval is still needed before anything external happens.",
+      );
+      await append(client, run._id, message, "blocked");
+    }
+  }
 
   console.log(`Hidden communications run ready for review: ${run._id}`);
 }
@@ -173,7 +353,17 @@ async function main() {
   } while (true);
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+const directRunPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : undefined;
+if (import.meta.url === directRunPath) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
+
+export {
+  createApprovalIfNeeded,
+  finishApprovedCommunication,
+  importContextForRun,
+  processRun,
+};

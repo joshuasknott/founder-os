@@ -1,7 +1,10 @@
 export const connectorCapabilities = [
   "read_email",
+  "draft_email",
   "send_email",
   "read_calendar",
+  "check_availability",
+  "create_calendar_event",
   "manage_calendar",
   "read_payments",
   "spend_money",
@@ -26,8 +29,11 @@ export type ConnectorActionApproval = "never" | "always";
 
 export type ConnectorActionType =
   | "read_email"
+  | "draft_email"
   | "send_email"
   | "read_calendar"
+  | "check_availability"
+  | "create_calendar_event"
   | "schedule_meeting"
   | "read_payments"
   | "charge_payment"
@@ -47,6 +53,7 @@ export type ConnectorActionDefinition = {
   approval: ConnectorActionApproval;
   sensitiveActionKind?:
     | "send_email"
+    | "create_calendar_event"
     | "post_externally"
     | "spend_money"
     | "delete_data"
@@ -123,6 +130,12 @@ export type VercelConnectionSettings = {
   outputDirectory?: string;
 };
 
+export type GoogleWorkspaceConnectionSettings = {
+  accountEmail?: string;
+  calendarName?: string;
+  calendarId?: string;
+};
+
 type ConnectorActionHandlerResult = {
   status: "completed" | "needs_attention";
   safeSummary: string;
@@ -136,6 +149,7 @@ type ConnectorActionHandler = (args: {
 
 const sensitiveCapabilities = new Set<ConnectorCapability>([
   "send_email",
+  "create_calendar_event",
   "manage_calendar",
   "spend_money",
   "post_externally",
@@ -174,6 +188,44 @@ export const connectorRegistry: Record<string, ConnectorDefinition> = {
       },
     ],
   },
+  gmail: {
+    id: "gmail",
+    safeDisplayName: "Gmail",
+    description: "Import relevant messages, prepare drafts, and send approved emails.",
+    authType: "oauth2",
+    capabilities: ["read_email", "draft_email", "send_email"],
+    requiredScopes: ["google.gmail.read", "google.gmail.compose", "google.gmail.send"],
+    scopeLabels: ["Import relevant messages", "Prepare email drafts", "Send approved emails"],
+    connectionStatus: "not_connected",
+    approvalPolicy: "per_sensitive_action",
+    actions: [
+      {
+        type: "read_email",
+        safeLabel: "Import relevant messages",
+        requiredCapabilities: ["read_email"],
+        requiredScopes: ["google.gmail.read"],
+        approval: "never",
+        handlerKey: "gmail.read",
+      },
+      {
+        type: "draft_email",
+        safeLabel: "Prepare email drafts",
+        requiredCapabilities: ["draft_email"],
+        requiredScopes: ["google.gmail.compose"],
+        approval: "never",
+        handlerKey: "gmail.draft",
+      },
+      {
+        type: "send_email",
+        safeLabel: "Send approved emails",
+        requiredCapabilities: ["send_email"],
+        requiredScopes: ["google.gmail.send"],
+        approval: "always",
+        sensitiveActionKind: "send_email",
+        handlerKey: "gmail.send",
+      },
+    ],
+  },
   calendar: {
     id: "calendar",
     safeDisplayName: "Calendar",
@@ -199,8 +251,46 @@ export const connectorRegistry: Record<string, ConnectorDefinition> = {
         requiredCapabilities: ["manage_calendar"],
         requiredScopes: ["calendar.write"],
         approval: "always",
-        sensitiveActionKind: "post_externally",
+        sensitiveActionKind: "create_calendar_event",
         handlerKey: "calendar.schedule",
+      },
+    ],
+  },
+  google_calendar: {
+    id: "google_calendar",
+    safeDisplayName: "Google Calendar",
+    description: "Import availability and create approved calendar events.",
+    authType: "oauth2",
+    capabilities: ["read_calendar", "check_availability", "create_calendar_event"],
+    requiredScopes: ["google.calendar.read", "google.calendar.events"],
+    scopeLabels: ["Import availability", "Create approved events"],
+    connectionStatus: "not_connected",
+    approvalPolicy: "per_sensitive_action",
+    actions: [
+      {
+        type: "read_calendar",
+        safeLabel: "Import calendar context",
+        requiredCapabilities: ["read_calendar"],
+        requiredScopes: ["google.calendar.read"],
+        approval: "never",
+        handlerKey: "google_calendar.read",
+      },
+      {
+        type: "check_availability",
+        safeLabel: "Check availability",
+        requiredCapabilities: ["check_availability"],
+        requiredScopes: ["google.calendar.read"],
+        approval: "never",
+        handlerKey: "google_calendar.availability",
+      },
+      {
+        type: "create_calendar_event",
+        safeLabel: "Create approved events",
+        requiredCapabilities: ["create_calendar_event"],
+        requiredScopes: ["google.calendar.events"],
+        approval: "always",
+        sensitiveActionKind: "create_calendar_event",
+        handlerKey: "google_calendar.create_event",
       },
     ],
   },
@@ -376,7 +466,6 @@ export function publicConnectorDefinition(definition: ConnectorDefinition) {
     description: definition.description,
     authType: definition.authType,
     capabilities: definition.capabilities,
-    requiredScopes: definition.requiredScopes,
     requiredAccess: definition.scopeLabels,
     connectionStatus: definition.connectionStatus,
     approvalPolicy: definition.approvalPolicy,
@@ -431,6 +520,12 @@ function cleanDomainSetting(value: unknown) {
     .toLowerCase();
 }
 
+function cleanEmailSetting(value: unknown) {
+  const cleaned = cleanSettingString(value, 180);
+  if (!cleaned || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cleaned)) return undefined;
+  return cleaned.toLowerCase();
+}
+
 export function sanitizeVercelConnectionSettings(settings?: unknown): VercelConnectionSettings {
   const source = settings && typeof settings === "object" && !Array.isArray(settings)
     ? settings as Record<string, unknown>
@@ -449,6 +544,20 @@ export function sanitizeVercelConnectionSettings(settings?: unknown): VercelConn
   };
 }
 
+export function sanitizeGoogleWorkspaceConnectionSettings(
+  settings?: unknown,
+): GoogleWorkspaceConnectionSettings {
+  const source = settings && typeof settings === "object" && !Array.isArray(settings)
+    ? settings as Record<string, unknown>
+    : {};
+
+  return {
+    accountEmail: cleanEmailSetting(source.accountEmail),
+    calendarName: cleanSettingString(source.calendarName, 120),
+    calendarId: cleanSettingString(source.calendarId, 180),
+  };
+}
+
 export function sanitizeConnectorConnectionSettings(connectorId: string, settings?: unknown) {
   if (connectorId === "vercel") {
     const sanitized = sanitizeVercelConnectionSettings(settings);
@@ -458,6 +567,14 @@ export function sanitizeConnectorConnectionSettings(connectorId: string, setting
     return entries.length > 0 ? Object.fromEntries(
       entries,
     ) : undefined;
+  }
+
+  if (connectorId === "gmail" || connectorId === "google_calendar") {
+    const sanitized = sanitizeGoogleWorkspaceConnectionSettings(settings);
+    const entries = Object.entries(sanitized).filter(
+      ([, value]) => typeof value === "string" && value.length > 0,
+    );
+    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
   }
 
   return undefined;
@@ -725,8 +842,14 @@ const safeNoopHandler: ConnectorActionHandler = async ({ actionType }) => ({
 export const connectorActionHandlers: Record<string, ConnectorActionHandler> = {
   "email.read": safeNoopHandler,
   "email.send": safeNoopHandler,
+  "gmail.read": safeNoopHandler,
+  "gmail.draft": safeNoopHandler,
+  "gmail.send": safeNoopHandler,
   "calendar.read": safeNoopHandler,
   "calendar.schedule": safeNoopHandler,
+  "google_calendar.read": safeNoopHandler,
+  "google_calendar.availability": safeNoopHandler,
+  "google_calendar.create_event": safeNoopHandler,
   "payments.read": safeNoopHandler,
   "payments.charge": safeNoopHandler,
   "publishing.post": safeNoopHandler,
@@ -746,8 +869,11 @@ export function getConnectorActionHandler(handlerKey: string) {
 export function safeActionSummary(actionType: string) {
   const labels: Record<string, string> = {
     read_email: "Email access is ready.",
+    draft_email: "The email draft is ready.",
     send_email: "The approved email step is ready.",
     read_calendar: "Calendar access is ready.",
+    check_availability: "Availability is ready.",
+    create_calendar_event: "The approved calendar event step is ready.",
     schedule_meeting: "The approved meeting step is ready.",
     read_payments: "Payment status access is ready.",
     charge_payment: "The approved payment step is ready.",
