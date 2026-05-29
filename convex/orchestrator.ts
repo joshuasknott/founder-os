@@ -37,6 +37,17 @@ export const requireClarification = internalMutation({
   },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.directiveId, { status: "needs_clarification" });
+
+    const directive = await ctx.db.get(args.directiveId);
+    if (directive?.sessionId) {
+      await ctx.db.insert("chatMessages", {
+        sessionId: directive.sessionId,
+        role: "assistant",
+        agentName: "FounderOS",
+        content: `I need one detail before continuing:\n\n${args.message}`,
+      });
+      await ctx.db.patch(directive.sessionId, { lastMessageAt: Date.now() });
+    }
     
     await ctx.scheduler.runAfter(0, internal.telemetry.logEvent, {
       traceId: args.directiveId,
@@ -68,7 +79,7 @@ export const initializePlaybook = action({
 
     let ragContext = "No relevant context found.";
     if (results && results.length > 0) {
-      ragContext = results.map((r: any, i: number) => `[Context ${i + 1}: ${r.title}]\n${r.content}`).join("\n\n");
+      ragContext = results.map((result, i) => `[Context ${i + 1}: ${result.title}]\n${result.content}`).join("\n\n");
     }
 
     const systemPrompt = `You are Orion, Chief of Staff. Map the founder's directive to an existing strict Playbook.

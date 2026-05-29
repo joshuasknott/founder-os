@@ -32,7 +32,7 @@ export const batchIndexDocuments = internalAction({
 
     if (scheduled > 0) {
       await ctx.runMutation(internal.telemetry.logEvent, {
-        traceId: "system_cron" as any,
+        traceId: "system_cron",
         actor: "system: Sentinel",
         eventType: "STATE_TRANSITION" as const,
         rawPayload: {

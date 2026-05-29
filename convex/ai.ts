@@ -1,151 +1,235 @@
 import { internal } from "./_generated/api";
 
-// =========================================================================
-// Multi-Tier AI Routing Engine (Self-Healing & Auto-Backoff)
-//
-// Tier 1: o4-mini          (OpenAI)  — Sentinel & Routing
-// Tier 2: gemini-3-flash   (Google)  — Fast Execution
-// Tier 3: gpt-5.2-codex    (OpenAI)  — Core Engine
-// Tier 4: o3               (OpenAI)  — Deep Escalation
-// =========================================================================
+const DEFAULT_DEEPSEEK_MODEL = "deepseek-chat";
+const DEFAULT_DEEPSEEK_REASONING_MODEL = "deepseek-reasoner";
+const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+const DEFAULT_GEMINI_EMBEDDING_MODEL = "text-embedding-004";
+const RATE_LIMIT_RESCHEDULED = "[AI Router] 429 Rate Limit hit. Task rescheduled with exponential backoff.";
 
-const OPENAI_FALLBACK_MODEL = "gpt-4o-mini";
+type RoutePurpose = "standard" | "reasoning" | "creative" | "long-context";
 
-type TierConfig = {
-  model: string;
-  provider: "openai" | "google";
+type RetryContext = {
+  runQuery: (queryRef: unknown, args: Record<string, unknown>) => Promise<unknown>;
+  scheduler: {
+    runAfter: (delayMs: number, actionRef: unknown, args: Record<string, unknown>) => Promise<unknown>;
+  };
 };
 
-const TIER_MAP: Record<number, TierConfig> = {
-  1: { model: "o4-mini", provider: "openai" },
-  2: { model: "gemini-3-flash", provider: "google" },
-  3: { model: "gpt-5.2", provider: "openai" },
-  4: { model: "o3", provider: "openai" },
+type DeepSeekChoice = {
+  message?: {
+    content?: string;
+  };
 };
 
-/**
- * Custom error handler to properly intercept 429 Status Codes and
- * interface with the engine.
- */
-async function callOpenAI(
-  model: string,
+type DeepSeekResponse = {
+  choices?: DeepSeekChoice[];
+  error?: {
+    message?: string;
+  };
+};
+
+type GeminiResponse = {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{
+        text?: string;
+      }>;
+    };
+  }>;
+  embeddings?: Array<{
+    values?: number[];
+  }>;
+  embedding?: {
+    values?: number[];
+  };
+  error?: {
+    message?: string;
+  };
+};
+
+function isRetryContext(ctx: unknown): ctx is RetryContext {
+  if (!ctx || typeof ctx !== "object") return false;
+  const candidate = ctx as Record<string, unknown>;
+  const scheduler = candidate.scheduler as Record<string, unknown> | undefined;
+  return typeof candidate.runQuery === "function" && typeof scheduler?.runAfter === "function";
+}
+
+function routePurpose(tier: number): RoutePurpose {
+  if (tier === 4) return "reasoning";
+  if (tier === 3) return "long-context";
+  if (tier === 2) return "creative";
+  return "standard";
+}
+
+function deepSeekModelForPurpose(purpose: RoutePurpose): string {
+  if (purpose === "reasoning") {
+    return process.env.DEEPSEEK_REASONING_MODEL ?? DEFAULT_DEEPSEEK_REASONING_MODEL;
+  }
+  return process.env.DEEPSEEK_MODEL ?? DEFAULT_DEEPSEEK_MODEL;
+}
+
+async function maybeReschedule(ctx: unknown, taskId: unknown): Promise<boolean> {
+  if (!isRetryContext(ctx) || !taskId) return false;
+
+  let retryCount = 0;
+  try {
+    const task = await ctx.runQuery(internal.engine.getTaskById, { taskId });
+    if (task && typeof task === "object" && "retryCount" in task) {
+      const value = (task as { retryCount?: unknown }).retryCount;
+      retryCount = typeof value === "number" ? value : 0;
+    }
+  } catch {
+    retryCount = 0;
+  }
+
+  const backoffMs = Math.min(Math.pow(2, retryCount) * 1000, 30000);
+  await ctx.scheduler.runAfter(backoffMs, internal.engine.executeTask, { taskId });
+  return true;
+}
+
+async function readJson<T>(response: Response): Promise<T> {
+  try {
+    return (await response.json()) as T;
+  } catch {
+    return {} as T;
+  }
+}
+
+async function callDeepSeek(
+  purpose: RoutePurpose,
   systemPrompt: string,
   userPrompt: string,
-  ctx?: any,
-  taskId?: any
+  ctx?: unknown,
+  taskId?: unknown,
 ): Promise<string> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return `[AI Router] OPENAI_API_KEY not configured.`;
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) throw new Error("Primary AI key is not configured.");
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const baseUrl = process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com";
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model,
+      model: deepSeekModelForPurpose(purpose),
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
+      temperature: purpose === "creative" ? 0.7 : 0.2,
     }),
   });
 
-  const data = await response.json();
+  const data = await readJson<DeepSeekResponse>(response);
 
   if (!response.ok) {
-    if (response.status === 429) {
-      if (ctx && taskId) {
-        let retryCount = 0;
-        try {
-           const task = await ctx.runQuery(internal.engine.getTaskById, { taskId });
-           if (task) retryCount = task.retryCount ?? 0;
-        } catch (e) { }
-
-        // Exponential backoff calculation
-        const backoffMs = Math.min(Math.pow(2, retryCount) * 1000, 30000);
-        await ctx.scheduler.runAfter(backoffMs, internal.engine.executeTask, { taskId });
-        return `[AI Router] 429 Rate Limit hit. Task rescheduled with exponential backoff (${backoffMs}ms).`;
-      }
-      throw new Error(`OpenAI Rate Limit 429. ${data?.error?.message}`);
+    if (response.status === 429 && (await maybeReschedule(ctx, taskId))) {
+      return RATE_LIMIT_RESCHEDULED;
     }
-
-    if (response.status === 404 && model !== OPENAI_FALLBACK_MODEL) {
-      return callOpenAI(OPENAI_FALLBACK_MODEL, systemPrompt, userPrompt, ctx, taskId);
-    }
-    return `[AI Router] Error (${response.status}): ${data?.error?.message ?? "Unknown"}`;
+    throw new Error(data.error?.message ?? `Primary AI request failed (${response.status}).`);
   }
 
-  return data.choices?.[0]?.message?.content ?? `[AI Router] No content.`;
+  const content = data.choices?.[0]?.message?.content?.trim();
+  if (!content) throw new Error("Primary AI returned no content.");
+  return content;
 }
 
 async function callGemini(
-  model: string,
   systemPrompt: string,
   userPrompt: string,
-  ctx?: any,
-  taskId?: any
+  ctx?: unknown,
+  taskId?: unknown,
 ): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return `[AI Router] GEMINI_API_KEY not configured.`;
+  if (!apiKey) throw new Error("Backup AI key is not configured.");
 
+  const model = process.env.GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL;
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: systemPrompt + "\n\n" + userPrompt }] }],
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: "user", parts: [{ text: userPrompt }] }],
       }),
-    }
+    },
   );
 
-  const data = await response.json();
+  const data = await readJson<GeminiResponse>(response);
 
   if (!response.ok) {
-    if (response.status === 429) {
-      if (ctx && taskId) {
-        let retryCount = 0;
-        try {
-           const task = await ctx.runQuery(internal.engine.getTaskById, { taskId });
-           if (task) retryCount = task.retryCount ?? 0;
-        } catch (e) { }
-
-        // Exponential backoff calculation
-        const backoffMs = Math.min(Math.pow(2, retryCount) * 1000, 30000);
-        await ctx.scheduler.runAfter(backoffMs, internal.engine.executeTask, { taskId });
-        return `[AI Router] 429 Rate Limit hit. Task rescheduled with exponential backoff (${backoffMs}ms).`;
-      }
-      throw new Error(`Gemini Rate Limit 429. ${data?.error?.message}`);
+    if (response.status === 429 && (await maybeReschedule(ctx, taskId))) {
+      return RATE_LIMIT_RESCHEDULED;
     }
-    return `[AI Router] Gemini error (${response.status}): ${data?.error?.message ?? "Unknown"}`;
+    throw new Error(data.error?.message ?? `Backup AI request failed (${response.status}).`);
   }
 
-  return data.candidates?.[0]?.content?.parts?.[0]?.text ?? `[AI Router] No content.`;
+  const content = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+  if (!content) throw new Error("Backup AI returned no content.");
+  return content;
 }
 
-/**
- * executeAITask now supports optional context mapping to enable
- * self-healing and auto-backoff scheduling.
- */
+function fallbackEmbedding(text: string): number[] {
+  const vector = new Array<number>(768).fill(0);
+  for (let i = 0; i < text.length; i++) {
+    const index = i % vector.length;
+    vector[index] += ((text.charCodeAt(i) % 31) - 15) / 15;
+  }
+
+  const magnitude = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0)) || 1;
+  return vector.map((value) => value / magnitude);
+}
+
 export async function executeAITask(
   tier: number,
   systemPrompt: string,
   userPrompt: string,
-  ctx?: any,
-  taskId?: any
+  ctx?: unknown,
+  taskId?: unknown,
 ): Promise<string> {
-  const config = TIER_MAP[tier];
-  if (!config) return `[AI Router] Invalid tier: ${tier}`;
+  const purpose = routePurpose(tier);
 
   try {
-    if (config.provider === "openai") {
-      return await callOpenAI(config.model, systemPrompt, userPrompt, ctx, taskId);
-    } else {
-      return await callGemini(config.model, systemPrompt, userPrompt, ctx, taskId);
+    return await callDeepSeek(purpose, systemPrompt, userPrompt, ctx, taskId);
+  } catch {
+    try {
+      return await callGemini(systemPrompt, userPrompt, ctx, taskId);
+    } catch {
+      return [
+        "I could not reach the AI service yet.",
+        "Add the primary or backup AI key in Settings, then try again.",
+      ].join("\n");
     }
-  } catch (error) {
-    return `[AI Router] Unexpected error: ${error}`;
   }
+}
+
+export async function executeEmbedding(text: string): Promise<number[]> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return fallbackEmbedding(text);
+
+  const model = process.env.GEMINI_EMBEDDING_MODEL ?? DEFAULT_GEMINI_EMBEDDING_MODEL;
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: `models/${model}`,
+        content: { parts: [{ text }] },
+      }),
+    },
+  );
+
+  const data = await readJson<GeminiResponse>(response);
+  if (!response.ok) return fallbackEmbedding(text);
+
+  const values = data.embedding?.values ?? data.embeddings?.[0]?.values;
+  if (!values || values.length === 0) return fallbackEmbedding(text);
+
+  if (values.length === 768) return values;
+  if (values.length > 768) return values.slice(0, 768);
+  return [...values, ...new Array<number>(768 - values.length).fill(0)];
 }

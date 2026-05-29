@@ -12,24 +12,8 @@ export const indexDocument = internalAction({
     const version = await ctx.runQuery(internal.memory.getVersion, { id: args.versionId });
     if (!version || version.embedding) return;
 
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("OPENAI_API_KEY is not configured");
-
-    const response = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({ input: version.content, model: "text-embedding-3-small" }),
-    });
-
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(`OpenAI Embedding Error: ${data.error?.message ?? "Unknown error"}`);
-    }
-
-    const embedding: number[] = data.data[0].embedding;
+    const { executeEmbedding } = await import("./ai");
+    const embedding = await executeEmbedding(version.content);
 
     await ctx.runMutation(internal.memory.saveEmbedding, {
       versionId: args.versionId,
@@ -39,7 +23,7 @@ export const indexDocument = internalAction({
     const doc = await ctx.runQuery(internal.memory.getDocument, { id: version.documentId });
     if (doc) {
       await ctx.runMutation(internal.telemetry.logEvent, {
-        traceId: doc.traceId ?? ("system_index" as any),
+        traceId: doc.traceId ?? "system_index",
         actor: "system: Sentinel",
         eventType: "STATE_TRANSITION",
         rawPayload: {
@@ -49,7 +33,7 @@ export const indexDocument = internalAction({
         },
         metrics: {
           latencyMs: 0,
-          tokensUsed: data.usage.total_tokens,
+          tokensUsed: 0,
         },
       });
     }
@@ -69,23 +53,8 @@ export const queryMemory = internalAction({
   handler: async (ctx, args) => {
     const limit = args.limit ?? 5;
 
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("OPENAI_API_KEY is not configured");
-
-    const response = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({ input: args.queryText, model: "text-embedding-3-small" }),
-    });
-
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error("Failed to generate query embedding");
-    }
-    const queryEmbedding: number[] = data.data[0].embedding;
+    const { executeEmbedding } = await import("./ai");
+    const queryEmbedding = await executeEmbedding(args.queryText);
 
     const rawResults = await ctx.vectorSearch("documentVersions", "by_embedding", {
       vector: queryEmbedding,
@@ -141,7 +110,7 @@ export const deprecateDocument = internalMutation({
     const doc = await ctx.db.get(args.documentId);
     if (doc) {
       await ctx.runMutation(internal.telemetry.logEvent, {
-        traceId: doc.traceId ?? ("system_deprecation" as any),
+        traceId: doc.traceId ?? "system_deprecation",
         actor: "system: Engine",
         eventType: "STATE_TRANSITION",
         rawPayload: {

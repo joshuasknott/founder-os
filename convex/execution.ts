@@ -139,7 +139,7 @@ export const triggerPlaybook = action({
 
     // 3. Build the prompt using routingRequest capability instead of model
     const agentRoster = agents
-      .map((a: any) => `- ${a.name} (${a.role}, capability: ${a.routingRequest})`)
+      .map((agent) => `- ${agent.name} (${agent.role}, capability: ${agent.routingRequest})`)
       .join("\n");
 
     const steps = playbook.taskMatrix

@@ -1,9 +1,6 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 
-// Hardcoded for now; will be derived from auth session in a future iteration.
-const MOCK_WORKSPACE_ID_PREFIX = "";
-
 export const get = query({
   args: {},
   handler: async (ctx) => {

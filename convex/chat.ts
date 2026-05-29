@@ -68,22 +68,38 @@ export const sendMessage = action({
     });
 
     const historyContext = history
-      .map((m: any) => `${m.role === "user" ? "Human" : agent.name}: ${m.content}`)
+      .map((message) => `${message.role === "user" ? "Human" : agent.name}: ${message.content}`)
       .join("\n");
+
+    let libraryContext = "No relevant Library context found.";
+    try {
+      const results = await ctx.runAction(internal.memory.queryMemory, {
+        queryText: args.content,
+        limit: 4,
+      });
+      if (results.length > 0) {
+        libraryContext = results
+          .map((result, index) => `[Library ${index + 1}: ${result.title}]\n${result.content}`)
+          .join("\n\n");
+      }
+    } catch {
+      libraryContext = "Library context is unavailable right now.";
+    }
 
     const capabilityToTier: Record<string, number> = {
       triage: 1, coding: 3, reasoning: 4, "long-context": 3, creative: 2,
     };
     const tier = capabilityToTier[agent.routingRequest] ?? 1;
 
-    const systemPrompt = `${agent.systemPrompt}\n\nYou are in CHAT MODE. This is a read-only conversation with the founder. Help them understand, plan, and think through problems. You cannot execute tasks or make changes in this mode.\n\nConversation so far:\n${historyContext}`;
+    const systemPrompt = `${agent.systemPrompt}\n\nYou are in CHAT MODE. This is a read-only conversation with the founder. Help them understand, plan, and think through problems. You cannot execute tasks, create outputs, schedule work, publish, send messages, or make changes in this mode. If the founder wants work performed, help them shape a clear task instead.\n\nRelevant Library context:\n${libraryContext}\n\nConversation so far:\n${historyContext}`;
 
     const { executeAITask } = await import("./ai");
     let response: string;
     try {
       response = await executeAITask(tier, systemPrompt, args.content);
-    } catch (error: any) {
-      response = `[AI Error] ${error?.message ?? "Failed to get response. Check API keys in Settings."}`;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to get response. Check settings.";
+      response = `FounderOS could not complete that response yet. ${message}`;
     }
 
     await ctx.runMutation(internal.chat.storeMessage, {

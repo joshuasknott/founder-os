@@ -6,7 +6,7 @@ import { v } from "convex/values";
 // L3 TOOL ERROR (Atlas Debug Protocol)
 // =========================================================================
 export class L3ToolError extends Error {
-  constructor(public toolName: string, public failedPayload: any, message: string) {
+  constructor(public toolName: string, public failedPayload: unknown, message: string) {
     super(message);
     this.name = "L3ToolError";
   }

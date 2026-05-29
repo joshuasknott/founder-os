@@ -1,5 +1,5 @@
 import { internalMutation, query } from "./_generated/server";
-import { v, ConvexError } from "convex/values";
+import { v } from "convex/values";
 
 // =========================================================================
 // SENSITIVE KEY PATTERNS — keys whose values must be redacted before logging
@@ -83,7 +83,7 @@ export const getLogsByDirective = query({
 
 export const logEvent = internalMutation({
   args: {
-    traceId: v.id("directives"),
+    traceId: v.union(v.id("directives"), v.string()),
     actor: v.string(),
     eventType: v.union(
       v.literal("STATE_TRANSITION"),

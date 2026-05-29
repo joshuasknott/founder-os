@@ -1,6 +1,6 @@
 import { httpRouter } from "convex/server";
-import { internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { internalMutation } from "./_generated/server";
 import { httpAction } from "./_generated/server";
 import { v } from "convex/values";
 
@@ -57,19 +57,31 @@ export const logWebhookEvent = internalMutation({
   args: {
     source: v.string(),
     eventType: v.string(),
-    payload: v.string(),
+    title: v.string(),
+    summary: v.string(),
+    branch: v.optional(v.string()),
+    commitSha: v.optional(v.string()),
+    previewUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    // Route through the sanitized telemetry writer (not direct insert)
-    await ctx.scheduler.runAfter(0, internal.telemetry.logEvent, {
-      traceId: "webhook_ingest" as any,
-      actor: `external: ${args.source}`,
-      eventType: "TOOL_INVOCATION" as const,
-      rawPayload: {
-        source: args.source,
-        eventType: args.eventType,
-        payload: args.payload,
-      },
+    const workspace = await ctx.db.query("workspaces").first();
+    const status =
+      args.eventType === "workflow_run"
+        ? "building"
+        : args.eventType === "check_run"
+          ? "ready"
+          : "received";
+
+    await ctx.db.insert("buildActivities", {
+      workspaceId: workspace?._id,
+      source: args.source,
+      title: args.title,
+      summary: args.summary,
+      status,
+      branch: args.branch,
+      commitSha: args.commitSha,
+      previewUrl: args.previewUrl,
+      createdAt: Date.now(),
     });
   },
 });
@@ -115,12 +127,11 @@ http.route({
     await ctx.runMutation(internal.http.logWebhookEvent, {
       source: "github",
       eventType,
-      payload: JSON.stringify({
-        action: payload.action ?? "unknown",
-        repository: payload.repository?.full_name ?? "unknown",
-        sender: payload.sender?.login ?? "unknown",
-        event: eventType,
-      }),
+      title: `${payload.repository?.full_name ?? "Repository"} ${eventType}`,
+      summary: `${payload.sender?.login ?? "GitHub"} sent ${payload.action ?? eventType}.`,
+      branch: payload.ref?.replace("refs/heads/", "") ?? payload.workflow_run?.head_branch,
+      commitSha: payload.after ?? payload.workflow_run?.head_sha ?? payload.check_run?.head_sha,
+      previewUrl: payload.deployment_status?.target_url,
     });
 
     return new Response("OK", { status: 200 });

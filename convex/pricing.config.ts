@@ -12,19 +12,14 @@ export type ModelPricing = {
 };
 
 export const PROVIDER_PRICING: Record<string, ModelPricing> = {
-  // --- OpenAI ---
-  "o4-mini": { inputPer1K: 0.0011, outputPer1K: 0.0044 },
-  "o3": { inputPer1K: 0.01, outputPer1K: 0.04 },
-  "gpt-4o-mini": { inputPer1K: 0.00015, outputPer1K: 0.0006 },
-  "gpt-5.2": { inputPer1K: 0.0025, outputPer1K: 0.01 },
+  // --- Primary AI ---
+  "deepseek-chat": { inputPer1K: 0.00014, outputPer1K: 0.00028 },
+  "deepseek-reasoner": { inputPer1K: 0.00055, outputPer1K: 0.00219 },
 
-  // --- Anthropic ---
-  "claude-sonnet-4": { inputPer1K: 0.003, outputPer1K: 0.015 },
-  "claude-opus-4": { inputPer1K: 0.015, outputPer1K: 0.075 },
-
-  // --- Google ---
-  "gemini-3-flash": { inputPer1K: 0.00015, outputPer1K: 0.0006 },
-  "gemini-3-pro": { inputPer1K: 0.00125, outputPer1K: 0.005 },
+  // --- Backup and utility AI ---
+  "gemini-2.5-flash": { inputPer1K: 0.0003, outputPer1K: 0.0025 },
+  "gemini-2.5-pro": { inputPer1K: 0.00125, outputPer1K: 0.01 },
+  "text-embedding-004": { inputPer1K: 0, outputPer1K: 0 },
 };
 
 /**
