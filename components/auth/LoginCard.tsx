@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
-import { ShieldAlert, Loader2 } from "lucide-react";
+import { Loader2, ShieldAlert } from "lucide-react";
 
 export function LoginCard() {
   const [email, setEmail] = useState("");
@@ -10,83 +10,79 @@ export function LoginCard() {
   const [isLoading, setIsLoading] = useState(false);
   const [errorStatus, setErrorStatus] = useState<string | null>(null);
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleLogin = async (event: React.FormEvent) => {
+    event.preventDefault();
     setIsLoading(true);
     setErrorStatus(null);
 
     try {
-      const { data, error } = await authClient.signIn.email({
+      const { error } = await authClient.signIn.email({
         email,
         password,
       });
 
       if (error) throw error;
-      
-      // Basic reload to trigger BetterAuth state sync in ConvexProvider
+
       window.location.reload();
-      
-    } catch (err: any) {
-      setErrorStatus(err.message || "Failed to authenticate.");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to sign in.";
+      setErrorStatus(message);
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="flex w-full flex-col items-center justify-center bg-white/75 border border-black/[0.04] p-8 max-w-[400px] shadow-[0_10px_35px_rgba(0,0,0,0.03)] rounded-2xl backdrop-blur-xl animate-slide-up select-none">
-      <div className="mb-6 text-center w-full">
+    <div className="flex w-full max-w-[400px] select-none flex-col items-center justify-center rounded-2xl border border-black/[0.04] bg-white/75 p-8 shadow-[0_10px_35px_rgba(0,0,0,0.03)] backdrop-blur-xl animate-slide-up">
+      <div className="mb-6 w-full text-center">
         <h2 className="text-lg font-bold tracking-tight text-text-primary antialiased">
-          Sovereign Access
+          FounderOS
         </h2>
-        <p className="text-[10px] font-bold tracking-widest text-text-muted uppercase mt-1">
-          Identity Verification
+        <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-text-muted">
+          AI company workspace
         </p>
       </div>
-      
-      <form onSubmit={handleLogin} className="space-y-4 w-full">
-        <div className="space-y-2 w-full">
-          <input
-            type="email"
-            placeholder="founder@company.com"
-            value={email}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)}
-            className="w-full border border-black/[0.05] px-4 py-2.5 focus:border-accent/40 focus:ring-4 focus:ring-accent/5 text-sm h-11 rounded-xl shadow-sm text-text-primary bg-white focus:bg-white transition-all outline-none placeholder:text-text-muted/60"
-            required
-            disabled={isLoading}
-          />
-        </div>
-        <div className="space-y-2 w-full">
-          <input
-            type="password"
-            placeholder="••••••••"
-            value={password}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
-            className="w-full border border-black/[0.05] px-4 py-2.5 focus:border-accent/40 focus:ring-4 focus:ring-accent/5 text-sm h-11 rounded-xl shadow-sm text-text-primary bg-white focus:bg-white transition-all outline-none placeholder:text-text-muted/60"
-            required
-            disabled={isLoading}
-          />
-        </div>
-        
+
+      <form onSubmit={handleLogin} className="w-full space-y-4">
+        <input
+          type="email"
+          placeholder="founder@company.com"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          className="h-11 w-full rounded-xl border border-black/[0.05] bg-white px-4 py-2.5 text-sm text-text-primary shadow-sm outline-none transition-all placeholder:text-text-muted/60 focus:border-accent/40 focus:bg-white focus:ring-4 focus:ring-accent/5"
+          required
+          disabled={isLoading}
+        />
+
+        <input
+          type="password"
+          placeholder="Password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          className="h-11 w-full rounded-xl border border-black/[0.05] bg-white px-4 py-2.5 text-sm text-text-primary shadow-sm outline-none transition-all placeholder:text-text-muted/60 focus:border-accent/40 focus:bg-white focus:ring-4 focus:ring-accent/5"
+          required
+          disabled={isLoading}
+        />
+
         {errorStatus && (
-          <div className="mt-2 p-3 bg-rose-50 border border-rose-500/10 rounded-xl text-[10px] font-semibold text-rose-600 leading-normal flex items-start gap-2 animate-fade-in">
-            <ShieldAlert size={14} className="text-rose-500 shrink-0" />
-            <p>ERROR: {errorStatus}</p>
+          <div className="mt-2 flex items-start gap-2 rounded-xl border border-rose-500/10 bg-rose-50 p-3 text-[10px] font-semibold leading-normal text-rose-600 animate-fade-in">
+            <ShieldAlert size={14} className="shrink-0 text-rose-500" />
+            <p>{errorStatus}</p>
           </div>
         )}
-        
-        <button 
-          type="submit" 
-          className="flex items-center justify-center w-full bg-accent hover:bg-accent-hover text-white shadow-sm hover:scale-[1.02] active:scale-[0.98] h-11 text-xs font-bold rounded-xl transition-all cursor-pointer disabled:opacity-50"
+
+        <button
+          type="submit"
+          className="flex h-11 w-full cursor-pointer items-center justify-center rounded-xl bg-accent text-xs font-bold text-white shadow-sm transition-all hover:scale-[1.02] hover:bg-accent-hover active:scale-[0.98] disabled:opacity-50"
           disabled={isLoading}
         >
           {isLoading ? (
-            <span className="flex items-center gap-1.5 justify-center">
+            <span className="flex items-center justify-center gap-1.5">
               <Loader2 size={13} className="animate-spin" />
-              Authenticating...
+              Opening...
             </span>
           ) : (
-            "Access Workspace"
+            "Open Workspace"
           )}
         </button>
       </form>

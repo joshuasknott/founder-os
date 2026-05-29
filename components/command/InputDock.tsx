@@ -124,14 +124,14 @@ export function InputDock({
                 {selectedAgent && (
                   <span className="text-sm leading-none">{selectedAgent.avatar}</span>
                 )}
-                <span>{selectedAgent?.name ?? "Select agent"}</span>
+                <span>{selectedAgent?.name ?? "Choose worker"}</span>
                 <ChevronDown size={12} className={`opacity-65 transition-transform duration-200 ${showAgentPicker ? "rotate-180" : ""}`} />
               </button>
 
               {showAgentPicker && agents && (
                 <div className="absolute bottom-full right-0 mb-2 w-60 bg-white/90 backdrop-blur-2xl border border-black/[0.05] rounded-xl shadow-[0_12px_36px_rgba(0,0,0,0.06)] p-1 z-50 animate-slide-up">
                   <div className="px-2 py-1.5 text-[9px] font-bold text-text-muted uppercase tracking-widest border-b border-black/[0.02] mb-1">
-                    Select Swarm Agent
+                    Choose AI Worker
                   </div>
                   <div className="flex flex-col gap-0.5 max-h-60 overflow-y-auto">
                     {agents.map((agent) => (
@@ -170,8 +170,8 @@ export function InputDock({
             onKeyDown={handleKeyDown}
             placeholder={
               mode === "chat"
-                ? `Message ${selectedAgent?.name ?? "agent"}...`
-                : "Describe your directive..."
+                ? `Ask ${selectedAgent?.name ?? "FounderOS"}...`
+                : "Describe the work to create..."
             }
             rows={1}
             className="flex-1 resize-none bg-transparent text-sm text-text-primary placeholder:text-text-muted/65 focus:outline-none py-2 px-1 max-h-[120px] leading-relaxed selection:bg-accent/15"
@@ -194,8 +194,8 @@ export function InputDock({
         <div className="px-4 py-2 border-t border-black/[0.015] bg-black/[0.005] rounded-b-2xl">
           <p className="text-[10px] tracking-wide text-text-muted/80">
             {mode === "chat"
-              ? "Chat — collaborate, refine guidelines, and design. Swarm state is preserved."
-              : "Task — dispatch a directive. Agents will self-assemble and execute."}
+              ? "Chat helps you think and plan. It does not create business outputs."
+              : "Task creates a visible work item and saves finished outputs in Library."}
           </p>
         </div>
       </div>

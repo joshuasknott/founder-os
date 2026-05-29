@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import {
   ReactFlow,
   Background,
@@ -38,6 +38,11 @@ type DirectiveData = {
   status: string;
 };
 
+type ObservabilityLog = {
+  payload: string;
+  eventType: string;
+};
+
 const nodeTypes = {
   agentNode: AgentNode,
   taskNode: TaskNode,
@@ -52,7 +57,7 @@ export function AgentMap({
   directive: DirectiveData;
   tasks: Task[] | undefined;
   agents: Agent[] | undefined;
-  logs: any[] | undefined;
+  logs: ObservabilityLog[] | undefined;
 }) {
   const [nodes, setNodes, onNodesChange] = useNodesState([] as Node[]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
@@ -87,7 +92,7 @@ export function AgentMap({
         label: directive.title,
         status: directive.status,
         isDirective: true,
-        activity: directive.status === "in_progress" ? "Swarm processing..." : directive.status,
+        activity: directive.status === "in_progress" ? "Work in progress..." : directive.status,
       },
       sourcePosition: Position.Bottom,
       targetPosition: Position.Top,
@@ -112,8 +117,8 @@ export function AgentMap({
         data: {
           label: task.title,
           status: task.status,
-          agentName: agent?.name ?? "Unknown",
-          agentAvatar: agent?.avatar ?? "🤖",
+          agentName: agent?.name ?? "FounderOS",
+          agentAvatar: agent?.avatar ?? "F",
           activity: taskLogs.get(task._id) ?? "",
           isDirective: false,
         },

@@ -36,8 +36,7 @@ export function HumanTeamSettings() {
   const [inviteError, setInviteError] = React.useState("");
   const [isInviting, setIsInviting] = React.useState(false);
 
-  // Simulated logged-in user role for testing RBAC
-  const [currentUserRole, setCurrentUserRole] = React.useState<Role>("Owner");
+  const currentUserRole: Role = "Owner";
 
   // Close menus when clicking outside
   React.useEffect(() => {
@@ -67,7 +66,7 @@ export function HumanTeamSettings() {
     }
 
     if (!workspaceId) {
-      setInviteError("No workspace found. Please seed the database first.");
+      setInviteError("No workspace found yet. Try again after FounderOS finishes preparing.");
       return;
     }
     setIsInviting(true);
@@ -98,7 +97,7 @@ export function HumanTeamSettings() {
         <div className="p-6 bg-white border border-zinc-200">
         <h3 className="mb-1 text-lg font-semibold text-black">Invite Member</h3>
         <p className="mb-4 text-sm text-zinc-500">
-          Invite new members to your Corporate Workspace. They will receive an email invitation to join.
+          Invite people who help run the business. They will receive an email invitation to join.
         </p>
 
         <form onSubmit={handleInvite} className="flex flex-col gap-1">
@@ -149,20 +148,9 @@ export function HumanTeamSettings() {
           <div>
             <h3 className="mb-1 text-lg font-semibold text-black">Active Members</h3>
             <p className="text-sm text-zinc-500">
-              Manage your current corporate team. Owners have full administrative clearance.
+              Manage the people who can access this workspace.
             </p>
           </div>
-          {/* Simulated Auth Toggle */}
-          <select
-            title="Simulate User Role"
-            value={currentUserRole}
-            onChange={(e) => setCurrentUserRole(e.target.value as Role)}
-            className="px-2 py-1 text-xs font-mono border border-zinc-200 bg-zinc-50 text-zinc-600 focus:outline-none focus:ring-1 focus:ring-black rounded-sm cursor-pointer shrink-0"
-          >
-            <option value="Owner">View as: Owner</option>
-            <option value="Contributor">View as: Contributor</option>
-            <option value="Viewer">View as: Viewer</option>
-          </select>
         </div>
 
         <div className="flex flex-col">
