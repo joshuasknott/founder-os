@@ -1,58 +1,121 @@
-# FounderOS Backend Schema (Convex) - V1.1 (Audited)
+# FounderOS Backend Schema
 
-## 1. Core Entity Tables
+FounderOS uses Convex for live workspace data. Some table names preserve earlier internal architecture, but user-facing UI should translate them into the simpler product model: Home, chats, tasks, Library, and settings.
 
-### `workspaces`
-- `name` (v.string())
-- `iconSlug` (v.string()): Lucide icon name or emoji code (replaces 'logo' for better UI mapping).
-- `createdAt` (v.number()): Epoch timestamp.
+## Founder-Facing Mapping
 
-### `users`
-- `externalId` (v.string())
-- `workspaceId` (v.id("workspaces"))
-- `name` (v.string())
-- `email` (v.string())
-- `role` (v.union(v.literal("Owner"), v.literal("Contributor"), v.literal("Viewer")))
-- `status` (v.union(v.literal("online"), v.literal("offline")))
-- `avatarUrl` (v.optional(v.string()))
-- `joinedAt` (v.number()): Required for Team Table rendering.
+- `chatSessions` and `chatMessages` power conversations.
+- `directives` are visible task work items.
+- `tasks` are the steps inside a work item.
+- `documents` and `documentVersions` are editable Library items and versions.
+- `scheduleItems` with `kind: "automation"` are founder-facing automations.
+- `departments`, `agents`, and `playbooks` are internal foundations for assigning work to professional AI roles.
+- `projects` and `buildActivities` remain backend foundations but are not primary user-facing Home concepts.
 
-### `agents`
-- `workspaceId` (v.id("workspaces"))
-- `name` (v.string())
-- `role` (v.string())
-- `model` (v.string())
-- `systemPrompt` (v.string())
-- `status` (v.union(v.literal("idle"), v.literal("working"), v.literal("offline")))
-- `clearanceLevel` (v.number()): 1 (Auto) to 3 (Human Approval).
+## Initialization
 
----
+`convex/init.ts` must stay idempotent and minimal. It creates only:
 
-## 2. Intelligence & Operations
+- one workspace
+- one owner record
+- internal business areas
+- the AI worker roster
+- task playbooks
 
-### `knowledge_nodes`
-- `workspaceId` (v.id("workspaces"))
-- `parentId` (v.optional(v.id("knowledge_nodes")))
-- `type` (v.union(v.literal("Folder"), v.literal("File"), v.literal("Blueprint")))
-- `title` (v.string())
-- `content` (v.optional(v.string()))
-- `metadata` (v.optional(v.any()))
+It must not clear existing user data and must not seed fake Library items, fake projects, fake schedules, or fake build activity.
 
-### `approval_queue`
-- `workspaceId` (v.id("workspaces"))
-- `agentId` (v.id("agents"))
-- `title` (v.string())
-- `description` (v.string()): Short summary for Rightnav Inbox cards.
-- `justification` (v.string()): Full agent reasoning for the Modal.
-- `status` (v.union(v.literal("Pending"), v.literal("Approved"), v.literal("Denied")))
-- `proposedPayload` (v.string()): Code/JSON diff.
-- `createdAt` (v.number())
+## Conversations
 
-### `event_ledger`
-- `workspaceId` (v.id("workspaces"))
-- `actorType` (v.union(v.literal("Human"), v.literal("Agent")))
-- `actorId` (v.string())
-- `action` (v.string())
-- `displayLabel` (v.string()): Pre-composed string for the Logs view (e.g., "> Atlas: Sandbox passed").
-- `targetResource` (v.optional(v.string()))
-- `timestamp` (v.number())
+`chatSessions`
+
+- `title`
+- `agentId`
+- `lastMessageAt`
+
+`chatMessages`
+
+- `sessionId`
+- `role`
+- `content`
+- `agentName`
+
+Chat mode is read-only business conversation. It may use Library context to answer but must not create outputs or mutate business records beyond storing the conversation itself.
+
+## Tasks
+
+`directives`
+
+- `title`
+- `objective`
+- `sessionId` optional link back to the conversation thread
+- `status`
+- `tokenBudgetUSD`
+
+Task creation writes a visible work item and records a conversation note when a session is present. Clarification and completion messages are also written back to the linked conversation.
+
+`tasks`
+
+- `directiveId`
+- `title`
+- `description`
+- `assignedAgentId`
+- `status`
+- `dependencies`
+- internal control fields
+
+The UI should translate backend statuses into plain labels such as Preparing, In progress, Needs your answer, Waiting for review, Paused, and Completed.
+
+## Library
+
+`documents`
+
+- `workspaceId`
+- `title`
+- `departmentTag`
+- `author`
+- `traceId` optional link to the task that created it
+- `kind`
+- `summary`
+- `currentVersionId`
+- `versionCount`
+- `status`
+- archive timestamps
+
+`documentVersions`
+
+- `documentId`
+- `content`
+- `versionNumber`
+- `createdAt`
+- `createdBy`
+- `summary`
+- optional embedding
+
+Library queries should hide archived records by default and expose saved outputs by task when Home needs task result links.
+
+Library item kinds can include documents, files, websites, presentations, tools, automations, task outputs, conversations, and records. The UI should group by these plain-language types first. Department tags are internal metadata only.
+
+`documentVersions` power manual edits and generated revisions. Version history should be queried only for the selected item view.
+
+## Automations
+
+`scheduleItems`
+
+- `title`
+- `kind: "automation"` for founder-facing automations
+- `status`
+- `startAt`
+- `prompt`
+- `cadence`
+
+Automations are stored as plain business requests such as daily priorities. The UI should show cadence and time in normal language, not cron syntax.
+
+## Approvals
+
+`approvalQueue` stores real review gates for sensitive actions. The UI should only show review UI when queue items are pending. Permanent approval panels on Home are not part of the product direction.
+
+Review gates are for risky external or destructive actions: public publishing, live asset changes, deleting important data, spending money, sending email, posting externally, or contacting third parties. Internal drafts, previews, documents, presentations, schedules, organization, and private tool previews should proceed without a review gate.
+
+## Overview Query
+
+`commandCenter.getOverview` is an internal overview query despite the legacy file name. It may aggregate workspace, recent task, Library, approval, and internal foundation counts, but the frontend should not surface legacy naming.

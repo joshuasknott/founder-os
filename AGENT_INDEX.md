@@ -1,39 +1,30 @@
-# FounderOS: Master Agent Context & Directory
+# FounderOS: Agent Context
 
-## 1. System Abstract
-You are an elite AI system architect assisting in the development of **FounderOS**, a private, agentic business operating system for a solo CEO (The Principal). 
-- **Core Tech Stack:** Next.js 14+ (App Router), Convex (Real-time Backend/DB), BetterAuth (Identity & Sessions), Tailwind CSS v4.
-- **Design System:** "Executive Minimalism" (White/black palette, stark geometry, pure typography, zero SaaS fluff).
-- **Architecture Principle:** The frontend is a thin, high-performance "Glass Box" that reflects the real-time state of the Convex backend. All complex routing and LLM multi-agent orchestration happens on the server.
+## System Abstract
 
-## 2. Rules of Engagement (Strict Directives)
-Before you write, modify, or delete any code, you MUST adhere to these operational boundaries:
+FounderOS is a private AI-native company workspace for a non-technical founder running one business. It combines chat, delegated tasks, and a Library of saved business context.
 
-1. **Strict Multi-Tenancy:** FounderOS manages multiple isolated businesses. Data, context, and UI must be rigidly separated by 'Workspace'. There is zero crossover.
-2. **Append-Only Ledger:** To prevent LLM hallucination drift, the business memory is an append-only event ledger. Agents never overwrite critical facts; they append new versions.
-3. **Consult the Map First:** Never guess the architecture or design system. If you are modifying the UI, you must read `docs/1_FRONTEND_ARCHITECTURE.md`. If touching data models, read `docs/3_BACKEND_SCHEMA.md`.
-4. **No Hallucinated State:** Do not write complex localized React state (`useState`/`useEffect`) for data that fundamentally belongs in the Convex database. Currently, we are using the `mock-data-protocol` for UI scaffolding.
-5. **Stark UI Adherence:** Do not introduce arbitrary colors, heavy shadows, or rounded-full elements unless explicitly required by the "Executive Minimalism" spec.
+Core stack: Next.js App Router, Convex, BetterAuth, Tailwind CSS.
 
-## 3. The "Doc-Sync" Protocol (Self-Healing Documentation)
-Documentation drift is strictly forbidden. At the conclusion of any major feature implementation, refactor, or architectural decision, you (the AI) must ask the Principal: 
-*"Should I update the documentation to reflect these changes?"* If approved, you will autonomously rewrite the relevant sections of the `docs/` directory before moving to the next task. 
+## Product Rules
 
-## 4. The Documentation Directory (The Map)
-To understand the specific domains of FounderOS, route your context gathering to the following files in the `docs/` folder:
+1. **One founder, one business for now**: keep workspace switching out of the primary UI.
+2. **Prompt-first Home**: Home centers on a floating prompt with Chat and Task modes.
+3. **Chat is read-only**: it helps think, plan, ask, and shape tasks. It does not create outputs or make business changes.
+4. **Task creates visible work**: every task creates a work item, shows progress, and records finished outputs in Library when outputs exist.
+5. **Library is the business context layer**: documents, websites, presentations, tools, automations, history, conversations, and useful records should all feel first-class.
+6. **No fake data**: starter examples belong in prompt suggestions, not seeded records.
+7. **Plain language**: hide provider choices, internal planning, raw logs, model tiers, and backend state names.
 
-- **[0_CURRENT_STATE.md](./docs/0_CURRENT_STATE.md)** *(Pending Generation)*
-  *Read this for: The exact live snapshot of what is currently built vs. what is mocked.*
-- **[1_FRONTEND_ARCHITECTURE.md](./docs/1_FRONTEND_ARCHITECTURE.md)** *Read this for: The 3-pane layout rules, Tailwind styling logic, the Gemini-style floating dock, and the Split-View Review Modal.*
-- **[2_PRODUCT_VISION.md](./docs/2_PRODUCT_VISION.md)** *Read this for: Tiered Autonomy rules, the Spec Gate, and how the CEO interacts with the system conceptually.*
-- **[3_BACKEND_SCHEMA.md](./docs/3_BACKEND_SCHEMA.md)** *(Pending)*
-  *Read this for: Convex database tables, Vector embeddings, relationship mapping, and BetterAuth integration.*
-- **[4_AGENT_PROTOCOLS.md](./docs/4_AGENT_PROTOCOLS.md)** *(Pending)*
-  *Read this for: The LLM capability-based routing logic, System Prompts for Orion/Atlas/Cipher, and internal tool clearances.*
+## Documentation Map
 
-## 5. Agent Learning Ledger (SOPs)
-*This section is designated for the AI to record its own successful patterns, bug fixes, and technical decisions. Before starting a complex task, check `docs/agent_sops/` for existing solutions.*
+- [Frontend Architecture](./docs/1_FRONTEND_ARCHITECTURE.md): app shell, Home loop, Library, Settings, and UI language rules.
+- [Product Direction](./docs/2_PRODUCT_VISION.md): product model, Chat/Task split, AI worker framing, and approvals.
+- [Backend Schema](./docs/3_BACKEND_SCHEMA.md): Convex table mapping and minimal initialization rules.
+- [AI Worker Protocols](./docs/4_AGENT_PROTOCOLS.md): worker roles, mode behavior, language rules, and approval boundaries.
 
-- `docs/agent_sops/01_ui_component_standards.md` *(Pending)*
-- `docs/agent_sops/02_convex_mutations.md` *(Pending)*
-- `docs/agent_sops/03_llm_streaming.md` *(Pending)*
+## Implementation Notes
+
+- Prefer Convex-backed data over local mock arrays.
+- Preserve backend foundations where useful, but hide or demote confusing concepts in the UI.
+- Keep docs in sync when product behavior changes.
