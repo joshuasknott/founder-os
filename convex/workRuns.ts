@@ -191,6 +191,19 @@ export const listQueuedDesigns = query({
   },
 });
 
+export const listQueuedCommunications = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const queued = await ctx.db
+      .query("workRuns")
+      .withIndex("by_status", (q) => q.eq("status", "queued"))
+      .order("asc")
+      .take(args.limit ?? 10);
+
+    return queued.filter((run) => run.kind === "email" || run.kind === "schedule");
+  },
+});
+
 export const appendUpdate = mutation({
   args: {
     runId: v.id("workRuns"),

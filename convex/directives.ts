@@ -2,7 +2,9 @@ import { mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
-function initialRunKind(objective: string): "code_preview" | "document" | "design" | "generic" {
+function initialRunKind(
+  objective: string,
+): "code_preview" | "document" | "design" | "email" | "schedule" | "generic" {
   const normalized = objective.toLowerCase();
   const buildSignals = [
     "build",
@@ -37,6 +39,32 @@ function initialRunKind(objective: string): "code_preview" | "document" | "desig
 
   if (designSignals.some((signal) => normalized.includes(signal))) {
     return "design";
+  }
+
+  const emailSignals = [
+    "email",
+    "outreach",
+    "reply",
+    "follow-up email",
+    "follow up email",
+  ];
+
+  if (emailSignals.some((signal) => normalized.includes(signal))) {
+    return "email";
+  }
+
+  const scheduleSignals = [
+    "schedule",
+    "reminder",
+    "calendar",
+    "meeting time",
+    "meeting times",
+    "follow-up",
+    "follow up",
+  ];
+
+  if (scheduleSignals.some((signal) => normalized.includes(signal))) {
+    return "schedule";
   }
 
   const documentSignals = [
