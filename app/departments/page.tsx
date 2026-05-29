@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
-export default function ContextRedirect() {
+export default function DepartmentsRedirect() {
   redirect("/library");
 }
