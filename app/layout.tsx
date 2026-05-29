@@ -5,7 +5,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "FounderOS",
-  description: "Your AI-native operating system",
+  description: "AI company workspace for a founder and one business",
 };
 
 export default function RootLayout({
@@ -25,17 +25,9 @@ export default function RootLayout({
       </head>
       <body className="h-full overflow-hidden bg-surface text-text-primary font-sans antialiased">
         <ConvexClientProvider>
-          {/* Animated Background Aura Layer */}
-          <div className="pointer-events-none fixed inset-0 overflow-hidden z-0 opacity-[0.85]">
-            <div className="absolute top-[-10%] left-[-10%] w-[55vw] h-[55vw] rounded-full bg-gradient-to-br from-amber-100/25 to-rose-100/20 blur-[130px] animate-float-1 animate-pulse-soft" />
-            <div className="absolute bottom-[-10%] right-[-10%] w-[65vw] h-[65vw] rounded-full bg-gradient-to-br from-blue-50/35 to-indigo-100/25 blur-[140px] animate-float-2" />
-            <div className="absolute top-[30%] right-[15%] w-[38vw] h-[38vw] rounded-full bg-gradient-to-br from-purple-50/15 to-sky-50/20 blur-[110px] opacity-70 animate-pulse-soft" />
-          </div>
-
-          {/* Interactive Layer Wrapper */}
-          <div className="relative flex h-screen w-full overflow-hidden z-10">
+          <div className="relative z-10 flex h-screen w-full flex-col overflow-hidden lg:flex-row">
             <Leftnav />
-            <main className="flex flex-1 flex-col overflow-y-auto bg-transparent relative">
+            <main className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-surface">
               {children}
             </main>
           </div>

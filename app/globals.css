@@ -11,20 +11,20 @@
   --radius-xl: 1rem;
   --radius-2xl: 1.5rem;
 
-  --color-surface: #f9f9fa;
+  --color-surface: #f7f7f4;
   --color-surface-raised: #ffffff;
-  --color-surface-hover: #f1f1f4;
+  --color-surface-hover: #efefea;
   --color-border: rgba(9, 9, 11, 0.05);
   --color-border-subtle: rgba(9, 9, 11, 0.02);
   --color-text-primary: #18181b;
   --color-text-secondary: #52525b;
   --color-text-muted: #91919e;
-  --color-accent: #2563eb;
-  --color-accent-hover: #1d4ed8;
-  --color-accent-subtle: rgba(37, 99, 235, 0.04);
-  --color-success: #10b981;
-  --color-warning: #f59e0b;
-  --color-error: #ef4444;
+  --color-accent: #171717;
+  --color-accent-hover: #000000;
+  --color-accent-subtle: rgba(23, 23, 23, 0.04);
+  --color-success: #047857;
+  --color-warning: #b45309;
+  --color-error: #b91c1c;
 
   /* Agent Map node colors */
   --color-node-idle: rgba(255, 255, 255, 0.8);
@@ -39,10 +39,6 @@
 @layer base {
   body {
     @apply bg-surface text-text-primary font-sans antialiased selection:bg-accent/10 selection:text-accent;
-    background-image: 
-      radial-gradient(at 0% 0%, rgba(243, 244, 246, 0.4) 0px, transparent 50%),
-      radial-gradient(at 100% 100%, rgba(239, 246, 255, 0.4) 0px, transparent 50%);
-    background-attachment: fixed;
   }
 
   * {
