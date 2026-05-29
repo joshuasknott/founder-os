@@ -32,6 +32,7 @@ async function saveRunOutputToLibrary(
   },
   result?: {
     summary?: string;
+    content?: string;
     previewUrl?: string;
   },
 ) {
@@ -50,7 +51,7 @@ async function saveRunOutputToLibrary(
   const summary = result?.summary ?? run.summary ?? "Saved from a FounderOS task.";
   const previewUrl = result?.previewUrl ?? run.previewUrl;
   const now = Date.now();
-  const content = [
+  const content = result?.content ?? [
     `# ${run.title}`,
     "",
     summary,
@@ -161,6 +162,19 @@ export const listQueuedCodePreview = query({
       .take(args.limit ?? 10);
 
     return queued.filter((run) => run.kind === "code_preview");
+  },
+});
+
+export const listQueuedDocuments = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const queued = await ctx.db
+      .query("workRuns")
+      .withIndex("by_status", (q) => q.eq("status", "queued"))
+      .order("asc")
+      .take(args.limit ?? 10);
+
+    return queued.filter((run) => run.kind === "document");
   },
 });
 
@@ -291,6 +305,39 @@ export const markCompleted = mutation({
     });
 
     await saveRunOutputToLibrary(ctx, run);
+  },
+});
+
+export const completeWithResult = mutation({
+  args: {
+    runId: v.id("workRuns"),
+    summary: v.string(),
+    content: v.optional(v.string()),
+    internalNotes: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (!run) throw new Error("Run not found.");
+
+    const now = Date.now();
+    await ctx.db.patch(args.runId, {
+      status: "completed",
+      summary: args.summary,
+      internalNotes: args.internalNotes,
+      updatedAt: now,
+    });
+
+    await ctx.db.insert("workRunUpdates", {
+      runId: args.runId,
+      message: `Done: ${run.title}`,
+      tone: "complete",
+      createdAt: now,
+    });
+
+    await saveRunOutputToLibrary(ctx, run, {
+      summary: args.summary,
+      content: args.content,
+    });
   },
 });
 
