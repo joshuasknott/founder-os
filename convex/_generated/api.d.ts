@@ -8,22 +8,32 @@
  * @module
  */
 
+import type * as agents from "../agents.js";
 import type * as ai from "../ai.js";
 import type * as approvals from "../approvals.js";
+import type * as artifacts from "../artifacts.js";
 import type * as auth from "../auth.js";
+import type * as automations from "../automations.js";
 import type * as chat from "../chat.js";
+import type * as commandCenter from "../commandCenter.js";
 import type * as crons from "../crons.js";
 import type * as directives from "../directives.js";
 import type * as engine from "../engine.js";
 import type * as execution from "../execution.js";
 import type * as http from "../http.js";
 import type * as init from "../init.js";
+import type * as integrations from "../integrations.js";
+import type * as intelligence from "../intelligence.js";
 import type * as memory from "../memory.js";
 import type * as orchestrator from "../orchestrator.js";
+import type * as projects from "../projects.js";
+import type * as seedRoster from "../seedRoster.js";
 import type * as swarm from "../swarm.js";
 import type * as system from "../system.js";
 import type * as telemetry from "../telemetry.js";
 import type * as tools from "../tools.js";
+import type * as users from "../users.js";
+import type * as workspaces from "../workspaces.js";
 
 import type {
   ApiFromModules,
@@ -32,22 +42,32 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  agents: typeof agents;
   ai: typeof ai;
   approvals: typeof approvals;
+  artifacts: typeof artifacts;
   auth: typeof auth;
+  automations: typeof automations;
   chat: typeof chat;
+  commandCenter: typeof commandCenter;
   crons: typeof crons;
   directives: typeof directives;
   engine: typeof engine;
   execution: typeof execution;
   http: typeof http;
   init: typeof init;
+  integrations: typeof integrations;
+  intelligence: typeof intelligence;
   memory: typeof memory;
   orchestrator: typeof orchestrator;
+  projects: typeof projects;
+  seedRoster: typeof seedRoster;
   swarm: typeof swarm;
   system: typeof system;
   telemetry: typeof telemetry;
   tools: typeof tools;
+  users: typeof users;
+  workspaces: typeof workspaces;
 }>;
 
 /**
