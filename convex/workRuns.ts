@@ -1,5 +1,108 @@
 import { mutation, query } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
+
+function documentKindForRun(
+  kind: string,
+  hasPreview: boolean,
+): "document" | "file" | "website" | "plan" | "task_output" {
+  if (kind === "code_preview" && hasPreview) return "website";
+  if (kind === "document" || kind === "email") return "document";
+  if (kind === "design") return "file";
+  if (kind === "schedule") return "plan";
+  return "task_output";
+}
+
+function artifactKindForRun(kind: string) {
+  if (kind === "code_preview") return "preview";
+  if (kind === "data_update") return "record";
+  return kind;
+}
+
+async function saveRunOutputToLibrary(
+  ctx: MutationCtx,
+  run: {
+    _id: Id<"workRuns">;
+    directiveId: Id<"directives">;
+    kind: string;
+    title: string;
+    summary?: string;
+    previewUrl?: string;
+  },
+  result?: {
+    summary?: string;
+    previewUrl?: string;
+  },
+) {
+  const existingArtifacts = await ctx.db
+    .query("workArtifacts")
+    .withIndex("by_run", (q) => q.eq("runId", run._id))
+    .collect();
+
+  if (existingArtifacts.some((artifact: { libraryDocumentId?: unknown }) => artifact.libraryDocumentId)) {
+    return null;
+  }
+
+  const department = await ctx.db.query("departments").first();
+  if (!department) return null;
+
+  const summary = result?.summary ?? run.summary ?? "Saved from a FounderOS task.";
+  const previewUrl = result?.previewUrl ?? run.previewUrl;
+  const now = Date.now();
+  const content = [
+    `# ${run.title}`,
+    "",
+    summary,
+    ...(previewUrl ? ["", `Preview: ${previewUrl}`] : []),
+  ].join("\n");
+
+  const docId = await ctx.db.insert("documents", {
+    workspaceId: department.workspaceId,
+    title: run.title,
+    departmentTag: department._id,
+    author: "FounderOS",
+    traceId: run.directiveId,
+    kind: documentKindForRun(run.kind, Boolean(previewUrl)),
+    summary,
+    status: "draft",
+    isArchived: false,
+    versionCount: 1,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const versionId = await ctx.db.insert("documentVersions", {
+    documentId: docId,
+    content,
+    versionNumber: 1,
+    createdAt: now,
+    createdBy: "FounderOS",
+    summary,
+  });
+
+  await ctx.db.patch(docId, { currentVersionId: versionId });
+
+  await ctx.db.insert("workArtifacts", {
+    runId: run._id,
+    directiveId: run.directiveId,
+    title: run.title,
+    kind: artifactKindForRun(run.kind),
+    summary,
+    url: previewUrl,
+    libraryDocumentId: docId,
+    createdAt: now,
+  });
+
+  await ctx.db.insert("workRunUpdates", {
+    runId: run._id,
+    message: "Saved to Library.",
+    tone: "complete",
+    createdAt: now,
+  });
+
+  return docId;
+}
 
 export const create = mutation({
   args: {
@@ -147,6 +250,11 @@ export const markNeedsReviewWithResult = mutation({
       tone: "review",
       createdAt: now,
     });
+
+    await saveRunOutputToLibrary(ctx, run, {
+      summary: args.summary,
+      previewUrl: args.previewUrl,
+    });
   },
 });
 
@@ -181,6 +289,8 @@ export const markCompleted = mutation({
       tone: "complete",
       createdAt: now,
     });
+
+    await saveRunOutputToLibrary(ctx, run);
   },
 });
 
