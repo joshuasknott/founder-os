@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { spawn } from "node:child_process";
 import { ConvexHttpClient } from "convex/browser";
 import { Codex } from "@openai/codex-sdk";
 import { api } from "../../convex/_generated/api.js";
@@ -8,6 +9,9 @@ const POLL_INTERVAL_MS = Number(process.env.BUILDER_POLL_INTERVAL_MS ?? 5000);
 const PREVIEW_URL = process.env.BUILDER_PREVIEW_URL ?? "http://localhost:3000";
 const WORKSPACE_DIR = resolve(process.env.BUILDER_WORKSPACE_DIR ?? process.cwd());
 const USE_CODEX = process.env.BUILDER_USE_CODEX === "true";
+const START_PREVIEW = process.env.BUILDER_START_PREVIEW === "true";
+const PREVIEW_COMMAND = process.env.BUILDER_PREVIEW_COMMAND ?? "npm run dev";
+const PREVIEW_TIMEOUT_MS = Number(process.env.BUILDER_PREVIEW_TIMEOUT_MS ?? 30000);
 
 function readLocalEnv(name) {
   const filePath = resolve(process.cwd(), ".env.local");
@@ -42,6 +46,50 @@ function sleep(ms) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
 
+async function isPreviewReachable(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2000);
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    return response.ok || response.status < 500;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function startPreviewProcess() {
+  const child = spawn(PREVIEW_COMMAND, {
+    cwd: WORKSPACE_DIR,
+    detached: true,
+    shell: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  child.unref();
+}
+
+async function ensurePreviewUrl() {
+  if (await isPreviewReachable(PREVIEW_URL)) return PREVIEW_URL;
+
+  if (!START_PREVIEW) return null;
+
+  startPreviewProcess();
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < PREVIEW_TIMEOUT_MS) {
+    await sleep(1000);
+    if (await isPreviewReachable(PREVIEW_URL)) return PREVIEW_URL;
+  }
+
+  return null;
+}
+
 async function append(client, runId, message, tone = "progress") {
   await client.mutation(api.workRuns.appendUpdate, {
     runId,
@@ -60,16 +108,24 @@ async function simulateRun(client, run) {
   await sleep(600);
   await append(client, run._id, "I'm checking the preview.");
 
+  const previewUrl = await ensurePreviewUrl();
+  const hasPreview = Boolean(previewUrl);
+
   await sleep(600);
   await client.mutation(api.workRuns.markNeedsReviewWithResult, {
     runId: run._id,
-    summary: "A first review version is ready. This local builder is still using a simulated result.",
-    previewUrl: PREVIEW_URL,
+    summary: hasPreview
+      ? "A first review version is ready. This local builder is still using a simulated result."
+      : "A first review version is ready, but FounderOS could not open a preview yet.",
+    previewUrl: previewUrl ?? undefined,
     internalNotes: JSON.stringify({
       mode: "simulated",
-      previewUrl: PREVIEW_URL,
+      previewUrl,
+      previewAvailable: hasPreview,
     }),
-    message: "Your preview is ready to review.",
+    message: hasPreview
+      ? "Your preview is ready to review."
+      : "The work is ready for review, but I could not open the preview yet.",
   });
 }
 
@@ -181,19 +237,28 @@ async function runCodex(client, run, directive) {
     }
   }
 
+  const previewUrl = await ensurePreviewUrl();
+  const hasPreview = Boolean(previewUrl);
+
   await client.mutation(api.workRuns.markNeedsReviewWithResult, {
     runId: run._id,
-    summary: finalSummary || "A first review version is ready.",
-    previewUrl: PREVIEW_URL,
+    summary: finalSummary || (hasPreview
+      ? "A first review version is ready."
+      : "A first review version is ready, but FounderOS could not open a preview yet."),
+    previewUrl: previewUrl ?? undefined,
     internalNotes: JSON.stringify({
       mode: "codex",
       threadId: thread.id,
       changedFileCount: changedFiles.size,
       changedFiles: [...changedFiles],
       commandCount,
+      previewUrl,
+      previewAvailable: hasPreview,
       usage,
     }),
-    message: "Your preview is ready to review.",
+    message: hasPreview
+      ? "Your preview is ready to review."
+      : "The work is ready for review, but I could not open the preview yet.",
   });
 }
 

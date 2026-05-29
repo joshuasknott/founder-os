@@ -31,7 +31,10 @@ Configuration:
 - `BUILDER_WORKSPACE_DIR`: optional project workspace for Codex. Defaults to the current directory.
 - `BUILDER_CODEX_MODEL`: optional Codex model override.
 - `BUILDER_CODEX_REASONING_EFFORT`: optional reasoning effort. Defaults to `medium`.
-- `BUILDER_PREVIEW_URL`: optional preview URL to attach to simulated runs. Defaults to `http://localhost:3000`.
+- `BUILDER_PREVIEW_URL`: local preview URL to check. Defaults to `http://localhost:3000`.
+- `BUILDER_START_PREVIEW`: set to `true` to let the worker start a local preview if one is not already running.
+- `BUILDER_PREVIEW_COMMAND`: command used when `BUILDER_START_PREVIEW=true`. Defaults to `npm run dev`.
+- `BUILDER_PREVIEW_TIMEOUT_MS`: how long to wait for a local preview. Defaults to `30000`.
 - `BUILDER_POLL_INTERVAL_MS`: optional polling interval. Defaults to `5000`.
 
 The worker must only write plain-language updates to `workRunUpdates`. Internal logs, changed file metadata, command counts, usage, and thread ids stay in internal run notes.
