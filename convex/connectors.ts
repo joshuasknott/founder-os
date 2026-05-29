@@ -1,5 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { appendItemVersion, createItemWithVersion } from "./itemModel";
+import { buildConnectorImport } from "./connectorContent";
 import {
   connectorCredentialStorage,
   evaluateConnectorActionRequest,
@@ -330,6 +332,207 @@ export const disconnect = mutation({
     });
 
     return args.connectionId;
+  },
+});
+
+export const importContent = mutation({
+  args: {
+    workspaceId: v.id("workspaces"),
+    connectorId: v.string(),
+    externalId: v.string(),
+    externalType: v.optional(v.string()),
+    title: v.optional(v.string()),
+    content: v.optional(v.string()),
+    summary: v.optional(v.string()),
+    sourceUrl: v.optional(v.string()),
+    authorName: v.optional(v.string()),
+    mimeType: v.optional(v.string()),
+    kind: v.optional(v.union(
+      v.literal("doc"),
+      v.literal("email"),
+      v.literal("record"),
+      v.literal("conversation"),
+      v.literal("brief"),
+      v.literal("plan"),
+      v.literal("research"),
+      v.literal("upload"),
+    )),
+    format: v.optional(v.union(
+      v.literal("markdown"),
+      v.literal("plain_text"),
+      v.literal("html"),
+      v.literal("json"),
+      v.literal("external"),
+    )),
+    tags: v.optional(v.array(v.string())),
+    sourceName: v.optional(v.string()),
+    departmentId: v.optional(v.id("departments")),
+    traceId: v.optional(v.id("directives")),
+    taskId: v.optional(v.id("tasks")),
+    runId: v.optional(v.id("workRuns")),
+    requestedBy: v.optional(v.string()),
+    externalCreatedAt: v.optional(v.number()),
+    externalUpdatedAt: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const definition = getConnectorDefinition(args.connectorId);
+    if (!definition) throw new Error("That service is not available yet.");
+
+    const connection = await ctx.db
+      .query("connectorConnections")
+      .withIndex("by_workspace_connector", (q) =>
+        q.eq("workspaceId", args.workspaceId).eq("connectorId", args.connectorId),
+      )
+      .first();
+    const evaluation = evaluateConnectorActionRequest({
+      connectorId: args.connectorId,
+      actionType: "import_content",
+      connection,
+    });
+    const now = Date.now();
+
+    if (!evaluation.allowed) {
+      await ctx.db.insert("connectorActionLogs", {
+        workspaceId: args.workspaceId,
+        connectionId: connection?._id,
+        connectorId: args.connectorId,
+        actionType: "import_content",
+        requestedBy: args.requestedBy,
+        directiveId: args.traceId,
+        runId: args.runId,
+        status: evaluation.approvalRequired ? "approval_required" : "needs_attention",
+        approvalRequired: evaluation.approvalRequired,
+        safeSummary: evaluation.safeMessage,
+        createdAt: now,
+        completedAt: now,
+      });
+      return evaluation;
+    }
+
+    const imported = buildConnectorImport({
+      connectorId: definition.id,
+      connectorName: definition.safeDisplayName,
+      externalId: args.externalId,
+      externalType: args.externalType,
+      title: args.title,
+      content: args.content,
+      summary: args.summary,
+      sourceUrl: args.sourceUrl,
+      authorName: args.authorName,
+      mimeType: args.mimeType,
+      kind: args.kind,
+      format: args.format,
+      tags: args.tags,
+      sourceName: args.sourceName,
+      externalCreatedAt: args.externalCreatedAt,
+      externalUpdatedAt: args.externalUpdatedAt,
+      importedAt: now,
+    });
+
+    const existing = (
+      await ctx.db
+        .query("items")
+        .withIndex("by_external", (q) =>
+          q.eq("source", "connector").eq("externalId", imported.externalId),
+        )
+        .collect()
+    ).find((item) => item.workspaceId === args.workspaceId);
+
+    let itemId;
+    let versionId;
+    if (existing) {
+      itemId = existing._id;
+      versionId = await appendItemVersion(ctx, {
+        itemId,
+        title: imported.title,
+        summary: imported.summary,
+        content: imported.content,
+        format: imported.format,
+        sourceUrl: imported.sourceUrl,
+        mimeType: imported.mimeType,
+        createdBy: imported.author,
+        createdAt: now,
+        metadata: imported.metadata,
+      });
+      await ctx.db.patch(itemId, {
+        title: imported.title,
+        kind: imported.kind,
+        status: "active",
+        author: imported.author,
+        summary: imported.summary,
+        sourceUrl: imported.sourceUrl,
+        mimeType: imported.mimeType,
+        tags: imported.tags,
+        metadata: imported.metadata,
+        traceId: args.traceId ?? existing.traceId,
+        taskId: args.taskId ?? existing.taskId,
+        runId: args.runId ?? existing.runId,
+        updatedAt: now,
+      });
+    } else {
+      const created = await createItemWithVersion(ctx, {
+        workspaceId: args.workspaceId,
+        departmentId: args.departmentId,
+        title: imported.title,
+        kind: imported.kind,
+        status: imported.status,
+        source: imported.source,
+        author: imported.author,
+        summary: imported.summary,
+        content: imported.content,
+        format: imported.format,
+        traceId: args.traceId,
+        taskId: args.taskId,
+        runId: args.runId,
+        sourceUrl: imported.sourceUrl,
+        externalId: imported.externalId,
+        mimeType: imported.mimeType,
+        tags: imported.tags,
+        metadata: imported.metadata,
+        createdAt: now,
+      });
+      itemId = created.itemId;
+      versionId = created.versionId;
+    }
+
+    if (args.runId) {
+      await ctx.db.insert("workArtifacts", {
+        runId: args.runId,
+        directiveId: args.traceId,
+        title: imported.title,
+        kind: "library_item",
+        summary: imported.summary,
+        url: imported.sourceUrl,
+        libraryItemId: itemId,
+        metadata: {
+          connectorId: definition.id,
+          action: "import_content",
+        },
+        createdAt: now,
+      });
+    }
+
+    await ctx.db.insert("connectorActionLogs", {
+      workspaceId: args.workspaceId,
+      connectionId: connection?._id,
+      connectorId: definition.id,
+      actionType: "import_content",
+      requestedBy: args.requestedBy,
+      directiveId: args.traceId,
+      runId: args.runId,
+      status: "completed",
+      approvalRequired: false,
+      safeSummary: "Imported content is ready in Library.",
+      createdAt: now,
+      completedAt: now,
+    });
+
+    return {
+      ...evaluation,
+      itemId,
+      versionId,
+      safeMessage: "Imported content is ready in Library.",
+    };
   },
 });
 

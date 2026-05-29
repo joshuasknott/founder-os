@@ -14,6 +14,8 @@ export const connectorCapabilities = [
   "write_business_records",
   "create_preview_deployment",
   "publish_preview",
+  "import_content",
+  "export_content",
 ] as const;
 
 export type ConnectorCapability = (typeof connectorCapabilities)[number];
@@ -41,6 +43,10 @@ export type ConnectorActionType =
   | "update_live_asset"
   | "read_records"
   | "write_record"
+  | "import_content"
+  | "export_content"
+  | "post_message"
+  | "update_external_record"
   | "create_preview_deployment"
   | "publish_preview"
   | "publish_live_deployment";
@@ -136,6 +142,13 @@ export type GoogleWorkspaceConnectionSettings = {
   calendarId?: string;
 };
 
+export type ContentConnectorConnectionSettings = {
+  accountEmail?: string;
+  workspaceName?: string;
+  defaultLocation?: string;
+  channelName?: string;
+};
+
 type ConnectorActionHandlerResult = {
   status: "completed" | "needs_attention";
   safeSummary: string;
@@ -155,6 +168,7 @@ const sensitiveCapabilities = new Set<ConnectorCapability>([
   "post_externally",
   "change_live_asset",
   "publish_preview",
+  "export_content",
 ]);
 
 export const connectorRegistry: Record<string, ConnectorDefinition> = {
@@ -291,6 +305,123 @@ export const connectorRegistry: Record<string, ConnectorDefinition> = {
         approval: "always",
         sensitiveActionKind: "create_calendar_event",
         handlerKey: "google_calendar.create_event",
+      },
+    ],
+  },
+  google_drive: {
+    id: "google_drive",
+    safeDisplayName: "Google Drive",
+    description: "Import files and export approved Library items.",
+    authType: "oauth2",
+    capabilities: ["read_business_records", "write_business_records", "import_content", "export_content"],
+    requiredScopes: ["google.drive.read", "google.drive.file"],
+    scopeLabels: ["Import files", "Export approved Library items"],
+    connectionStatus: "not_connected",
+    approvalPolicy: "per_sensitive_action",
+    actions: [
+      {
+        type: "import_content",
+        safeLabel: "Import files",
+        requiredCapabilities: ["read_business_records", "import_content"],
+        requiredScopes: ["google.drive.read"],
+        approval: "never",
+        handlerKey: "google_drive.import",
+      },
+      {
+        type: "export_content",
+        safeLabel: "Export approved Library items",
+        requiredCapabilities: ["write_business_records", "export_content"],
+        requiredScopes: ["google.drive.file"],
+        approval: "always",
+        sensitiveActionKind: "change_live_asset",
+        handlerKey: "google_drive.export",
+      },
+      {
+        type: "update_external_record",
+        safeLabel: "Update approved files",
+        requiredCapabilities: ["write_business_records", "change_live_asset"],
+        requiredScopes: ["google.drive.file"],
+        approval: "always",
+        sensitiveActionKind: "change_live_asset",
+        handlerKey: "google_drive.update",
+      },
+    ],
+  },
+  slack: {
+    id: "slack",
+    safeDisplayName: "Slack",
+    description: "Import useful conversations and post or update approved messages.",
+    authType: "oauth2",
+    capabilities: ["read_business_records", "post_externally", "change_live_asset", "import_content"],
+    requiredScopes: ["slack.history", "slack.post", "slack.update"],
+    scopeLabels: ["Import conversations", "Post approved messages", "Update approved messages"],
+    connectionStatus: "not_connected",
+    approvalPolicy: "per_sensitive_action",
+    actions: [
+      {
+        type: "import_content",
+        safeLabel: "Import useful conversations",
+        requiredCapabilities: ["read_business_records", "import_content"],
+        requiredScopes: ["slack.history"],
+        approval: "never",
+        handlerKey: "slack.import",
+      },
+      {
+        type: "post_message",
+        safeLabel: "Post approved messages",
+        requiredCapabilities: ["post_externally"],
+        requiredScopes: ["slack.post"],
+        approval: "always",
+        sensitiveActionKind: "post_externally",
+        handlerKey: "slack.post",
+      },
+      {
+        type: "update_external_record",
+        safeLabel: "Update approved messages",
+        requiredCapabilities: ["change_live_asset"],
+        requiredScopes: ["slack.update"],
+        approval: "always",
+        sensitiveActionKind: "post_externally",
+        handlerKey: "slack.update",
+      },
+    ],
+  },
+  notion: {
+    id: "notion",
+    safeDisplayName: "Notion",
+    description: "Import pages and export or update approved workspace records.",
+    authType: "oauth2",
+    capabilities: ["read_business_records", "write_business_records", "change_live_asset", "import_content", "export_content"],
+    requiredScopes: ["notion.read", "notion.write"],
+    scopeLabels: ["Import pages", "Export approved records", "Update approved records"],
+    connectionStatus: "not_connected",
+    approvalPolicy: "per_sensitive_action",
+    actions: [
+      {
+        type: "import_content",
+        safeLabel: "Import pages",
+        requiredCapabilities: ["read_business_records", "import_content"],
+        requiredScopes: ["notion.read"],
+        approval: "never",
+        handlerKey: "notion.import",
+      },
+      {
+        type: "export_content",
+        safeLabel: "Export approved records",
+        requiredCapabilities: ["write_business_records", "export_content"],
+        requiredScopes: ["notion.write"],
+        approval: "always",
+        sensitiveActionKind: "change_live_asset",
+        handlerKey: "notion.export",
+      },
+      {
+        type: "update_external_record",
+        safeLabel: "Update approved records",
+        requiredCapabilities: ["change_live_asset"],
+        requiredScopes: ["notion.write"],
+        approval: "always",
+        sensitiveActionKind: "change_live_asset",
+        handlerKey: "notion.update",
       },
     ],
   },
@@ -526,6 +657,21 @@ function cleanEmailSetting(value: unknown) {
   return cleaned.toLowerCase();
 }
 
+export function sanitizeContentConnectorConnectionSettings(
+  settings?: unknown,
+): ContentConnectorConnectionSettings {
+  const source = settings && typeof settings === "object" && !Array.isArray(settings)
+    ? settings as Record<string, unknown>
+    : {};
+
+  return {
+    accountEmail: cleanEmailSetting(source.accountEmail),
+    workspaceName: cleanSettingString(source.workspaceName, 120),
+    defaultLocation: cleanSettingString(source.defaultLocation, 160),
+    channelName: cleanSettingString(source.channelName, 120),
+  };
+}
+
 export function sanitizeVercelConnectionSettings(settings?: unknown): VercelConnectionSettings {
   const source = settings && typeof settings === "object" && !Array.isArray(settings)
     ? settings as Record<string, unknown>
@@ -571,6 +717,14 @@ export function sanitizeConnectorConnectionSettings(connectorId: string, setting
 
   if (connectorId === "gmail" || connectorId === "google_calendar") {
     const sanitized = sanitizeGoogleWorkspaceConnectionSettings(settings);
+    const entries = Object.entries(sanitized).filter(
+      ([, value]) => typeof value === "string" && value.length > 0,
+    );
+    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+  }
+
+  if (connectorId === "google_drive" || connectorId === "slack" || connectorId === "notion") {
+    const sanitized = sanitizeContentConnectorConnectionSettings(settings);
     const entries = Object.entries(sanitized).filter(
       ([, value]) => typeof value === "string" && value.length > 0,
     );
@@ -850,6 +1004,15 @@ export const connectorActionHandlers: Record<string, ConnectorActionHandler> = {
   "google_calendar.read": safeNoopHandler,
   "google_calendar.availability": safeNoopHandler,
   "google_calendar.create_event": safeNoopHandler,
+  "google_drive.import": safeNoopHandler,
+  "google_drive.export": safeNoopHandler,
+  "google_drive.update": safeNoopHandler,
+  "slack.import": safeNoopHandler,
+  "slack.post": safeNoopHandler,
+  "slack.update": safeNoopHandler,
+  "notion.import": safeNoopHandler,
+  "notion.export": safeNoopHandler,
+  "notion.update": safeNoopHandler,
   "payments.read": safeNoopHandler,
   "payments.charge": safeNoopHandler,
   "publishing.post": safeNoopHandler,
@@ -881,6 +1044,10 @@ export function safeActionSummary(actionType: string) {
     update_live_asset: "The approved live update is ready.",
     read_records: "Business records access is ready.",
     write_record: "The record update is ready.",
+    import_content: "Imported content is ready in Library.",
+    export_content: "The approved export is ready.",
+    post_message: "The approved post is ready.",
+    update_external_record: "The approved update is ready.",
     create_preview_deployment: "The review link is ready.",
     publish_preview: "The approved preview step is ready.",
     publish_live_deployment: "The approved live update is ready.",

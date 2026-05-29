@@ -16,6 +16,7 @@ import type * as auth from "../auth.js";
 import type * as automations from "../automations.js";
 import type * as chat from "../chat.js";
 import type * as commandCenter from "../commandCenter.js";
+import type * as connectorContent from "../connectorContent.js";
 import type * as connectorRuntime from "../connectorRuntime.js";
 import type * as connectors from "../connectors.js";
 import type * as crons from "../crons.js";
@@ -55,6 +56,7 @@ declare const fullApi: ApiFromModules<{
   automations: typeof automations;
   chat: typeof chat;
   commandCenter: typeof commandCenter;
+  connectorContent: typeof connectorContent;
   connectorRuntime: typeof connectorRuntime;
   connectors: typeof connectors;
   crons: typeof crons;

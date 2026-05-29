@@ -52,11 +52,100 @@ test("registry exposes safe connector metadata and action handlers", () => {
   ]);
   assert.equal(JSON.stringify(runtime.publicConnectorDefinition(googleCalendar)).includes("google.calendar"), false);
 
+  const drive = runtime.getConnectorDefinition("google_drive");
+  assert.equal(drive.safeDisplayName, "Google Drive");
+  assert.deepEqual(
+    drive.actions.map((action) => action.type),
+    ["import_content", "export_content", "update_external_record"],
+  );
+
+  const slack = runtime.getConnectorDefinition("slack");
+  assert.equal(slack.safeDisplayName, "Slack");
+  assert.deepEqual(
+    slack.actions.map((action) => action.type),
+    ["import_content", "post_message", "update_external_record"],
+  );
+
+  const notion = runtime.getConnectorDefinition("notion");
+  assert.equal(notion.safeDisplayName, "Notion");
+  assert.deepEqual(
+    notion.actions.map((action) => action.type),
+    ["import_content", "export_content", "update_external_record"],
+  );
+
   for (const connector of runtime.listConnectorDefinitions()) {
     for (const action of connector.actions) {
       assert.equal(typeof runtime.getConnectorActionHandler(action.handlerKey), "function");
     }
   }
+});
+
+test("content connectors import freely and gate external writes", () => {
+  const driveConnection = {
+    status: "connected",
+    credentialRef: "vault:drive",
+    grantedScopes: ["google.drive.read", "google.drive.file"],
+  };
+  const driveImport = runtime.evaluateConnectorActionRequest({
+    connectorId: "google_drive",
+    actionType: "import_content",
+    connection: driveConnection,
+  });
+  assert.equal(driveImport.allowed, true);
+  assert.equal(driveImport.approvalRequired, false);
+
+  const driveExport = runtime.evaluateConnectorActionRequest({
+    connectorId: "google_drive",
+    actionType: "export_content",
+    connection: driveConnection,
+  });
+  assert.equal(driveExport.allowed, false);
+  assert.equal(driveExport.reason, "approval_required");
+  assert.equal(driveExport.sensitiveActionKind, "change_live_asset");
+
+  const slackConnection = {
+    status: "connected",
+    credentialRef: "vault:slack",
+    grantedScopes: ["slack.history", "slack.post", "slack.update"],
+  };
+  const slackImport = runtime.evaluateConnectorActionRequest({
+    connectorId: "slack",
+    actionType: "import_content",
+    connection: slackConnection,
+  });
+  assert.equal(slackImport.allowed, true);
+  assert.equal(slackImport.approvalRequired, false);
+
+  const slackPost = runtime.evaluateConnectorActionRequest({
+    connectorId: "slack",
+    actionType: "post_message",
+    connection: slackConnection,
+  });
+  assert.equal(slackPost.allowed, false);
+  assert.equal(slackPost.reason, "approval_required");
+  assert.equal(slackPost.sensitiveActionKind, "post_externally");
+
+  const notionConnection = {
+    status: "connected",
+    credentialRef: "vault:notion",
+    grantedScopes: ["notion.read", "notion.write"],
+  };
+  const notionImport = runtime.evaluateConnectorActionRequest({
+    connectorId: "notion",
+    actionType: "import_content",
+    connection: notionConnection,
+  });
+  assert.equal(notionImport.allowed, true);
+  assert.equal(notionImport.approvalRequired, false);
+
+  const notionUpdate = runtime.evaluateConnectorActionRequest({
+    connectorId: "notion",
+    actionType: "update_external_record",
+    connection: notionConnection,
+    approvalGranted: true,
+  });
+  assert.equal(notionUpdate.allowed, true);
+  assert.equal(notionUpdate.approvalRequired, true);
 });
 
 test("google workspace connectors draft/import freely and gate external actions", () => {
@@ -281,6 +370,22 @@ test("google workspace settings are sanitized and kept out of public cards", () 
   assert.equal(sanitized.calendarName, "Primary calendar");
   assert.equal(JSON.stringify(sanitized).includes("private_token"), false);
   assert.equal(JSON.stringify(runtime.publicConnectionCard(gmail, { settings: sanitized })).includes("founder@example.com"), false);
+});
+
+test("content connector settings are sanitized and kept out of public cards", () => {
+  const slack = runtime.getConnectorDefinition("slack");
+  const sanitized = runtime.sanitizeConnectorConnectionSettings("slack", {
+    accountEmail: " Founder@Example.COM ",
+    workspaceName: " Founder OS ",
+    channelName: " leadership ",
+    botToken: "xoxb-private_token_should_not_store",
+  });
+
+  assert.equal(sanitized.accountEmail, "founder@example.com");
+  assert.equal(sanitized.workspaceName, "Founder OS");
+  assert.equal(sanitized.channelName, "leadership");
+  assert.equal(JSON.stringify(sanitized).includes("private_token"), false);
+  assert.equal(JSON.stringify(runtime.publicConnectionCard(slack, { settings: sanitized })).includes("founder@example.com"), false);
 });
 
 test("credential storage abstraction returns only safe metadata", () => {

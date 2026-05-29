@@ -127,6 +127,7 @@ export async function createItemWithVersion(
     mimeType: args.mimeType,
     createdBy: args.author,
     createdAt: now,
+    metadata: args.metadata,
   });
 
   await ctx.db.patch(itemId, { currentVersionId: versionId });
