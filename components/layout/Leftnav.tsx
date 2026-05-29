@@ -10,6 +10,7 @@ import { useMockUser } from "@/hooks/use-mock-user";
 import { authClient } from "@/lib/auth-client";
 import {
   CalendarClock,
+  BriefcaseBusiness,
   Home,
   Library,
   ListTodo,
@@ -146,6 +147,7 @@ export function Leftnav() {
 
       <div className="flex flex-wrap gap-1 px-2 lg:flex-col lg:flex-nowrap lg:px-0">
         <NavItem href="/" icon={Home} label="Home" pathname={pathname} />
+        <NavItem href="/work" icon={BriefcaseBusiness} label="Work" pathname={pathname} />
         <NavItem href="/library" icon={Library} label="Library" pathname={pathname} />
         <NavItem href="/schedules" icon={CalendarClock} label="Schedules" pathname={pathname} />
         <div className="lg:hidden">

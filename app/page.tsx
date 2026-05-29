@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { GlobalSearchResults, type GlobalSearchData } from "@/components/search/GlobalSearchResults";
 import {
   AlertCircle,
   AlertTriangle,
@@ -13,6 +14,7 @@ import {
   ChevronDown,
   Clock,
   ExternalLink,
+  FileText,
   ListTodo,
   Loader2,
   MessageSquare,
@@ -23,11 +25,24 @@ import {
 
 type PromptMode = "chat" | "task";
 
+type ChatMessageCard = {
+  type: "task_result" | "item_navigation";
+  title: string;
+  summary?: string;
+  href?: string;
+  label?: string;
+  itemId?: Id<"items">;
+  documentId?: Id<"documents">;
+  runId?: Id<"workRuns">;
+  directiveId?: Id<"directives">;
+};
+
 type Message = {
   _id: Id<"chatMessages">;
   role: "user" | "assistant";
   content: string;
   agentName?: string;
+  card?: ChatMessageCard;
   _creationTime: number;
 };
 
@@ -37,6 +52,16 @@ type WorkRun = {
   status: string;
   summary?: string;
   previewUrl?: string;
+  outputItemId?: Id<"items">;
+  failureReason?: string;
+  artifacts?: Array<{
+    _id: Id<"workArtifacts">;
+    title: string;
+    summary?: string;
+    url?: string;
+    libraryItemId?: Id<"items">;
+    libraryDocumentId?: Id<"documents">;
+  }>;
   updatedAt: number;
   updates: Array<{
     _id: Id<"workRunUpdates">;
@@ -101,6 +126,25 @@ function cleanDisplayText(value: string) {
     .trim();
 }
 
+function approvalActionLabel(kind?: string) {
+  switch (kind) {
+    case "send_email":
+      return "Send email";
+    case "publish_preview":
+      return "Publish preview";
+    case "post_externally":
+      return "Post externally";
+    case "spend_money":
+      return "Spend money";
+    case "delete_data":
+      return "Delete data";
+    case "change_live_asset":
+      return "Change live asset";
+    default:
+      return "Sensitive action";
+  }
+}
+
 function titleFromPrompt(prompt: string) {
   const normalized = prompt.replace(/\s+/g, " ").trim();
   if (!normalized) return "New task";
@@ -147,6 +191,11 @@ function HomePageContent() {
   const [notice, setNotice] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const trimmedInput = input.trim();
+  const searchPreview = useQuery(
+    api.search.globalSearch,
+    trimmedInput.length >= 2 ? { query: trimmedInput, limit: 12 } : "skip",
+  ) as GlobalSearchData | undefined;
 
   const hasConversation = Boolean(messages?.length);
 
@@ -181,139 +230,72 @@ function HomePageContent() {
     return agents.find((agent) => agent.name === "Orion") ?? agents[0];
   }, [agents]);
 
-  const suggestions = useMemo(() => {
-    const hasLibraryItems = (overview?.stats.artifacts ?? 0) > 0;
-    const all = [
-      // --- Chat Mode ---
-      {
-        mode: "chat" as const,
-        label: "Help me decide what to focus on this week",
-        personalizationKey: "weekly_focus",
-        svg: (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-500">
-            <circle cx="12" cy="12" r="10" />
-            <circle cx="12" cy="12" r="6" />
-            <circle cx="12" cy="12" r="2" />
-          </svg>
-        ),
-      },
-      {
-        mode: "chat" as const,
-        label: "Turn these rough notes into a clear task",
-        personalizationKey: "shape_task",
-        svg: (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-blue-500">
-            <path d="M12 20h9" />
-            <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
-          </svg>
-        ),
-      },
-      {
-        mode: "chat" as const,
-        label: "Draft a message explaining a project delay",
-        personalizationKey: "delay_message",
-        svg: (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-violet-500">
-            <rect width="20" height="16" x="2" y="4" rx="2" />
-            <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
-          </svg>
-        ),
-      },
-      {
-        mode: "chat" as const,
-        label: "Help me find the strongest next task from Library",
-        personalizationKey: "library_next_task",
-        svg: (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-violet-500">
-            <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275Z" />
-          </svg>
-        ),
-        libraryOnly: true,
-      },
-      {
-        mode: "chat" as const,
-        label: "Help me prioritize customer feedback",
-        personalizationKey: "feedback_priority",
-        svg: (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-pink-500">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-          </svg>
-        ),
-        excludeIfLibrary: true,
-      },
+  // ── Dynamic prompt suggestions (randomized on mount / mode switch) ──
+  const [suggestionSeed, setSuggestionSeed] = useState(() => Date.now());
+  useEffect(() => { setSuggestionSeed(Date.now()); }, [mode]);
 
-      // --- Task Mode ---
-      {
-        mode: "task" as const,
-        label: "Create a client onboarding checklist",
-        personalizationKey: "client_onboarding",
-        svg: (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-cyan-500">
-            <path d="m9 11 3 3L22 4" />
-            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-          </svg>
-        ),
-      },
-      {
-        mode: "task" as const,
-        label: "Draft a one-page investor update",
-        personalizationKey: "investor_update",
-        svg: (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-fuchsia-500">
-            <path d="M3 3v18h18" />
-            <path d="m19 9-5 5-4-4-3 3" />
-          </svg>
-        ),
-      },
-      {
-        mode: "task" as const,
-        label: "Write a detailed product specification",
-        personalizationKey: "product_spec",
-        svg: (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-purple-500">
-            <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
-            <path d="M14 2v4a2 2 0 0 0 2 2h4" />
-            <path d="M10 9H8" />
-            <path d="M16 13H8" />
-            <path d="M16 17H8" />
-          </svg>
-        ),
-      },
-      {
-        mode: "task" as const,
-        label: "Summarize recent Library work into a founder brief",
-        personalizationKey: "library_brief",
-        svg: (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-500">
-            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z" />
-            <path d="M6 6h10" />
-            <path d="M6 10h10" />
-          </svg>
-        ),
-        libraryOnly: true,
-      },
-      {
-        mode: "task" as const,
-        label: "Prepare a meeting agenda for tomorrow",
-        personalizationKey: "meeting_agenda",
-        svg: (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-sky-500">
-            <rect width="18" height="18" x="3" y="4" rx="2" />
-            <path d="M16 2v4" />
-            <path d="M8 2v4" />
-            <path d="M3 10h18" />
-          </svg>
-        ),
-        excludeIfLibrary: true,
-      },
+  const suggestions = useMemo(() => {
+    const chatPool = [
+      "Help me decide what to focus on this week",
+      "Turn these rough notes into a clear task",
+      "Draft a message explaining a project delay",
+      "Help me prioritize customer feedback",
+      "Brainstorm names for a new product feature",
+      "Summarize the key risks in my current plan",
+      "Help me write a follow-up email after a meeting",
+      "What questions should I ask in my next investor call?",
+      "Help me simplify this complex idea into one sentence",
+      "Give me a framework for making this decision",
+      "What am I probably overlooking right now?",
+      "Help me prepare talking points for a team standup",
+      "Rewrite this paragraph to sound more confident",
+      "What's a creative way to onboard new users?",
+      "Help me think through pricing for this product",
+    ];
+    const taskPool = [
+      "Create a client onboarding checklist",
+      "Draft a one-page investor update",
+      "Write a detailed product specification",
+      "Prepare a meeting agenda for tomorrow",
+      "Build a competitive analysis brief",
+      "Write a post-mortem for last week's outage",
+      "Create a 90-day roadmap outline",
+      "Draft an internal announcement for a new hire",
+      "Write a customer case study template",
+      "Create a weekly metrics dashboard summary",
+      "Outline a partnership proposal",
+      "Draft release notes for the latest update",
+      "Write an FAQ for a new feature launch",
+      "Create a quarterly OKR template",
+      "Build a vendor evaluation scorecard",
     ];
 
-    return all.filter((item) => {
-      if (item.libraryOnly && !hasLibraryItems) return false;
-      if (item.excludeIfLibrary && hasLibraryItems) return false;
-      return item.mode === mode;
-    });
-  }, [overview?.stats.artifacts, mode]);
+    const pool = mode === "chat" ? chatPool : taskPool;
+    // Fisher-Yates shuffle with deterministic seed per render cycle
+    const shuffled = [...pool];
+    let seed = suggestionSeed;
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      seed = (seed * 16807 + 0) % 2147483647;
+      const j = seed % (i + 1);
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled.slice(0, 4);
+  }, [mode, suggestionSeed]);
+
+  // ── AI-generated greeting above the prompt box ──
+  const [greeting, setGreeting] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/greeting")
+      .then((res) => res.json())
+      .then((data: { greeting?: string }) => {
+        if (!cancelled && data.greeting) setGreeting(data.greeting);
+      })
+      .catch(() => {
+        if (!cancelled) setGreeting("What are you working on today?");
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const ensureConversation = useCallback(
     async (title: string) => {
@@ -397,6 +379,10 @@ function HomePageContent() {
     return (
       <div className="flex min-h-full flex-col items-center justify-center px-4 sm:px-8">
         <div className="w-full max-w-3xl">
+          <p className={`mb-8 -mt-12 text-center text-2xl font-normal tracking-tight text-text-secondary transition-opacity duration-500 ${greeting ? "opacity-100" : "opacity-0"}`}>
+            {greeting || "\u00A0"}
+          </p>
+
           <PromptBox
             mode={mode}
             setMode={setMode}
@@ -407,28 +393,29 @@ function HomePageContent() {
             onSend={handleSend}
           />
 
-          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {suggestions.map((suggestion) => (
-              <button
-                key={suggestion.personalizationKey}
-                type="button"
-                onClick={() => {
-                  setInput(suggestion.label);
-                  inputRef.current?.focus();
-                }}
-                className="group flex items-center gap-2.5 rounded-lg border border-black/[0.04] bg-white px-3 py-2 text-left transition-all duration-150 hover:border-black/10 hover:bg-black/[0.005] hover:shadow-[0_2px_8px_rgba(0,0,0,0.015)] active:scale-[0.99]"
-              >
-                <div className="shrink-0 flex items-center justify-center rounded-md bg-black/[0.02] p-1.5 transition group-hover:bg-black/[0.04]">
-                  {suggestion.svg}
-                </div>
-                <div className="flex-1 min-w-0">
+          {trimmedInput.length >= 2 && searchPreview ? (
+            <div className="mt-3">
+              <GlobalSearchResults data={searchPreview} compact maxPerGroup={2} />
+            </div>
+          ) : (
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {suggestions.map((label) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => {
+                    setInput(label);
+                    inputRef.current?.focus();
+                  }}
+                  className="group rounded-lg border border-black/[0.04] bg-white px-3 py-2 text-left transition-all duration-150 hover:border-black/10 hover:bg-black/[0.005] hover:shadow-[0_2px_8px_rgba(0,0,0,0.015)] active:scale-[0.99]"
+                >
                   <p className="text-xs font-medium text-text-secondary leading-normal group-hover:text-text-primary">
-                    {suggestion.label}
+                    {label}
                   </p>
-                </div>
-              </button>
-            ))}
-          </div>
+                </button>
+              ))}
+            </div>
+          )}
 
           {notice && <p className="mt-3 text-xs font-medium text-text-secondary">{notice}</p>}
         </div>
@@ -481,6 +468,9 @@ function HomePageContent() {
                     {overview.approvals.map((approval) => (
                       <div key={approval._id} className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2">
                         <div className="min-w-0">
+                          <p className="text-[10px] font-semibold uppercase tracking-widest text-warning">
+                            {approvalActionLabel(approval.actionKind)}
+                          </p>
                           <p className="text-xs font-semibold text-text-primary">
                             {approval.actionTitle ?? "Approval request"}
                           </p>
@@ -653,12 +643,12 @@ function PromptBox({
             >
               {mode === "chat" ? (
                 <>
-                  <MessageSquare size={13} className="text-indigo-500" />
+                  <MessageSquare size={13} className="text-zinc-500" />
                   <span>Chat</span>
                 </>
               ) : (
                 <>
-                  <ListTodo size={13} className="text-purple-500" />
+                  <ListTodo size={13} className="text-zinc-900" />
                   <span>Task</span>
                 </>
               )}
@@ -684,7 +674,7 @@ function PromptBox({
                         : "text-text-secondary hover:bg-black/[0.015] hover:text-text-primary"
                     }`}
                   >
-                    <MessageSquare size={13} className="text-indigo-500" />
+                    <MessageSquare size={13} className="text-zinc-500" />
                     <span>Chat mode</span>
                   </button>
                   <button
@@ -699,7 +689,7 @@ function PromptBox({
                         : "text-text-secondary hover:bg-black/[0.015] hover:text-text-primary"
                     }`}
                   >
-                    <ListTodo size={13} className="text-purple-500" />
+                    <ListTodo size={13} className="text-zinc-900" />
                     <span>Task mode</span>
                   </button>
                 </div>
@@ -780,6 +770,7 @@ function ConversationPanel({ messages }: { messages: Message[] }) {
                 </p>
               )}
               <div className="whitespace-pre-wrap">{cleanDisplayText(message.content)}</div>
+              {!isUser && message.card && <MessageCard card={message.card} />}
             </div>
             {isUser && (
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface text-text-muted">
@@ -790,6 +781,46 @@ function ConversationPanel({ messages }: { messages: Message[] }) {
         );
       })}
     </div>
+  );
+}
+
+function MessageCard({ card }: { card: ChatMessageCard }) {
+  const href = card.href ?? (card.itemId ? `/library/${card.itemId}` : undefined);
+  const icon =
+    card.type === "item_navigation" ? (
+      <FileText size={15} className="text-text-secondary" />
+    ) : (
+      <CheckCircle2 size={15} className="text-emerald-600" />
+    );
+
+  const body = (
+    <div className="mt-3 rounded-lg border border-black/[0.06] bg-surface px-3 py-2">
+      <div className="flex items-start gap-2">
+        <div className="mt-0.5">{icon}</div>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold text-text-primary">{cleanDisplayText(card.title)}</p>
+          {card.summary && (
+            <p className="mt-0.5 text-[11px] leading-4 text-text-secondary">
+              {cleanDisplayText(card.summary)}
+            </p>
+          )}
+          {href && (
+            <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-text-primary">
+              {card.label ?? "Open"}
+              <ExternalLink size={11} />
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  return href ? (
+    <a href={href} className="block">
+      {body}
+    </a>
+  ) : (
+    body
   );
 }
 
@@ -835,6 +866,12 @@ function WorkRunPanel({ runs }: { runs: WorkRun[] }) {
     <div className="mt-4 space-y-3">
       {runs.map((run) => {
         const recentUpdates = run.updates.slice(-5);
+        const libraryArtifact = run.artifacts?.find((artifact) => artifact.libraryItemId);
+        const libraryHref = run.outputItemId
+          ? `/library/${run.outputItemId}`
+          : libraryArtifact?.libraryItemId
+            ? `/library/${libraryArtifact.libraryItemId}`
+            : undefined;
 
         return (
           <div
@@ -891,6 +928,15 @@ function WorkRunPanel({ runs }: { runs: WorkRun[] }) {
                   Open preview
                 </a>
               )}
+              {libraryHref && (
+                <a
+                  href={libraryHref}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-black/[0.08] bg-white px-3 py-1.5 text-xs font-semibold text-text-primary transition hover:bg-black/[0.02]"
+                >
+                  <FileText size={13} />
+                  Open Library item
+                </a>
+              )}
               {run.status === "waiting_for_approval" && (
                 <p className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700">
                   Waiting for your approval before continuing.
@@ -903,7 +949,7 @@ function WorkRunPanel({ runs }: { runs: WorkRun[] }) {
               )}
               {run.status === "failed" && (
                 <p className="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700">
-                  FounderOS could not finish this step yet.
+                  {run.failureReason ?? "FounderOS could not finish this step yet."}
                 </p>
               )}
             </div>
