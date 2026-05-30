@@ -40,6 +40,7 @@ import type * as taskRuntime from "../taskRuntime.js";
 import type * as telemetry from "../telemetry.js";
 import type * as users from "../users.js";
 import type * as workRuns from "../workRuns.js";
+import type * as workflows from "../workflows.js";
 import type * as workspaces from "../workspaces.js";
 
 import type {
@@ -81,6 +82,7 @@ declare const fullApi: ApiFromModules<{
   telemetry: typeof telemetry;
   users: typeof users;
   workRuns: typeof workRuns;
+  workflows: typeof workflows;
   workspaces: typeof workspaces;
 }>;
 

@@ -11,12 +11,14 @@ import { authClient } from "@/lib/auth-client";
 import {
   CalendarClock,
   BriefcaseBusiness,
+  Bookmark,
   Home,
   Library,
   ListTodo,
   MessageSquare,
   PauseCircle,
   Plus,
+  Pin,
   Settings,
   Trash2,
   LogOut,
@@ -37,6 +39,14 @@ type RecentItem = {
   kind: "Chat" | "Task";
   timestamp: number;
   status?: string;
+};
+
+type PinnedView = {
+  _id: Id<"savedViews">;
+  title: string;
+  scope: "library" | "work" | "schedules" | "workspace";
+  query?: string;
+  filters?: unknown;
 };
 
 function NavItem({ href, icon: Icon, label, pathname }: NavItemProps) {
@@ -88,10 +98,28 @@ function displayTitle(title: string) {
     .trim();
 }
 
+function hrefForSavedView(view: PinnedView) {
+  const params = new URLSearchParams();
+  params.set("view", view._id);
+  if (view.query) params.set("q", view.query);
+  const filters = view.filters && typeof view.filters === "object" && !Array.isArray(view.filters)
+    ? (view.filters as { activeView?: string; kind?: string; source?: string })
+    : {};
+  if (filters.activeView) params.set("libraryView", filters.activeView);
+  if (filters.kind) params.set("kind", filters.kind);
+  if (filters.source) params.set("source", filters.source);
+
+  if (view.scope === "work") return `/work?${params.toString()}`;
+  if (view.scope === "schedules") return `/schedules?${params.toString()}`;
+  if (view.scope === "workspace") return `/?${params.toString()}`;
+  return `/library?${params.toString()}`;
+}
+
 export function Leftnav() {
   const pathname = usePathname();
   const recentWork = useQuery(api.directives.getRecentDirectives);
   const recentChats = useQuery(api.chat.getSessions);
+  const pinnedViews = useQuery(api.items.listSavedViews, { pinnedOnly: true }) as PinnedView[] | undefined;
   const stopTask = useMutation(api.directives.stopDirective);
   const deleteTask = useMutation(api.directives.deleteDirective);
   const deleteChat = useMutation(api.chat.deleteSession);
@@ -149,6 +177,7 @@ export function Leftnav() {
         <NavItem href="/" icon={Home} label="Home" pathname={pathname} />
         <NavItem href="/work" icon={BriefcaseBusiness} label="Work" pathname={pathname} />
         <NavItem href="/library" icon={Library} label="Library" pathname={pathname} />
+        <NavItem href="/workflows" icon={Bookmark} label="Workflows" pathname={pathname} />
         <NavItem href="/schedules" icon={CalendarClock} label="Schedules" pathname={pathname} />
         <div className="lg:hidden">
           <NavItem href="/settings" icon={Settings} label="Settings" pathname={pathname} />
@@ -156,6 +185,34 @@ export function Leftnav() {
       </div>
 
       <div className="mt-6 hidden min-h-0 flex-1 flex-col lg:flex">
+        {pinnedViews && pinnedViews.length > 0 && (
+          <div className="mb-5">
+            <div className="mb-2 flex items-center justify-between px-6">
+              <h2 className="text-[10px] font-semibold uppercase tracking-widest text-text-muted">
+                Pinned Views
+              </h2>
+            </div>
+            <div className="flex flex-col gap-1 px-3">
+              {pinnedViews.slice(0, 6).map((view) => (
+                <Link
+                  key={view._id}
+                  href={hrefForSavedView(view)}
+                  className="group flex items-start gap-2 rounded-lg border border-transparent px-3 py-2 hover:border-black/[0.05] hover:bg-black/[0.025]"
+                >
+                  <Pin size={14} className="mt-0.5 shrink-0 text-text-muted group-hover:text-text-primary" />
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-semibold text-text-secondary group-hover:text-text-primary">
+                      {displayTitle(view.title)}
+                    </p>
+                    <p className="mt-0.5 truncate text-[10px] text-text-muted">
+                      Saved query
+                    </p>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="mb-2 flex items-center justify-between px-6">
           <h2 className="text-[10px] font-semibold uppercase tracking-widest text-text-muted">
             Recent

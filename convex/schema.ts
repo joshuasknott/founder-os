@@ -535,6 +535,9 @@ export default defineSchema({
     filters: v.optional(v.any()),
     sort: v.optional(v.any()),
     isPinned: v.boolean(),
+    usageCount: v.optional(v.number()),
+    lastUsedAt: v.optional(v.number()),
+    suggestedAt: v.optional(v.number()),
     createdBy: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -550,6 +553,24 @@ export default defineSchema({
     kind: workflowKind,
     status: workflowStatus,
     trigger: v.optional(v.any()),
+    inputs: v.optional(
+      v.array(
+        v.object({
+          key: v.string(),
+          label: v.string(),
+          type: v.union(
+            v.literal("text"),
+            v.literal("number"),
+            v.literal("date"),
+            v.literal("select"),
+            v.literal("boolean")
+          ),
+          required: v.boolean(),
+          defaultValue: v.optional(v.any()),
+          options: v.optional(v.array(v.string())),
+        })
+      )
+    ),
     steps: v.array(
       v.object({
         key: v.string(),
@@ -558,6 +579,26 @@ export default defineSchema({
         config: v.optional(v.any()),
         outputItemKind: v.optional(itemKind),
       })
+    ),
+    outputs: v.optional(
+      v.array(
+        v.object({
+          key: v.string(),
+          label: v.string(),
+          kind: itemKind,
+          description: v.optional(v.string()),
+        })
+      )
+    ),
+    approvalRules: v.optional(
+      v.array(
+        v.object({
+          actionKind: sensitiveActionKind,
+          policy: v.union(v.literal("always"), v.literal("when_external"), v.literal("over_threshold")),
+          threshold: v.optional(v.number()),
+          description: v.optional(v.string()),
+        })
+      )
     ),
     ownerId: v.optional(v.id("users")),
     metadata: v.optional(v.any()),

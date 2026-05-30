@@ -36,6 +36,44 @@ const workflowStep = v.object({
   outputItemKind: v.optional(itemKind),
 });
 
+const workflowInput = v.object({
+  key: v.string(),
+  label: v.string(),
+  type: v.union(
+    v.literal("text"),
+    v.literal("number"),
+    v.literal("date"),
+    v.literal("select"),
+    v.literal("boolean"),
+  ),
+  required: v.boolean(),
+  defaultValue: v.optional(v.any()),
+  options: v.optional(v.array(v.string())),
+});
+
+const workflowOutput = v.object({
+  key: v.string(),
+  label: v.string(),
+  kind: itemKind,
+  description: v.optional(v.string()),
+});
+
+const workflowApprovalRule = v.object({
+  actionKind: v.union(
+    v.literal("publish_preview"),
+    v.literal("send_email"),
+    v.literal("create_calendar_event"),
+    v.literal("post_externally"),
+    v.literal("spend_money"),
+    v.literal("delete_data"),
+    v.literal("change_live_asset"),
+    v.literal("generic"),
+  ),
+  policy: v.union(v.literal("always"), v.literal("when_external"), v.literal("over_threshold")),
+  threshold: v.optional(v.number()),
+  description: v.optional(v.string()),
+});
+
 function activeItem(status: string, includeArchived?: boolean) {
   return includeArchived || (status !== "archived" && status !== "deprecated");
 }
@@ -836,6 +874,94 @@ export const saveView = mutation({
   },
 });
 
+export const setViewPinned = mutation({
+  args: {
+    viewId: v.id("savedViews"),
+    isPinned: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const view = await ctx.db.get(args.viewId);
+    if (!view) throw new Error("Saved view not found.");
+    await ctx.db.patch(args.viewId, {
+      isPinned: args.isPinned,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+export const removeView = mutation({
+  args: { viewId: v.id("savedViews") },
+  handler: async (ctx, args) => {
+    await ctx.db.delete(args.viewId);
+  },
+});
+
+export const recordViewUse = mutation({
+  args: {
+    workspaceId: v.optional(v.id("workspaces")),
+    title: v.string(),
+    description: v.optional(v.string()),
+    scope: savedViewScope,
+    query: v.optional(v.string()),
+    itemKinds: v.optional(v.array(itemKind)),
+    filters: v.optional(v.any()),
+    sort: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const views = args.workspaceId
+      ? await ctx.db
+          .query("savedViews")
+          .withIndex("by_workspace", (q) => q.eq("workspaceId", args.workspaceId))
+          .collect()
+      : await ctx.db.query("savedViews").collect();
+    const signature = JSON.stringify({
+      scope: args.scope,
+      query: args.query ?? "",
+      itemKinds: args.itemKinds ?? [],
+      filters: args.filters ?? {},
+      sort: args.sort ?? {},
+    });
+    const existing = views.find((view) => {
+      const viewSignature = JSON.stringify({
+        scope: view.scope,
+        query: view.query ?? "",
+        itemKinds: view.itemKinds ?? [],
+        filters: view.filters ?? {},
+        sort: view.sort ?? {},
+      });
+      return viewSignature === signature;
+    });
+
+    if (existing) {
+      const usageCount = (existing.usageCount ?? 0) + 1;
+      await ctx.db.patch(existing._id, {
+        usageCount,
+        lastUsedAt: now,
+        suggestedAt: existing.suggestedAt ?? (usageCount >= 3 ? now : undefined),
+        updatedAt: now,
+      });
+      return existing._id;
+    }
+
+    return await ctx.db.insert("savedViews", {
+      workspaceId: args.workspaceId,
+      title: args.title,
+      description: args.description,
+      scope: args.scope,
+      query: args.query,
+      itemKinds: args.itemKinds,
+      filters: args.filters,
+      sort: args.sort,
+      isPinned: false,
+      usageCount: 1,
+      lastUsedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+  },
+});
+
 export const listWorkflows = query({
   args: {
     workspaceId: v.optional(v.id("workspaces")),
@@ -871,7 +997,10 @@ export const saveWorkflow = mutation({
     kind: workflowKind,
     status: v.optional(workflowStatus),
     trigger: v.optional(v.any()),
+    inputs: v.optional(v.array(workflowInput)),
     steps: v.array(workflowStep),
+    outputs: v.optional(v.array(workflowOutput)),
+    approvalRules: v.optional(v.array(workflowApprovalRule)),
     ownerId: v.optional(v.id("users")),
     metadata: v.optional(v.any()),
   },
@@ -884,7 +1013,10 @@ export const saveWorkflow = mutation({
       kind: args.kind,
       status: args.status ?? "draft",
       trigger: args.trigger,
+      inputs: args.inputs,
       steps: args.steps,
+      outputs: args.outputs,
+      approvalRules: args.approvalRules,
       ownerId: args.ownerId,
       metadata: args.metadata,
       createdAt: now,

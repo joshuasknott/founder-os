@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useMemo, useState, type ChangeEvent } from "react";
+import { Suspense, useEffect, useMemo, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
@@ -107,6 +107,11 @@ type LibraryEntry = {
   isUploaded: boolean;
   needsReview: boolean;
   searchableText: string;
+};
+
+type SavedView = Doc<"savedViews"> & {
+  usageCount?: number;
+  suggestedAt?: number;
 };
 
 const views: Array<{ id: LibraryView; label: string; icon: LucideIcon }> = [
@@ -227,6 +232,21 @@ function sourceLabel(source?: string) {
   return source ? labels[source] ?? source : "Library";
 }
 
+function titleForSavedView(activeView: LibraryView, query: string, kind: string, source: string) {
+  if (query) return `Search: ${query}`;
+  const label = views.find((view) => view.id === activeView)?.label ?? "Library";
+  const filters = [kind !== "all" ? itemKindLabels[kind] ?? kind : null, source !== "all" ? source : null]
+    .filter(Boolean)
+    .join(", ");
+  return filters ? `${label} - ${filters}` : label;
+}
+
+function savedViewFilters(view: SavedView) {
+  return view.filters && typeof view.filters === "object" && !Array.isArray(view.filters)
+    ? (view.filters as { activeView?: LibraryView; kind?: string; source?: string })
+    : {};
+}
+
 function itemIsPinned(item?: LibraryItem) {
   const metadata = item?.metadata;
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false;
@@ -291,6 +311,7 @@ function LibraryPageContent() {
   const searchParams = useSearchParams();
   const selectedParam = searchParams.get("item");
   const sessionParam = searchParams.get("session") as Id<"chatSessions"> | null;
+  const initialLibraryView = searchParams.get("libraryView") as LibraryView | null;
 
   const overview = useQuery(api.commandCenter.getOverview);
   const items = useQuery(api.items.list, { includeArchived: true, limit: 250 }) as LibraryItem[] | undefined;
@@ -304,12 +325,18 @@ function LibraryPageContent() {
   const archiveItem = useMutation(api.items.archive);
   const restoreItem = useMutation(api.items.restore);
   const setPinned = useMutation(api.items.setPinned);
+  const savedViews = useQuery(api.items.listSavedViews, {}) as SavedView[] | undefined;
+  const saveView = useMutation(api.items.saveView);
+  const setViewPinned = useMutation(api.items.setViewPinned);
+  const recordViewUse = useMutation(api.items.recordViewUse);
   const deleteTask = useMutation(api.directives.deleteDirective);
 
-  const [activeView, setActiveView] = useState<LibraryView>("recent");
-  const [query, setQuery] = useState("");
-  const [kindFilter, setKindFilter] = useState("all");
-  const [sourceFilter, setSourceFilter] = useState("all");
+  const [activeView, setActiveView] = useState<LibraryView>(
+    initialLibraryView && views.some((view) => view.id === initialLibraryView) ? initialLibraryView : "recent",
+  );
+  const [query, setQuery] = useState(searchParams.get("q") ?? "");
+  const [kindFilter, setKindFilter] = useState(searchParams.get("kind") ?? "all");
+  const [sourceFilter, setSourceFilter] = useState(searchParams.get("source") ?? "all");
   const [newTitle, setNewTitle] = useState("");
   const [newKind, setNewKind] = useState<ItemKind>("doc");
   const [newContent, setNewContent] = useState("");
@@ -566,6 +593,45 @@ function LibraryPageContent() {
     });
   }, [activeView, entries, globalSearch, kindFilter, normalizedSearchQuery, sourceFilter]);
 
+  const suggestedViews = useMemo(() => {
+    return (savedViews ?? [])
+      .filter((view) => view.scope === "library" && !view.isPinned && (view.usageCount ?? 0) >= 3)
+      .sort((a, b) => (b.lastUsedAt ?? b.updatedAt) - (a.lastUsedAt ?? a.updatedAt))
+      .slice(0, 3);
+  }, [savedViews]);
+
+  useEffect(() => {
+    if (!entries || selectedParam) return;
+    const hasSpecificView =
+      activeView !== "recent" || normalizedSearchQuery || kindFilter !== "all" || sourceFilter !== "all";
+    if (!hasSpecificView) return;
+
+    const timeout = window.setTimeout(() => {
+      void recordViewUse({
+        title: titleForSavedView(activeView, normalizedSearchQuery, kindFilter, sourceFilter),
+        description: "Suggested after repeated use.",
+        scope: "library",
+        query: normalizedSearchQuery || undefined,
+        filters: {
+          activeView,
+          kind: kindFilter !== "all" ? kindFilter : undefined,
+          source: sourceFilter !== "all" ? sourceFilter : undefined,
+        },
+        sort: { by: "updatedAt", direction: "desc" },
+      });
+    }, 900);
+
+    return () => window.clearTimeout(timeout);
+  }, [
+    activeView,
+    entries,
+    kindFilter,
+    normalizedSearchQuery,
+    recordViewUse,
+    selectedParam,
+    sourceFilter,
+  ]);
+
   const readFilesForIntake = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     if (files.length === 0) return;
@@ -696,6 +762,40 @@ function LibraryPageContent() {
     setStatus(entry.isPinned ? "Removed from pinned." : "Pinned.");
   };
 
+  const applySavedView = (view: SavedView) => {
+    const filters = savedViewFilters(view);
+    setActiveView(filters.activeView && views.some((candidate) => candidate.id === filters.activeView) ? filters.activeView : "recent");
+    setQuery(view.query ?? "");
+    setKindFilter(filters.kind ?? "all");
+    setSourceFilter(filters.source ?? "all");
+    setStatus(`Applied saved query: ${view.title}`);
+  };
+
+  const pinSuggestedView = async (view: SavedView) => {
+    await setViewPinned({ viewId: view._id, isPinned: true });
+    setStatus("Pinned saved query.");
+  };
+
+  const saveCurrentView = async () => {
+    const hasSpecificView =
+      activeView !== "recent" || normalizedSearchQuery || kindFilter !== "all" || sourceFilter !== "all";
+    if (!hasSpecificView) return;
+    await saveView({
+      title: titleForSavedView(activeView, normalizedSearchQuery, kindFilter, sourceFilter),
+      description: "Saved Library query.",
+      scope: "library",
+      query: normalizedSearchQuery || undefined,
+      filters: {
+        activeView,
+        kind: kindFilter !== "all" ? kindFilter : undefined,
+        source: sourceFilter !== "all" ? sourceFilter : undefined,
+      },
+      sort: { by: "updatedAt", direction: "desc" },
+      isPinned: true,
+    });
+    setStatus("Pinned saved query.");
+  };
+
   if (!overview || !entries || !filteredEntries || !items || !documents) {
     return <PageLoader />;
   }
@@ -822,8 +922,53 @@ function LibraryPageContent() {
                 </button>
               );
             })}
+            {(activeView !== "recent" || normalizedSearchQuery || kindFilter !== "all" || sourceFilter !== "all") && (
+              <button
+                type="button"
+                onClick={() => void saveCurrentView()}
+                className="flex min-h-10 items-center gap-2 rounded-lg border border-black/[0.08] bg-white px-3 py-2 text-left text-xs font-semibold text-text-secondary hover:bg-surface hover:text-text-primary"
+              >
+                <Pin size={14} className="shrink-0" />
+                <span>Pin query</span>
+              </button>
+            )}
           </div>
         </section>
+
+        {suggestedViews.length > 0 && (
+          <section className="rounded-lg border border-black/[0.06] bg-white p-4 shadow-sm">
+            <div className="mb-3 flex items-center gap-2">
+              <Sparkles size={16} />
+              <h2 className="text-sm font-semibold text-text-primary">Suggested Saved Queries</h2>
+            </div>
+            <div className="grid gap-2 md:grid-cols-3">
+              {suggestedViews.map((view) => (
+                <div key={view._id} className="rounded-lg border border-black/[0.06] bg-surface px-3 py-3">
+                  <p className="truncate text-sm font-semibold text-text-primary">{view.title}</p>
+                  <p className="mt-1 text-xs text-text-muted">
+                    Used {view.usageCount ?? 0} times. Pin it when it is worth keeping.
+                  </p>
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => applySavedView(view)}
+                      className="rounded-lg border border-black/[0.08] bg-white px-3 py-1.5 text-xs font-semibold text-text-secondary hover:text-text-primary"
+                    >
+                      View
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void pinSuggestedView(view)}
+                      className="rounded-lg bg-black px-3 py-1.5 text-xs font-semibold text-white"
+                    >
+                      Pin
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {normalizedSearchQuery && globalSearch && (
           <GlobalSearchResults data={globalSearch} maxPerGroup={3} />

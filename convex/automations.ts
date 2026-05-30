@@ -203,6 +203,15 @@ export const create = mutation({
         startAt: args.startAt,
         timezone: args.timezone,
       },
+      inputs: [
+        {
+          key: "prompt",
+          label: "Prompt",
+          type: "text",
+          required: true,
+          defaultValue: args.prompt,
+        },
+      ],
       steps: [
         {
           key: "run_prompt",
@@ -212,6 +221,15 @@ export const create = mutation({
           outputItemKind: "task_output",
         },
       ],
+      outputs: [
+        {
+          key: "result",
+          label: "Scheduled result",
+          kind: "task_output",
+          description: "The saved output from this scheduled workflow.",
+        },
+      ],
+      approvalRules: [],
       metadata: { source: "schedules" },
       createdAt: now,
       updatedAt: now,
