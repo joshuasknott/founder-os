@@ -3,7 +3,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import {
@@ -20,6 +20,7 @@ import {
   Save,
   Send,
   Sparkles,
+  Wand2,
 } from "lucide-react";
 
 type ItemDetailData = {
@@ -41,6 +42,31 @@ type AssistantMessage = {
   role: "user" | "assistant";
   content: string;
 };
+
+type ContextualActionKind =
+  | "question"
+  | "edit"
+  | "variant"
+  | "summarize"
+  | "add_section"
+  | "polish"
+  | "related_context"
+  | "start_task";
+
+const contextualActions: Array<{
+  kind: ContextualActionKind;
+  label: string;
+  placeholder: string;
+}> = [
+  { kind: "question", label: "Ask", placeholder: "Ask a question about this item..." },
+  { kind: "edit", label: "Edit", placeholder: "Describe the edit to save as a new version..." },
+  { kind: "variant", label: "Variant", placeholder: "Describe the variant direction..." },
+  { kind: "summarize", label: "Summarize", placeholder: "Add a focus for the summary, or leave blank..." },
+  { kind: "add_section", label: "Add section", placeholder: "Describe the section to add..." },
+  { kind: "polish", label: "Polish", placeholder: "Give copy direction, or leave blank..." },
+  { kind: "related_context", label: "Use context", placeholder: "What should I compare or pull from related context?" },
+  { kind: "start_task", label: "Start task", placeholder: "Describe the task to start from this item..." },
+];
 
 type ItemContextData = {
   sections: Array<{
@@ -163,20 +189,24 @@ function intakeDetails(metadata: unknown) {
 
 function AssistantSidebar({
   detail,
-  content,
   itemContext,
+  onVersionCreated,
 }: {
   detail: ItemDetailData;
-  content: string;
   itemContext?: ItemContextData | null;
+  onVersionCreated?: () => void;
 }) {
   const [prompt, setPrompt] = useState("");
+  const [selectedAction, setSelectedAction] = useState<ContextualActionKind>("question");
+  const [includeRelatedContext, setIncludeRelatedContext] = useState(true);
+  const [isWorking, setIsWorking] = useState(false);
   const [messages, setMessages] = useState<AssistantMessage[]>([
     {
       role: "assistant",
-      content: `I'm scoped to "${cleanDisplayText(detail.item.title)}". Ask a question or describe the change you want.`,
+      content: `I'm the item AI for "${cleanDisplayText(detail.item.title)}". I can answer about this item, save revisions, or start item-scoped tasks.`,
     },
   ]);
+  const runItemAction = useAction(api.itemAi.run);
 
   const contextLine = useMemo(() => {
     const retrievedCount = itemContext?.sections.reduce((count, section) => count + section.items.length, 0) ?? 0;
@@ -187,29 +217,36 @@ function AssistantSidebar({
       .join(" · ");
   }, [detail, itemContext]);
 
-  const submitPrompt = (event: FormEvent<HTMLFormElement>) => {
+  const activeAction = contextualActions.find((action) => action.kind === selectedAction) ?? contextualActions[0];
+
+  const submitPrompt = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmed = prompt.trim();
-    if (!trimmed) return;
-
-    const lower = trimmed.toLowerCase();
-    const isChangeRequest = /\b(change|rewrite|update|edit|shorten|expand|improve|make)\b/.test(lower);
-    const summary = cleanDisplayText(detail.item.summary ?? detail.item.currentVersion?.summary ?? "No summary saved yet.");
-    const preview = cleanDisplayText(content).slice(0, 280);
-    const relatedContext = itemContext?.sections
-      .flatMap((section) => section.items.map((item) => `${item.title}${item.detail ? ` (${item.detail})` : ""}`))
-      .slice(0, 3)
-      .join("; ");
-    const reply = isChangeRequest
-      ? "I have this item in scope. The live action is limited for now, so I can capture the requested change here while you use the editor to make and save the next version."
-      : `Based on the saved summary: ${summary || "there is no saved summary yet."}${preview ? ` The current preview starts: ${preview}` : ""}${relatedContext ? ` Related context: ${relatedContext}.` : ""}`;
+    const instruction = trimmed || (selectedAction === "summarize" ? "Summarize this item." : selectedAction === "polish" ? "Polish this copy." : "");
+    if (!instruction) return;
 
     setMessages((current) => [
       ...current,
-      { role: "user", content: trimmed },
-      { role: "assistant", content: reply },
+      { role: "user", content: `${activeAction.label}: ${instruction}` },
     ]);
     setPrompt("");
+    setIsWorking(true);
+
+    try {
+      const result = await runItemAction({
+        itemId: detail.item._id,
+        actionKind: selectedAction,
+        instruction,
+        includeRelatedContext,
+      });
+      setMessages((current) => [...current, { role: "assistant", content: result.reply }]);
+      if (result.mode === "version") onVersionCreated?.();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "I could not complete that item action.";
+      setMessages((current) => [...current, { role: "assistant", content: message }]);
+    } finally {
+      setIsWorking(false);
+    }
   };
 
   return (
@@ -217,9 +254,25 @@ function AssistantSidebar({
       <div className="border-b border-black/[0.05] p-4">
         <div className="flex items-center gap-2">
           <Sparkles size={16} />
-          <h2 className="text-sm font-semibold text-text-primary">Ask About This</h2>
+          <h2 className="text-sm font-semibold text-text-primary">Item AI</h2>
         </div>
         {contextLine && <p className="mt-2 text-xs leading-5 text-text-muted">{contextLine}</p>}
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          {contextualActions.map((action) => (
+            <button
+              key={action.kind}
+              type="button"
+              onClick={() => setSelectedAction(action.kind)}
+              className={`inline-flex min-h-9 items-center justify-center rounded-lg border px-2 py-1.5 text-xs font-semibold ${
+                selectedAction === action.kind
+                  ? "border-black bg-black text-white"
+                  : "border-black/[0.08] bg-surface text-text-secondary hover:text-text-primary"
+              }`}
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
         {messages.map((message, index) => (
@@ -237,16 +290,25 @@ function AssistantSidebar({
         <textarea
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
-          placeholder="Ask a question or request a change..."
+          placeholder={activeAction.placeholder}
           className="min-h-24 w-full resize-none rounded-lg border border-black/[0.07] bg-surface px-3 py-2 text-sm leading-6 outline-none focus:border-black/20 focus:bg-white"
         />
+        <label className="mt-2 flex items-center gap-2 text-xs font-medium text-text-secondary">
+          <input
+            type="checkbox"
+            checked={includeRelatedContext}
+            onChange={(event) => setIncludeRelatedContext(event.target.checked)}
+            className="h-4 w-4 rounded border-black/[0.18]"
+          />
+          Use related context
+        </label>
         <button
           type="submit"
-          disabled={!prompt.trim()}
+          disabled={isWorking || (!prompt.trim() && selectedAction !== "summarize" && selectedAction !== "polish")}
           className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-black px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-30"
         >
-          <Send size={14} />
-          Send
+          {isWorking ? <Loader2 size={14} className="animate-spin" /> : selectedAction === "question" ? <Send size={14} /> : <Wand2 size={14} />}
+          {isWorking ? "Working..." : activeAction.label}
         </button>
       </form>
     </aside>
@@ -504,7 +566,14 @@ export default function LibraryItemDetailPage() {
             </section>
           </main>
 
-          <AssistantSidebar detail={detail} content={draft} itemContext={itemContext} />
+          <AssistantSidebar
+            detail={detail}
+            itemContext={itemContext}
+            onVersionCreated={() => {
+              setDraftState(null);
+              setStatus("Item AI saved a new version.");
+            }}
+          />
         </div>
       </div>
     </div>

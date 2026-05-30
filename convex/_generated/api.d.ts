@@ -26,6 +26,7 @@ import type * as http from "../http.js";
 import type * as init from "../init.js";
 import type * as integrations from "../integrations.js";
 import type * as intelligence from "../intelligence.js";
+import type * as itemAi from "../itemAi.js";
 import type * as itemModel from "../itemModel.js";
 import type * as itemValidators from "../itemValidators.js";
 import type * as items from "../items.js";
@@ -68,6 +69,7 @@ declare const fullApi: ApiFromModules<{
   init: typeof init;
   integrations: typeof integrations;
   intelligence: typeof intelligence;
+  itemAi: typeof itemAi;
   itemModel: typeof itemModel;
   itemValidators: typeof itemValidators;
   items: typeof items;
