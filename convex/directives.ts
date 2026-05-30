@@ -6,6 +6,7 @@ import { v } from "convex/values";
 import { actorFromIdentity, ensureDocWorkspace, isAuthorizedWorkerToken, requireCurrentUser } from "./authz";
 import { recordAuditEvent } from "./audit";
 import {
+  buildRefinementRunModel,
   classifyTaskObjective,
   normalizePlainWorkerMessage,
   type TaskClassification,
@@ -176,12 +177,61 @@ export const addClarification = mutation({
       const session = await ctx.db.get(sessionId);
       ensureDocWorkspace(session, current.workspaceId, "Chat");
     }
-    const updatedObjective = `${directive.objective}\n\nFounder clarification: ${args.content}`;
+    const classification = classifyTaskObjective({
+      title: directive.title,
+      objective: `${directive.objective}\n\nFounder requested changes: ${args.content}`,
+    });
+    const refinement = buildRefinementRunModel({
+      title: directive.title,
+      objective: directive.objective,
+      refinement: args.content,
+      classification,
+    });
+    const assignedAgent = await chooseAssignedAgent(ctx, classification, current.workspaceId);
+    const now = Date.now();
 
     await ctx.db.patch(args.directiveId, {
-      objective: updatedObjective,
+      objective: refinement.updatedObjective,
       status: "pending_spec",
       ...(sessionId ? { sessionId } : {}),
+    });
+
+    const taskId = await ctx.db.insert("tasks", {
+      workspaceId: current.workspaceId,
+      directiveId: args.directiveId,
+      title: refinement.taskTitle,
+      description: refinement.description,
+      ...(assignedAgent ? { assignedAgentId: assignedAgent._id } : {}),
+      status: "queued",
+      autonomyLevel: autonomyForClassification(classification),
+      dependencies: [],
+      classification,
+      workerKind: classification.workerKind,
+      retryCount: 0,
+      updatedAt: now,
+    });
+
+    const runId = await ctx.db.insert("workRuns", {
+      workspaceId: current.workspaceId,
+      directiveId: args.directiveId,
+      taskId,
+      kind: refinement.runKind,
+      workerKind: refinement.workerKind,
+      classification,
+      status: "queued",
+      title: refinement.title,
+      trigger: "chat",
+      attemptCount: 0,
+      maxAttempts: 3,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await ctx.db.insert("workRunUpdates", {
+      runId,
+      message: normalizePlainWorkerMessage(refinement.message),
+      tone: "info",
+      createdAt: now,
     });
 
     if (sessionId) {
@@ -195,7 +245,7 @@ export const addClarification = mutation({
         sessionId,
         role: "assistant",
         agentName: "FounderOS",
-        content: normalizePlainWorkerMessage("Thanks. I added that answer to the task and will continue from here."),
+        content: normalizePlainWorkerMessage(refinement.message),
       });
 
       await ctx.db.patch(sessionId, { lastMessageAt: Date.now() });
@@ -208,6 +258,7 @@ export const addClarification = mutation({
       resourceType: "directive",
       resourceId: String(args.directiveId),
       summary: `Added clarification to ${directive.title}.`,
+      metadata: { taskId, runId, classification },
     });
 
     return args.directiveId;

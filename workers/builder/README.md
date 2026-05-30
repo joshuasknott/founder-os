@@ -7,10 +7,15 @@ Current behavior:
 - finds queued `code_preview` work runs
 - marks them in progress
 - writes plain-language progress updates
-- uses Codex when explicitly enabled
-- runs Codex in an isolated branch/workspace or safe copied directory
-- passes Codex a structured task spec
+- plans the product workflow before building
+- uses a flexible hidden builder-agent adapter
+- prefers OpenCode for real model-flexible builds when configured
+- supports chat-completions adapters for DeepSeek, Z.ai, OpenRouter, and custom compatible endpoints
+- keeps Codex available as an optional adapter
+- runs the builder in an isolated branch/workspace or safe copied directory
+- passes the builder a structured task spec
 - captures changed files, configured checks, summary, and preview status
+- attempts a repair pass when checks fail
 - can create a shareable Vercel preview when the internal connector is configured
 - stores the review result as a Website or Tool Library item
 - records deployment history on the saved item
@@ -33,9 +38,25 @@ npm run builder
 Configuration:
 
 - `CONVEX_URL` or `NEXT_PUBLIC_CONVEX_URL`: Convex deployment URL. The worker also reads `.env.local`.
-- `BUILDER_USE_CODEX`: set to `true` to run Codex instead of the local simulation.
-- `OPENAI_API_KEY`: required when `BUILDER_USE_CODEX=true`.
-- `BUILDER_WORKSPACE_DIR`: optional project workspace for Codex. Defaults to the current directory.
+- `BUILDER_PROVIDER`: `simulated`, `opencode`, `deepseek`, `zai`, `openrouter`, `llm`, or `codex`. Defaults to `simulated`.
+- `BUILDER_AGENT`: optional alias for `BUILDER_PROVIDER`.
+- `BUILDER_AGENT_TIMEOUT_MS`: timeout for real builder-agent calls. Defaults to `600000`.
+- `BUILDER_REPAIR_ATTEMPTS`: number of repair passes after failed checks. Defaults to `1`.
+- OpenCode preferred real adapter:
+  - `BUILDER_PROVIDER=opencode`
+  - `BUILDER_OPENCODE_COMMAND`: defaults to `opencode`
+  - `BUILDER_OPENCODE_MODEL`: model in OpenCode `provider/model` format, for example an OpenRouter, DeepSeek, Z.ai, or local model configured in OpenCode
+  - `BUILDER_OPENCODE_AGENT`: optional locked-down OpenCode agent name
+  - `BUILDER_OPENCODE_ATTACH_URL`: optional headless OpenCode server URL
+- Chat-completions adapters:
+  - `BUILDER_PROVIDER=deepseek` with `DEEPSEEK_API_KEY`
+  - `BUILDER_PROVIDER=zai` with `ZAI_API_KEY`
+  - `BUILDER_PROVIDER=openrouter` with `OPENROUTER_API_KEY` and `OPENROUTER_MODEL`
+  - `BUILDER_PROVIDER=llm` with `BUILDER_LLM_API_KEY`, `BUILDER_LLM_CHAT_COMPLETIONS_URL`, and `BUILDER_LLM_MODEL`
+- Codex optional adapter:
+  - `BUILDER_PROVIDER=codex`
+  - `OPENAI_API_KEY`
+- `BUILDER_WORKSPACE_DIR`: optional project workspace for the builder. Defaults to the current directory.
 - `BUILDER_ISOLATION_MODE`: `auto`, `worktree`, `copy`, or `workspace`. Defaults to `auto`.
 - `BUILDER_RUNS_DIR`: optional directory for isolated build workspaces. Defaults to a system temp directory.
 - `BUILDER_BRANCH_PREFIX`: branch prefix for isolated git worktrees. Defaults to `codex/founderos-build`.

@@ -291,3 +291,23 @@ test("output model creates Library-ready item and document fields", () => {
   assert.equal(previewOutput.documentKind, "website");
   assert.equal(previewOutput.artifactKind, "preview");
 });
+
+test("refinement run model turns founder changes into a new queued build step", () => {
+  const classification = runtime.classifyTaskObjective({
+    title: "Booking tool",
+    objective: "Create a booking tool for my business",
+  });
+  const refinement = runtime.buildRefinementRunModel({
+    title: "Booking tool",
+    objective: "Create a booking tool for my business",
+    refinement: "Make the form shorter and add pricing.",
+    classification,
+  });
+
+  assert.equal(refinement.title, "Booking tool revision");
+  assert.equal(refinement.taskTitle, "Revise Booking tool");
+  assert.equal(refinement.runKind, "code_preview");
+  assert.equal(refinement.workerKind, "builder");
+  assert.equal(refinement.updatedObjective.includes("Founder requested changes"), true);
+  assert.equal(refinement.message, "I added those changes and will prepare a new review version.");
+});

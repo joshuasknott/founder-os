@@ -182,6 +182,7 @@ function HomePageContent() {
   const createSession = useMutation(api.chat.createSession);
   const sendMessage = useAction(api.chat.sendMessage);
   const createTask = useMutation(api.directives.createDirective);
+  const addClarification = useMutation(api.directives.addClarification);
   const approve = useMutation(api.approvals.approve);
   const deny = useMutation(api.approvals.deny);
 
@@ -368,6 +369,16 @@ function HomePageContent() {
     sendMessage,
   ]);
 
+  const handleRequestChanges = useCallback(async (content: string) => {
+    if (!taskParam) return;
+    await addClarification({
+      directiveId: taskParam,
+      content,
+      ...(sessionParam ? { sessionId: sessionParam } : {}),
+    });
+    setNotice("Changes requested. FounderOS will prepare a new review version.");
+  }, [addClarification, sessionParam, taskParam]);
+
   const isLoading = overview === undefined || isSeeded === undefined || isSeeded === false || agents === undefined;
 
   if (isLoading) {
@@ -452,7 +463,7 @@ function HomePageContent() {
           )}
 
           {taskParam && workRuns && workRuns.length > 0 && (
-            <WorkRunPanel runs={workRuns} />
+            <WorkRunPanel runs={workRuns} onRequestChanges={handleRequestChanges} />
           )}
 
           {overview && overview.approvals.length > 0 && (
@@ -861,7 +872,31 @@ function updateDotClass(tone: string) {
   }
 }
 
-function WorkRunPanel({ runs }: { runs: WorkRun[] }) {
+function WorkRunPanel({
+  runs,
+  onRequestChanges,
+}: {
+  runs: WorkRun[];
+  onRequestChanges: (content: string) => Promise<void>;
+}) {
+  const [changeRequest, setChangeRequest] = useState("");
+  const [isRequestingChanges, setIsRequestingChanges] = useState(false);
+  const canRequestChanges = runs.some((run) =>
+    ["needs_review", "completed", "waiting_for_approval"].includes(run.status),
+  );
+
+  const submitChanges = async () => {
+    const clean = changeRequest.trim();
+    if (!clean || isRequestingChanges) return;
+    setIsRequestingChanges(true);
+    try {
+      await onRequestChanges(clean);
+      setChangeRequest("");
+    } finally {
+      setIsRequestingChanges(false);
+    }
+  };
+
   return (
     <div className="mt-4 space-y-3">
       {runs.map((run) => {
@@ -916,6 +951,17 @@ function WorkRunPanel({ runs }: { runs: WorkRun[] }) {
               </div>
             )}
 
+            {run.previewUrl && (
+              <div className="ml-10 mt-3 overflow-hidden rounded-lg border border-black/[0.06] bg-white">
+                <iframe
+                  title={`${run.title} preview`}
+                  src={run.previewUrl}
+                  sandbox="allow-forms allow-popups allow-same-origin allow-scripts"
+                  className="h-[360px] w-full bg-white"
+                />
+              </div>
+            )}
+
             <div className="ml-10 mt-3 flex flex-wrap items-center gap-2">
               {run.previewUrl && (
                 <a
@@ -956,6 +1002,32 @@ function WorkRunPanel({ runs }: { runs: WorkRun[] }) {
           </div>
         );
       })}
+
+      {canRequestChanges && (
+        <div className="rounded-xl border border-black/[0.06] bg-white p-4 shadow-sm">
+          <p className="text-sm font-semibold text-text-primary">Ask for changes</p>
+          <p className="mt-1 text-xs leading-5 text-text-secondary">
+            Tell FounderOS what to improve and it will prepare another review version.
+          </p>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+            <textarea
+              value={changeRequest}
+              onChange={(event) => setChangeRequest(event.target.value)}
+              rows={2}
+              placeholder="Make the booking form shorter and add a pricing section."
+              className="min-h-16 flex-1 resize-none rounded-lg border border-black/[0.07] bg-surface px-3 py-2 text-sm leading-5 outline-none focus:border-black/20 focus:bg-white"
+            />
+            <button
+              type="button"
+              onClick={() => void submitChanges()}
+              disabled={!changeRequest.trim() || isRequestingChanges}
+              className="inline-flex min-h-10 items-center justify-center rounded-lg bg-black px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-30 sm:self-end"
+            >
+              {isRequestingChanges ? <Loader2 size={15} className="animate-spin" /> : "Request changes"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

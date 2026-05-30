@@ -23,9 +23,15 @@ or AI calls can use them.
 - Embeddings and Gemini fallback: `GEMINI_API_KEY`; optional `GEMINI_MODEL`, `GEMINI_EMBEDDING_MODEL`.
 - GitHub webhook ingestion: `GITHUB_WEBHOOK_SECRET`.
 - Stripe read-only finance sync: `STRIPE_READ_ONLY_KEY`.
-- Real builder runs with cheaper chat-completions models:
+- Preferred real product-building runs with OpenCode:
+  - Install and authenticate OpenCode, then set `BUILDER_PROVIDER=opencode`.
+  - Choose a model with `BUILDER_OPENCODE_MODEL`, for example an OpenRouter, DeepSeek, Z.ai, or local provider model in OpenCode's `provider/model` format.
+  - Optional: set `BUILDER_OPENCODE_AGENT` for a locked-down OpenCode agent and `BUILDER_OPENCODE_ATTACH_URL` to reuse a headless OpenCode server.
+  - Reference: [OpenCode CLI](https://opencode.ai/docs/cli/) and [OpenCode providers](https://opencode.ai/docs/providers/).
+- Real builder runs with cheaper chat-completions models when OpenCode is not used:
   - DeepSeek preset: `BUILDER_PROVIDER=deepseek` and `DEEPSEEK_API_KEY`.
   - Z.ai preset: `BUILDER_PROVIDER=zai` and `ZAI_API_KEY`.
+  - OpenRouter preset: `BUILDER_PROVIDER=openrouter`, `OPENROUTER_API_KEY`, and `OPENROUTER_MODEL`.
   - Any compatible endpoint: `BUILDER_PROVIDER=llm`, `BUILDER_LLM_API_KEY`, `BUILDER_LLM_CHAT_COMPLETIONS_URL`, and `BUILDER_LLM_MODEL`.
 - Real builder runs with the OpenAI Codex SDK: `BUILDER_PROVIDER=codex`, `BUILDER_USE_CODEX=true`, and `OPENAI_API_KEY`.
 - Vercel preview publishing: `BUILDER_VERCEL_PREVIEWS=true` plus `VERCEL_TOKEN` or `BUILDER_VERCEL_TOKEN`, and `VERCEL_PROJECT_ID` or `BUILDER_VERCEL_PROJECT_ID`. Add `VERCEL_TEAM_ID` or `BUILDER_VERCEL_TEAM_ID` for team-scoped projects.
@@ -42,11 +48,18 @@ Vercel settings are optional and documented in `.env.example`.
 1. Run `npm install` if dependencies are missing.
 2. Start Convex with `npx convex dev` and keep it running.
 3. In another terminal, run `npm run dev`.
-4. For real product-building work with a cheaper model, set
-   `BUILDER_PROVIDER=deepseek` and `DEEPSEEK_API_KEY` in `.env.local`, then run
-   `npm run builder`. For Z.ai, use `BUILDER_PROVIDER=zai` and `ZAI_API_KEY`.
+4. For real product-building work, prefer OpenCode:
+   `BUILDER_PROVIDER=opencode` and `BUILDER_OPENCODE_MODEL=deepseek/deepseek-chat`
+   or the provider/model name from your OpenCode setup, then run `npm run builder`.
+   For direct chat-completions fallback, use `BUILDER_PROVIDER=deepseek`,
+   `BUILDER_PROVIDER=zai`, or `BUILDER_PROVIDER=openrouter` with the matching API key.
 5. Start only the other workers you need, for example
    `npm run worker:documents:once`.
+
+The builder always works in an isolated workspace unless `BUILDER_ISOLATION_MODE=workspace`
+is explicitly set. It saves review versions to Library, runs configured checks,
+attempts a repair pass when checks fail, prepares private previews, and requires
+approval before live publishing through Vercel.
 
 Generate `BETTER_AUTH_SECRET` and `FOUNDEROS_WORKER_TOKEN` as long random values
 before using a hosted workspace.

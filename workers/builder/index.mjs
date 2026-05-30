@@ -32,12 +32,19 @@ import {
   vercelIsConfigured,
   vercelSettingsFromEnv,
 } from "./vercelConnector.mjs";
+import {
+  buildOpenCodeArgs,
+  builderProviderHelp,
+  selectBuilderAgent,
+} from "./agentAdapters.mjs";
 
 const POLL_INTERVAL_MS = Number(process.env.BUILDER_POLL_INTERVAL_MS ?? 5000);
 const PREVIEW_URL = process.env.BUILDER_PREVIEW_URL ?? "http://localhost:3000";
 const ROOT_WORKSPACE_DIR = resolve(process.env.BUILDER_WORKSPACE_DIR ?? process.cwd());
-const USE_CODEX = process.env.BUILDER_USE_CODEX === "true";
-const BUILDER_PROVIDER = (process.env.BUILDER_PROVIDER ?? (USE_CODEX ? "codex" : "simulated")).toLowerCase();
+const BUILDER_AGENT_ENV = buildBuilderAgentEnv(process.env);
+const BUILDER_AGENT = selectBuilderAgent(BUILDER_AGENT_ENV);
+const BUILDER_PROVIDER = BUILDER_AGENT.provider;
+const BUILDER_ADAPTER = BUILDER_AGENT.adapter;
 const START_PREVIEW = process.env.BUILDER_START_PREVIEW === "true";
 const PREVIEW_COMMAND = process.env.BUILDER_PREVIEW_COMMAND ?? "npm run dev";
 const PREVIEW_TIMEOUT_MS = Number(process.env.BUILDER_PREVIEW_TIMEOUT_MS ?? 30000);
@@ -50,6 +57,7 @@ const BUILD_RUNS_DIR = resolve(
 const BRANCH_PREFIX = process.env.BUILDER_BRANCH_PREFIX ?? "codex/founderos-build";
 const CLEAN_WORKSPACE_AFTER_RUN = process.env.BUILDER_CLEAN_WORKSPACE_AFTER_RUN === "true";
 const TEST_TIMEOUT_MS = Number(process.env.BUILDER_TEST_TIMEOUT_MS ?? 120000);
+const REPAIR_ATTEMPTS = Number(process.env.BUILDER_REPAIR_ATTEMPTS ?? 1);
 const MAX_CAPTURED_OUTPUT_CHARS = 6000;
 const MAX_SNAPSHOT_FILE_BYTES = Number(process.env.BUILDER_SNAPSHOT_FILE_BYTES ?? 5 * 1024 * 1024);
 const MAX_LLM_CONTEXT_CHARS = Number(
@@ -138,6 +146,46 @@ function readLocalEnv(name) {
   }
 }
 
+function buildBuilderAgentEnv(env = process.env) {
+  const localNames = [
+    "BUILDER_AGENT",
+    "BUILDER_PROVIDER",
+    "BUILDER_USE_CODEX",
+    "BUILDER_AGENT_TIMEOUT_MS",
+    "BUILDER_OPENCODE_TIMEOUT_MS",
+    "BUILDER_OPENCODE_COMMAND",
+    "BUILDER_OPENCODE_MODEL",
+    "BUILDER_OPENCODE_AGENT",
+    "BUILDER_OPENCODE_ATTACH_URL",
+    "BUILDER_MODEL",
+    "BUILDER_CODEX_MODEL",
+    "BUILDER_CODEX_REASONING_EFFORT",
+    "BUILDER_LLM_API_KEY",
+    "BUILDER_LLM_CHAT_COMPLETIONS_URL",
+    "BUILDER_LLM_BASE_URL",
+    "BUILDER_LLM_MODEL",
+    "BUILDER_DEEPSEEK_BASE_URL",
+    "BUILDER_DEEPSEEK_MODEL",
+    "DEEPSEEK_API_KEY",
+    "DEEPSEEK_BASE_URL",
+    "DEEPSEEK_MODEL",
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_BASE_URL",
+    "OPENROUTER_MODEL",
+    "ZAI_API_KEY",
+    "ZAI_MODEL",
+    "Z_AI_API_KEY",
+    "ZHIPU_API_KEY",
+  ];
+  const merged = { ...env };
+  for (const name of localNames) {
+    if (merged[name]) continue;
+    const localValue = readLocalEnv(name);
+    if (localValue) merged[name] = localValue;
+  }
+  return merged;
+}
+
 function convexUrl() {
   return (
     process.env.CONVEX_URL ||
@@ -173,13 +221,12 @@ function zAiKey() {
 }
 
 function llmApiKey() {
-  return (
-    process.env.BUILDER_LLM_API_KEY ||
-    readLocalEnv("BUILDER_LLM_API_KEY") ||
-    (BUILDER_PROVIDER === "zai" || BUILDER_PROVIDER === "z.ai" || BUILDER_PROVIDER === "z_ai"
-      ? zAiKey()
-      : deepSeekKey())
-  );
+  const names = BUILDER_AGENT.apiKeyEnvNames ?? ["BUILDER_LLM_API_KEY"];
+  for (const name of names) {
+    const value = process.env[name] || readLocalEnv(name);
+    if (value) return value;
+  }
+  return BUILDER_PROVIDER === "zai" ? zAiKey() : deepSeekKey();
 }
 
 function llmChatCompletionsUrl() {
@@ -188,9 +235,7 @@ function llmChatCompletionsUrl() {
     readLocalEnv("BUILDER_LLM_CHAT_COMPLETIONS_URL");
   if (explicit) return explicit;
 
-  if (BUILDER_PROVIDER === "zai" || BUILDER_PROVIDER === "z.ai" || BUILDER_PROVIDER === "z_ai") {
-    return "https://api.z.ai/api/paas/v4/chat/completions";
-  }
+  if (BUILDER_AGENT.chatCompletionsUrl) return BUILDER_AGENT.chatCompletionsUrl;
 
   const baseUrl = (
     process.env.BUILDER_LLM_BASE_URL ||
@@ -212,9 +257,8 @@ function llmModel() {
     readLocalEnv("BUILDER_LLM_MODEL") ||
     readLocalEnv("BUILDER_DEEPSEEK_MODEL") ||
     readLocalEnv("DEEPSEEK_MODEL") ||
-    (BUILDER_PROVIDER === "zai" || BUILDER_PROVIDER === "z.ai" || BUILDER_PROVIDER === "z_ai"
-      ? "glm-5.1"
-      : "deepseek-chat")
+    BUILDER_AGENT.model ||
+    (BUILDER_PROVIDER === "zai" ? "glm-5.1" : "deepseek-chat")
   );
 }
 
@@ -286,7 +330,8 @@ function toPlainFounderText(message, fallback = "A first review version is ready
     .replace(/\bterminal\b|\bstdout\b|\bstderr\b|\bstack trace\b/gi, "workspace")
     .replace(/\bAPI\b|\bSDK\b|\bCLI\b/gi, "connection")
     .replace(/\bVercel\b/gi, "preview service")
-    .replace(/\bCodex\b/gi, "FounderOS")
+    .replace(/\bCodex\b|\bOpenCode\b|\bDeepSeek\b|\bOpenRouter\b|\bZ\.ai\b|\bZAI\b/gi, "FounderOS")
+    .replace(/\bprovider(s)?\b|\bmodel(s)?\b/gi, "setting$1")
     .replace(/\bcommit\b|\bbranch\b/gi, "version")
     .replace(/\bartifact(s)?\b/gi, "Library item$1")
     .replace(/[A-Za-z]:[\\/][^\s)]+/g, "the workspace")
@@ -315,6 +360,7 @@ function execFileCapture(command, args, options = {}) {
         windowsHide: true,
         timeout: options.timeoutMs ?? 60000,
         maxBuffer: options.maxBuffer ?? 5 * 1024 * 1024,
+        env: options.env ?? process.env,
       },
       (error, stdout, stderr) => {
         const result = {
@@ -838,6 +884,53 @@ async function runTestCommands(workingDirectory) {
   return { status, summary, commands: results };
 }
 
+function checksNeedRepair(testResults) {
+  return testResults.status === "failed" || testResults.status === "timed_out";
+}
+
+function compactCheckResults(testResults) {
+  return {
+    status: testResults.status,
+    summary: testResults.summary,
+    commands: (testResults.commands ?? []).map((result) => ({
+      status: result.status,
+      exitCode: result.exitCode,
+      durationMs: result.durationMs,
+      outputTail: result.outputTail?.slice(-3000),
+    })),
+  };
+}
+
+function buildRepairPrompt(taskSpec, testResults) {
+  return [
+    "The review version was built, but one check needs attention.",
+    "Repair the workspace in place, keeping the founder's requested product outcome unchanged.",
+    "Do not publish, deploy, push, send messages, spend money, delete data, or contact external people.",
+    "Keep final user-facing wording plain and non-technical.",
+    "",
+    "Task spec JSON:",
+    JSON.stringify(taskSpec, null, 2),
+    "",
+    "Check result JSON:",
+    JSON.stringify(compactCheckResults(testResults), null, 2),
+    "",
+    "Return only strict JSON with this shape:",
+    JSON.stringify({
+      summary: "Plain-language summary of the repair.",
+      reviewNotes: ["Plain-language note."],
+      externalActionRequested: false,
+      publishOrDeployBlocked: false,
+      files: [
+        {
+          path: "app/page.tsx",
+          content: "Full file content here when using the chat-completions adapter.",
+        },
+      ],
+      deleteFiles: [],
+    }, null, 2),
+  ].join("\n");
+}
+
 function detectSensitiveExternalAction(objective = "") {
   const text = objective.toLowerCase();
   const previewOnly =
@@ -896,9 +989,38 @@ function outputKindForRun(run, directive) {
   return "website";
 }
 
+function plainOutputLabel(outputKind) {
+  if (outputKind === "website") return "website";
+  if (outputKind === "internal_tool") return "internal tool";
+  if (outputKind === "tool") return "tool";
+  return "product";
+}
+
+function planProductBuild(run, directive, outputKind = outputKindForRun(run, directive)) {
+  const label = plainOutputLabel(outputKind);
+  const objective = toPlainFounderText(directive?.objective, run?.title ?? "Build the requested product.");
+  return {
+    outcome: `Create a reviewable ${label} from the founder's request.`,
+    steps: [
+      "Turn the request into a small product plan.",
+      "Build the first usable review version in an isolated workspace.",
+      "Run configured checks and repair issues when possible.",
+      "Prepare a private preview and save the result to Library.",
+      "Use the founder's requested changes to create another review version.",
+      "Ask for approval before anything is published or changed live.",
+    ],
+    reviewLoop: "The founder reviews the preview, asks for changes, and FounderOS prepares the next version.",
+    publishing: "Preview links can be prepared privately. Live publishing waits for explicit approval.",
+    history: "Each review result is saved as a Library version with deployment history when available.",
+    rollback: "Previous Library versions remain available for handoff, comparison, or rollback planning.",
+    objective,
+  };
+}
+
 function buildTaskSpec(run, directive, workspace) {
   const externalAction = detectSensitiveExternalAction(directive.objective);
   const outputKind = outputKindForRun(run, directive);
+  const productPlan = planProductBuild(run, directive, outputKind);
 
   return {
     task: {
@@ -906,6 +1028,12 @@ function buildTaskSpec(run, directive, workspace) {
       objective: directive.objective,
       runKind: run.kind,
       outputKind,
+    },
+    productPlan,
+    builder: {
+      adapter: BUILDER_ADAPTER,
+      hiddenFromFounder: true,
+      preferredRealAdapter: "opencode",
     },
     workspace: {
       isolation: workspace.isolation,
@@ -924,6 +1052,7 @@ function buildTaskSpec(run, directive, workspace) {
       includePlainSummary: true,
       includeReviewNotes: true,
       keepTechnicalDetailsInternal: true,
+      includeChangedFilesForInternalHistory: true,
     },
   };
 }
@@ -943,6 +1072,31 @@ function buildCodexPrompt(taskSpec) {
     JSON.stringify(taskSpec, null, 2),
     "",
     "Return the structured result requested by the output schema.",
+  ].join("\n");
+}
+
+function buildOpenCodePrompt(taskSpec) {
+  return [
+    "You are the hidden build worker for FounderOS.",
+    "",
+    "Make the requested product changes in this isolated workspace.",
+    "Use the task spec below as the source of truth.",
+    "Prefer a complete, usable review version over a stub.",
+    "Keep final user-facing wording plain and non-technical.",
+    "Do not mention tools, commands, terminals, git branches, commits, models, providers, raw logs, APIs, or internal file paths.",
+    "Do not push, deploy, publish, send messages, spend money, delete important data, change live assets, or contact external people.",
+    "If the request asks for one of those actions, prepare the review version only and mark that action as blocked until approval.",
+    "",
+    "When finished, print only strict JSON with this shape:",
+    JSON.stringify({
+      summary: "One short plain-language summary of what is ready.",
+      reviewNotes: ["Plain-language note for the founder."],
+      externalActionRequested: false,
+      publishOrDeployBlocked: false,
+    }, null, 2),
+    "",
+    "Task spec JSON:",
+    JSON.stringify(taskSpec, null, 2),
   ].join("\n");
 }
 
@@ -1137,6 +1291,21 @@ async function applyLlmChanges(workspaceDir, result) {
   return changedPaths;
 }
 
+async function runOpenCodeCommand(prompt, workspaceDir, title) {
+  const command = BUILDER_AGENT.command ?? "opencode";
+  const result = await execFileCapture(command, buildOpenCodeArgs(BUILDER_AGENT, prompt, workspaceDir, title), {
+    cwd: workspaceDir,
+    timeoutMs: BUILDER_AGENT.timeoutMs,
+    maxBuffer: 10 * 1024 * 1024,
+    env: {
+      ...process.env,
+      CI: process.env.CI ?? "true",
+    },
+  });
+
+  return result.stdout || result.stderr;
+}
+
 function eventProgress(event) {
   if (!event || typeof event !== "object") return null;
 
@@ -1220,6 +1389,7 @@ function buildFounderSummary(result, previewStatus, testResults) {
 }
 
 function buildLibraryContent(args) {
+  const plan = args.taskSpec?.productPlan;
   const reviewNotes = [
     ...args.codexResult.reviewNotes,
     args.testResults.summary,
@@ -1235,6 +1405,13 @@ function buildLibraryContent(args) {
     "",
     args.summary,
     "",
+    ...(plan
+      ? [
+          "## Plan",
+          ...plan.steps.map((step) => `- ${toPlainFounderText(step)}`),
+          "",
+        ]
+      : []),
     "## Preview",
     args.previewStatus.available && args.previewStatus.url
       ? `Preview: ${args.previewStatus.url}`
@@ -1242,6 +1419,9 @@ function buildLibraryContent(args) {
     "",
     "## Review notes",
     ...reviewNotes.map((note) => `- ${toPlainFounderText(note)}`),
+    "",
+    "## Version and handoff",
+    "FounderOS saved this review version in Library so it can be compared, revised, handed off, or used as a rollback point later.",
   ].join("\n");
 }
 
@@ -1249,7 +1429,13 @@ function buildResultMetadata(args) {
   return {
     mode: args.mode,
     connector: "hidden_build",
+    agent: {
+      adapter: BUILDER_ADAPTER,
+      provider: BUILDER_PROVIDER,
+      preferredRealAdapter: "opencode",
+    },
     taskSpec: args.taskSpec,
+    productPlan: args.taskSpec?.productPlan,
     source: args.source,
     isolation: {
       mode: args.workspace.isolation,
@@ -1261,6 +1447,10 @@ function buildResultMetadata(args) {
     changedFileCount: args.changedFiles.length,
     changedFiles: args.changedFiles,
     tests: args.testResults,
+    repair: args.repair ?? {
+      attempted: false,
+      attempts: 0,
+    },
     codex: args.codex,
     safety: {
       publishRequiresApproval: true,
@@ -1419,6 +1609,9 @@ async function publishApprovedDeployment(client, run, approvedAction) {
 
 async function simulateRun(client, run) {
   await sleep(600);
+  await append(client, run._id, "I'm planning the product.");
+
+  await sleep(600);
   await append(client, run._id, "I'm preparing the workspace.");
 
   await sleep(600);
@@ -1504,6 +1697,7 @@ async function runCodex(client, run, directive) {
       modelReasoningEffort: process.env.BUILDER_CODEX_REASONING_EFFORT ?? "medium",
     });
 
+    await append(client, run._id, "I'm planning the product.");
     await append(client, run._id, "I'm preparing the workspace.");
 
     const streamed = await thread.runStreamed(buildCodexPrompt(taskSpec), {
@@ -1590,6 +1784,7 @@ async function runCodex(client, run, directive) {
         codexResult,
         previewStatus,
         testResults,
+        taskSpec,
       }),
       previewUrl: previewStatus.url ?? undefined,
       internalNotes: JSON.stringify(metadata),
@@ -1634,6 +1829,7 @@ async function runLlmBuilder(client, run, directive) {
     const baselineSnapshot = await snapshotWorkspaceFiles(workspace.workingDirectory);
     const externalAction = taskSpec.safety.requestedExternalAction;
 
+    await append(client, run._id, "I'm planning the product.");
     await append(client, run._id, "I'm preparing the workspace.");
     const workspaceContext = await collectLlmWorkspaceContext(workspace.workingDirectory);
 
@@ -1645,15 +1841,42 @@ async function runLlmBuilder(client, run, directive) {
     const modelChangedPaths = await applyLlmChanges(workspace.workingDirectory, llmResult);
 
     await append(client, run._id, "I'm checking the review version.");
+    let testResults = await runTestCommands(workspace.workingDirectory);
+    let repair = {
+      attempted: false,
+      attempts: 0,
+      finalStatus: testResults.status,
+    };
+    let repairResult = null;
+
+    for (let attempt = 0; attempt < REPAIR_ATTEMPTS && checksNeedRepair(testResults); attempt += 1) {
+      repair = {
+        attempted: true,
+        attempts: attempt + 1,
+        finalStatus: testResults.status,
+      };
+      await append(client, run._id, "I found a check that needs attention and I'm repairing it.");
+      try {
+        const repairCompletion = await callLlmBuildModel(buildRepairPrompt(taskSpec, testResults));
+        repairResult = extractLlmJson(repairCompletion.content);
+        const repairChangedPaths = await applyLlmChanges(workspace.workingDirectory, repairResult);
+        modelChangedPaths.push(...repairChangedPaths);
+        testResults = await runTestCommands(workspace.workingDirectory);
+        repair.finalStatus = testResults.status;
+      } catch (error) {
+        repair.error = sanitizeInternalLog(error instanceof Error ? error.message : String(error));
+        break;
+      }
+    }
+
     const changedFiles = await captureChangedFiles(
       workspace.workingDirectory,
       baselineSnapshot,
       modelChangedPaths,
     );
-    const testResults = await runTestCommands(workspace.workingDirectory);
     const previewStatus = await createReviewPreviewStatus(workspace.workingDirectory, run, directive);
     const codexResult = {
-      summary: toPlainFounderText(llmResult.summary),
+      summary: toPlainFounderText(repairResult?.summary ?? llmResult.summary),
       reviewNotes: Array.isArray(llmResult.reviewNotes)
         ? llmResult.reviewNotes.map((note) => toPlainFounderText(note)).filter(Boolean).slice(0, 5)
         : [],
@@ -1669,6 +1892,7 @@ async function runLlmBuilder(client, run, directive) {
       previewStatus,
       changedFiles,
       testResults,
+      repair,
       codex: {
         provider: BUILDER_PROVIDER,
         model: completion.model,
@@ -1688,6 +1912,125 @@ async function runLlmBuilder(client, run, directive) {
         codexResult,
         previewStatus,
         testResults,
+        taskSpec,
+      }),
+      previewUrl: previewStatus.url ?? undefined,
+      internalNotes: JSON.stringify(metadata),
+      metadata,
+      message: previewStatus.available
+        ? "Your preview is ready to review."
+        : "The work is ready for review, but I could not open the preview yet.",
+      workerToken: workerToken(),
+    });
+
+    try {
+      await createApprovalIfNeeded(client, run, externalAction, previewStatus);
+    } catch (error) {
+      console.error(
+        `Hidden builder could not queue approval: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      if (externalAction) {
+        await append(
+          client,
+          run._id,
+          "The review version is ready. Approval is still needed before anything goes live.",
+          "blocked",
+        );
+      }
+    }
+  } finally {
+    await workspace?.cleanup();
+  }
+}
+
+async function runOpenCodeBuilder(client, run, directive) {
+  let workspace = null;
+  try {
+    workspace = await createBuildWorkspace(run);
+    const taskSpec = buildTaskSpec(run, directive, workspace);
+    const baselineSnapshot = await snapshotWorkspaceFiles(workspace.workingDirectory);
+    const externalAction = taskSpec.safety.requestedExternalAction;
+
+    await append(client, run._id, "I'm planning the product.");
+    await append(client, run._id, "I'm preparing the workspace.");
+
+    await append(client, run._id, "I'm making the requested changes.");
+    const finalResponse = await runOpenCodeCommand(
+      buildOpenCodePrompt(taskSpec),
+      workspace.workingDirectory,
+      run.title,
+    );
+    const opencodeResult = extractCodexResult(finalResponse);
+
+    await append(client, run._id, "I'm checking the review version.");
+    let testResults = await runTestCommands(workspace.workingDirectory);
+    let repair = {
+      attempted: false,
+      attempts: 0,
+      finalStatus: testResults.status,
+    };
+
+    for (let attempt = 0; attempt < REPAIR_ATTEMPTS && checksNeedRepair(testResults); attempt += 1) {
+      repair = {
+        attempted: true,
+        attempts: attempt + 1,
+        finalStatus: testResults.status,
+      };
+      await append(client, run._id, "I found a check that needs attention and I'm repairing it.");
+      try {
+        await runOpenCodeCommand(
+          buildRepairPrompt(taskSpec, testResults),
+          workspace.workingDirectory,
+          `${run.title} repair`,
+        );
+        testResults = await runTestCommands(workspace.workingDirectory);
+        repair.finalStatus = testResults.status;
+      } catch (error) {
+        repair.error = sanitizeInternalLog(error instanceof Error ? error.message : String(error));
+        break;
+      }
+    }
+
+    const changedFiles = await captureChangedFiles(
+      workspace.workingDirectory,
+      baselineSnapshot,
+      [],
+    );
+    const previewStatus = await createReviewPreviewStatus(workspace.workingDirectory, run, directive);
+    if (externalAction) {
+      opencodeResult.externalActionRequested = true;
+      opencodeResult.publishOrDeployBlocked = true;
+    }
+    const summary = buildFounderSummary(opencodeResult, previewStatus, testResults);
+    const metadata = buildResultMetadata({
+      mode: "opencode",
+      taskSpec,
+      source: await sourceMetadata(workspace.workingDirectory),
+      workspace,
+      previewStatus,
+      changedFiles,
+      testResults,
+      repair,
+      codex: {
+        adapter: "opencode",
+        command: BUILDER_AGENT.command,
+        model: BUILDER_AGENT.model,
+        changedFileCount: changedFiles.length,
+      },
+      externalAction,
+    });
+
+    await client.mutation(api.workRuns.markNeedsReviewWithResult, {
+      runId: run._id,
+      leaseId: run.leaseId,
+      summary,
+      content: buildLibraryContent({
+        title: run.title,
+        summary,
+        codexResult: opencodeResult,
+        previewStatus,
+        testResults,
+        taskSpec,
       }),
       previewUrl: previewStatus.url ?? undefined,
       internalNotes: JSON.stringify(metadata),
@@ -1741,7 +2084,7 @@ async function processRun(client, run) {
     return;
   }
 
-  if (BUILDER_PROVIDER === "simulated" || (!USE_CODEX && BUILDER_PROVIDER === "codex")) {
+  if (BUILDER_ADAPTER === "simulated") {
     await simulateRun(client, run);
     console.log(`Hidden builder run ready for review: ${run._id}`);
     return;
@@ -1753,12 +2096,14 @@ async function processRun(client, run) {
   });
   if (!directive) throw new Error("Task not found.");
 
-  if (["llm", "deepseek", "zai", "z.ai", "z_ai"].includes(BUILDER_PROVIDER)) {
+  if (BUILDER_ADAPTER === "opencode") {
+    await runOpenCodeBuilder(client, run, directive);
+  } else if (BUILDER_ADAPTER === "llm") {
     await runLlmBuilder(client, run, directive);
-  } else if (BUILDER_PROVIDER === "codex") {
+  } else if (BUILDER_ADAPTER === "codex") {
     await runCodex(client, run, directive);
   } else {
-    throw new Error("BUILDER_PROVIDER must be simulated, codex, llm, deepseek, or zai.");
+    throw new Error(builderProviderHelp(BUILDER_PROVIDER));
   }
   console.log(`Hidden builder run ready for review: ${run._id}`);
 }
@@ -1818,6 +2163,7 @@ if (isDirectRun) {
 
 export {
   buildCodexPrompt,
+  buildOpenCodePrompt,
   buildLlmPrompt,
   buildLibraryContent,
   buildResultMetadata,
@@ -1831,6 +2177,7 @@ export {
   extractCodexResult,
   extractLlmJson,
   outputKindForRun,
+  planProductBuild,
   runTestCommands,
   snapshotWorkspaceFiles,
   toPlainFounderText,

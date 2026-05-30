@@ -173,6 +173,10 @@ const classifierRules: Array<{
       "web app",
       "app",
       "internal tool",
+      "tool",
+      "booking",
+      "booking tool",
+      "booking form",
       "preview",
       "code",
       "fix",
@@ -641,5 +645,35 @@ export function buildRunOutputModel(
     documentKind,
     itemKind,
     artifactKind: artifactKindForRun(run.kind),
+  };
+}
+
+export function buildRefinementRunModel(args: {
+  title: string;
+  objective: string;
+  refinement: string;
+  classification: TaskClassification;
+}) {
+  const cleanTitle = args.title.trim() || "Product build";
+  const cleanRefinement = normalizePlainWorkerMessage(
+    args.refinement,
+    "Use the founder's latest changes.",
+  );
+  const updatedObjective = [
+    args.objective.trim(),
+    "",
+    `Founder requested changes: ${cleanRefinement}`,
+  ].join("\n");
+
+  return {
+    title: `${cleanTitle} revision`,
+    taskTitle: `Revise ${cleanTitle}`,
+    description: cleanRefinement,
+    updatedObjective,
+    runKind: args.classification.runKind,
+    workerKind: args.classification.workerKind,
+    outputItemKind: args.classification.outputItemKind,
+    outputDocumentKind: args.classification.outputDocumentKind,
+    message: "I added those changes and will prepare a new review version.",
   };
 }

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildTaskSpec,
+  buildLibraryContent,
   captureChangedFiles,
   createBuildWorkspace,
   detectSensitiveExternalAction,
@@ -16,10 +17,12 @@ import {
 
 test("plain founder text removes hidden build details", () => {
   const text = toPlainFounderText(
-    "Codex ran CLI commands on branch codex/test and edited C:\\repo\\app\\page.tsx",
+    "OpenCode and DeepSeek ran CLI commands on branch codex/test and edited C:\\repo\\app\\page.tsx",
   );
 
   assert.equal(text.includes("Codex"), false);
+  assert.equal(text.includes("OpenCode"), false);
+  assert.equal(text.includes("DeepSeek"), false);
   assert.equal(text.includes("CLI"), false);
   assert.equal(text.includes("branch"), false);
   assert.equal(text.includes("C:\\repo"), false);
@@ -56,9 +59,55 @@ test("task spec keeps build connector hidden and structured", () => {
   );
 
   assert.equal(spec.task.outputKind, "tool");
+  assert.equal(spec.productPlan.steps.some((step) => step.includes("isolated workspace")), true);
+  assert.equal(spec.productPlan.publishing.includes("approval"), true);
   assert.equal(spec.workspace.safeWorkingDirectory, true);
   assert.equal(spec.safety.approvalRequiredBeforeExternalAction, true);
-  assert.equal(JSON.stringify(spec).includes("Codex"), false);
+  assert.equal(spec.builder.hiddenFromFounder, true);
+});
+
+test("builder library content explains plan, preview, review, and handoff", () => {
+  const taskSpec = buildTaskSpec(
+    {
+      title: "Booking tool",
+      kind: "code_preview",
+      classification: {
+        outputItemKind: "tool",
+      },
+    },
+    {
+      title: "Booking tool",
+      objective: "Create a booking tool for my business",
+    },
+    {
+      isolation: "safe_copy",
+    },
+  );
+  const content = buildLibraryContent({
+    title: "Booking tool",
+    summary: "A booking tool is ready to review.",
+    taskSpec,
+    codexResult: {
+      summary: "A booking tool is ready to review.",
+      reviewNotes: [],
+      externalActionRequested: false,
+      publishOrDeployBlocked: false,
+    },
+    previewStatus: {
+      available: true,
+      url: "https://preview.example",
+    },
+    testResults: {
+      status: "passed",
+      summary: "Checks passed.",
+      commands: [],
+    },
+  });
+
+  assert.equal(content.includes("## Plan"), true);
+  assert.equal(content.includes("## Preview"), true);
+  assert.equal(content.includes("## Version and handoff"), true);
+  assert.equal(content.includes("rollback point"), true);
 });
 
 test("workspace snapshots capture added, modified, and deleted files", async () => {
