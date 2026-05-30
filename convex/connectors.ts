@@ -1,5 +1,7 @@
-import { mutation, query } from "./_generated/server";
+import { action, internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import type { MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
+import { anyApi, type FunctionReference } from "convex/server";
 import { appendItemVersion, createItemWithVersion } from "./itemModel";
 import { buildConnectorImport } from "./connectorContent";
 import {
@@ -18,9 +20,187 @@ import {
   type ConnectorActionType,
   type ConnectorConnectionStatus,
 } from "./connectorRuntime";
+import {
+  fetchStripeReadOnlyDataset,
+  isStripeReadOnlyCredential,
+  prepareStripeSync,
+  type PreparedStripeFact,
+  type PreparedStripeItem,
+} from "./stripeConnector";
 
 function storedStatus(status: ConnectorConnectionStatus): Exclude<ConnectorConnectionStatus, "not_connected"> {
   return status === "not_connected" ? "needs_attention" : status;
+}
+
+const STRIPE_CONNECTOR_ID = "stripe";
+const STRIPE_SYNC_ACTION = "sync_stripe_finance_context";
+const STRIPE_CONNECTION_SETUP_MESSAGE =
+  "Finish the private read-only Stripe connection setup before syncing finance context.";
+const internalConnectors = anyApi.connectors as unknown as {
+  getConnectorConnectionForSync: FunctionReference<"query", "internal", {
+    workspaceId: string;
+    connectorId: string;
+  }>;
+  logConnectorAction: FunctionReference<"mutation", "internal", {
+    workspaceId: string;
+    connectionId?: string;
+    connectorId: string;
+    actionType: string;
+    requestedBy?: string;
+    status: "pending" | "completed" | "needs_attention" | "approval_required" | "failed";
+    approvalRequired: boolean;
+    safeSummary: string;
+    safeError?: string;
+    internalErrorCode?: string;
+  }>;
+  persistStripeSync: FunctionReference<"mutation", "internal", {
+    workspaceId: string;
+    connectionId?: string;
+    requestedBy?: string;
+    dataset: unknown;
+  }, unknown>;
+};
+
+function stripeReadOnlyCredential() {
+  const credential = process.env.STRIPE_READ_ONLY_KEY;
+  return typeof credential === "string" && isStripeReadOnlyCredential(credential)
+    ? credential.trim()
+    : undefined;
+}
+
+function isStripeFactMetadata(metadata: unknown) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false;
+  const source = metadata as Record<string, unknown>;
+  if (source.connectorId === STRIPE_CONNECTOR_ID) return true;
+  const connector = source.connector;
+  if (connector && typeof connector === "object" && !Array.isArray(connector)) {
+    return (connector as Record<string, unknown>).connectorId === STRIPE_CONNECTOR_ID;
+  }
+  return false;
+}
+
+async function upsertStripePreparedItem(
+  ctx: MutationCtx,
+  args: {
+    workspaceId: Parameters<typeof createItemWithVersion>[1]["workspaceId"];
+    item: PreparedStripeItem;
+    now: number;
+  },
+) {
+  const imported = buildConnectorImport({
+    connectorId: STRIPE_CONNECTOR_ID,
+    connectorName: "Stripe",
+    externalId: args.item.externalId,
+    externalType: args.item.externalType,
+    title: args.item.title,
+    content: args.item.content,
+    summary: args.item.summary,
+    kind: args.item.kind,
+    format: args.item.format,
+    tags: args.item.tags,
+    sourceName: args.item.sourceName,
+    externalCreatedAt: args.item.externalCreatedAt,
+    externalUpdatedAt: args.item.externalUpdatedAt,
+    importedAt: args.now,
+  });
+
+  const existing = (
+    await ctx.db
+      .query("items")
+      .withIndex("by_external", (q) =>
+        q.eq("source", "connector").eq("externalId", imported.externalId),
+      )
+      .collect()
+  ).find((item) => item.workspaceId === args.workspaceId);
+
+  if (existing) {
+    const versionId = await appendItemVersion(ctx, {
+      itemId: existing._id,
+      title: imported.title,
+      summary: imported.summary,
+      content: imported.content,
+      format: imported.format,
+      sourceUrl: imported.sourceUrl,
+      mimeType: imported.mimeType,
+      createdBy: imported.author,
+      createdAt: args.now,
+      metadata: imported.metadata,
+    });
+
+    await ctx.db.patch(existing._id, {
+      title: imported.title,
+      kind: imported.kind,
+      status: "active",
+      author: imported.author,
+      summary: imported.summary,
+      sourceUrl: imported.sourceUrl,
+      mimeType: imported.mimeType,
+      tags: imported.tags,
+      metadata: imported.metadata,
+      updatedAt: args.now,
+    });
+
+    return { itemId: existing._id, versionId, storedExternalId: imported.externalId };
+  }
+
+  const created = await createItemWithVersion(ctx, {
+    workspaceId: args.workspaceId,
+    title: imported.title,
+    kind: imported.kind,
+    status: imported.status,
+    source: imported.source,
+    author: imported.author,
+    summary: imported.summary,
+    content: imported.content,
+    format: imported.format,
+    sourceUrl: imported.sourceUrl,
+    externalId: imported.externalId,
+    mimeType: imported.mimeType,
+    tags: imported.tags,
+    metadata: imported.metadata,
+    createdAt: args.now,
+  });
+
+  return { itemId: created.itemId, versionId: created.versionId, storedExternalId: imported.externalId };
+}
+
+async function replaceStripeFactsForItem(
+  ctx: MutationCtx,
+  args: {
+    workspaceId: Parameters<typeof createItemWithVersion>[1]["workspaceId"];
+    itemId: Parameters<typeof appendItemVersion>[1]["itemId"];
+    facts: PreparedStripeFact[];
+    now: number;
+  },
+) {
+  const existingFacts = await ctx.db
+    .query("facts")
+    .withIndex("by_source_item", (q) => q.eq("sourceItemId", args.itemId))
+    .collect();
+
+  await Promise.all(
+    existingFacts
+      .filter((fact) => isStripeFactMetadata(fact.metadata))
+      .map((fact) => ctx.db.delete(fact._id)),
+  );
+
+  for (const fact of args.facts) {
+    await ctx.db.insert("facts", {
+      workspaceId: args.workspaceId,
+      itemId: args.itemId,
+      sourceItemId: args.itemId,
+      subject: fact.subject,
+      predicate: fact.predicate,
+      object: fact.object,
+      value: fact.value,
+      confidence: fact.confidence,
+      status: fact.status,
+      validFrom: fact.validFrom,
+      metadata: fact.metadata,
+      createdAt: args.now,
+      updatedAt: args.now,
+    });
+  }
 }
 
 export const listRegistry = query({
@@ -70,6 +250,222 @@ export const getActionLogs = query({
         createdAt: log.createdAt,
         completedAt: log.completedAt,
       }));
+  },
+});
+
+export const getConnectorConnectionForSync = internalQuery({
+  args: {
+    workspaceId: v.id("workspaces"),
+    connectorId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("connectorConnections")
+      .withIndex("by_workspace_connector", (q) =>
+        q.eq("workspaceId", args.workspaceId).eq("connectorId", args.connectorId),
+      )
+      .first();
+  },
+});
+
+export const logConnectorAction = internalMutation({
+  args: {
+    workspaceId: v.id("workspaces"),
+    connectionId: v.optional(v.id("connectorConnections")),
+    connectorId: v.string(),
+    actionType: v.string(),
+    requestedBy: v.optional(v.string()),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("completed"),
+      v.literal("needs_attention"),
+      v.literal("approval_required"),
+      v.literal("failed"),
+    ),
+    approvalRequired: v.boolean(),
+    safeSummary: v.string(),
+    safeError: v.optional(v.string()),
+    internalErrorCode: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    await ctx.db.insert("connectorActionLogs", {
+      workspaceId: args.workspaceId,
+      connectionId: args.connectionId,
+      connectorId: args.connectorId,
+      actionType: args.actionType,
+      requestedBy: args.requestedBy,
+      status: args.status,
+      approvalRequired: args.approvalRequired,
+      safeSummary: args.safeSummary,
+      safeError: args.safeError,
+      internalErrorCode: args.internalErrorCode,
+      createdAt: now,
+      completedAt: now,
+    });
+  },
+});
+
+export const persistStripeSync = internalMutation({
+  args: {
+    workspaceId: v.id("workspaces"),
+    connectionId: v.optional(v.id("connectorConnections")),
+    requestedBy: v.optional(v.string()),
+    dataset: v.any(),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const prepared = prepareStripeSync({
+      dataset: args.dataset,
+      syncedAt: args.dataset?.syncedAt ?? now,
+    });
+    const factsByExternalId = new Map<string, PreparedStripeFact[]>();
+
+    for (const fact of prepared.facts) {
+      const facts = factsByExternalId.get(fact.itemExternalId) ?? [];
+      facts.push(fact);
+      factsByExternalId.set(fact.itemExternalId, facts);
+    }
+
+    for (const item of prepared.items) {
+      const stored = await upsertStripePreparedItem(ctx, {
+        workspaceId: args.workspaceId,
+        item,
+        now,
+      });
+      await replaceStripeFactsForItem(ctx, {
+        workspaceId: args.workspaceId,
+        itemId: stored.itemId,
+        facts: factsByExternalId.get(item.externalId) ?? [],
+        now,
+      });
+    }
+
+    if (args.connectionId) {
+      await ctx.db.patch(args.connectionId, {
+        status: "connected",
+        lastTestedAt: now,
+        lastHealthyAt: now,
+        lastSafeMessage: prepared.summary.safeSummary,
+        updatedAt: now,
+      });
+    }
+
+    await ctx.db.insert("connectorActionLogs", {
+      workspaceId: args.workspaceId,
+      connectionId: args.connectionId,
+      connectorId: STRIPE_CONNECTOR_ID,
+      actionType: STRIPE_SYNC_ACTION,
+      requestedBy: args.requestedBy,
+      status: "completed",
+      approvalRequired: false,
+      safeSummary: prepared.summary.safeSummary,
+      createdAt: now,
+      completedAt: now,
+    });
+
+    return {
+      allowed: true,
+      approvalRequired: false,
+      reason: "ready" as const,
+      safeMessage: prepared.summary.safeSummary,
+      itemCount: prepared.summary.counts.items,
+      factCount: prepared.summary.counts.facts,
+      counts: prepared.summary.counts,
+    };
+  },
+});
+
+export const syncStripeFinance = action({
+  args: {
+    workspaceId: v.id("workspaces"),
+    requestedBy: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const connection = await ctx.runQuery(internalConnectors.getConnectorConnectionForSync, {
+      workspaceId: args.workspaceId,
+      connectorId: STRIPE_CONNECTOR_ID,
+    });
+    const evaluation = evaluateConnectorActionRequest({
+      connectorId: STRIPE_CONNECTOR_ID,
+      actionType: STRIPE_SYNC_ACTION,
+      connection,
+    });
+
+    if (!evaluation.allowed) {
+      await ctx.runMutation(internalConnectors.logConnectorAction, {
+        workspaceId: args.workspaceId,
+        connectionId: connection?._id,
+        connectorId: STRIPE_CONNECTOR_ID,
+        actionType: STRIPE_SYNC_ACTION,
+        requestedBy: args.requestedBy,
+        status: evaluation.approvalRequired ? "approval_required" : "needs_attention",
+        approvalRequired: evaluation.approvalRequired,
+        safeSummary: evaluation.safeMessage,
+      });
+      return evaluation;
+    }
+
+    const credential = stripeReadOnlyCredential();
+    if (!credential) {
+      await ctx.runMutation(internalConnectors.logConnectorAction, {
+        workspaceId: args.workspaceId,
+        connectionId: connection?._id,
+        connectorId: STRIPE_CONNECTOR_ID,
+        actionType: STRIPE_SYNC_ACTION,
+        requestedBy: args.requestedBy,
+        status: "needs_attention",
+        approvalRequired: false,
+        safeSummary: STRIPE_CONNECTION_SETUP_MESSAGE,
+      });
+      return {
+        allowed: false,
+        approvalRequired: false,
+        reason: "not_connected" as const,
+        safeMessage: STRIPE_CONNECTION_SETUP_MESSAGE,
+      };
+    }
+
+    try {
+      const dataset = await fetchStripeReadOnlyDataset({
+        apiKey: credential,
+        fetchFn: async (input, init) => {
+          const response = await fetch(input, init);
+          return {
+            ok: response.ok,
+            status: response.status,
+            json: () => response.json() as Promise<unknown>,
+          };
+        },
+      });
+
+      return await ctx.runMutation(internalConnectors.persistStripeSync, {
+        workspaceId: args.workspaceId,
+        connectionId: connection?._id,
+        requestedBy: args.requestedBy,
+        dataset,
+      });
+    } catch (error) {
+      const safeError = safeConnectorError(error);
+      await ctx.runMutation(internalConnectors.logConnectorAction, {
+        workspaceId: args.workspaceId,
+        connectionId: connection?._id,
+        connectorId: STRIPE_CONNECTOR_ID,
+        actionType: STRIPE_SYNC_ACTION,
+        requestedBy: args.requestedBy,
+        status: "failed",
+        approvalRequired: false,
+        safeSummary: "Stripe finance context could not sync.",
+        safeError,
+        internalErrorCode: "STRIPE_SYNC_FAILED",
+      });
+      return {
+        allowed: false,
+        approvalRequired: false,
+        reason: "not_connected" as const,
+        safeMessage: safeError,
+      };
+    }
   },
 });
 

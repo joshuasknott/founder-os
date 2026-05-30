@@ -33,6 +33,7 @@ import type * as memory from "../memory.js";
 import type * as projects from "../projects.js";
 import type * as search from "../search.js";
 import type * as seedRoster from "../seedRoster.js";
+import type * as stripeConnector from "../stripeConnector.js";
 import type * as swarm from "../swarm.js";
 import type * as system from "../system.js";
 import type * as taskRuntime from "../taskRuntime.js";
@@ -73,6 +74,7 @@ declare const fullApi: ApiFromModules<{
   projects: typeof projects;
   search: typeof search;
   seedRoster: typeof seedRoster;
+  stripeConnector: typeof stripeConnector;
   swarm: typeof swarm;
   system: typeof system;
   taskRuntime: typeof taskRuntime;
