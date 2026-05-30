@@ -1,6 +1,8 @@
 import { mutation } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { v, ConvexError } from "convex/values";
+import { v } from "convex/values";
+import { requireCurrentUser } from "./authz";
+import { recordAuditEvent } from "./audit";
 
 // =========================================================================
 // SYSTEM HALT — The Kill Switch (Doc 7 §1)
@@ -15,12 +17,13 @@ export const systemHalt = mutation({
   },
   handler: async (ctx, args) => {
     // 1. Principal Binding — only authenticated founders can pull the kill switch
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new ConvexError("Unauthorized: Principal identity required");
+    const current = await requireCurrentUser(ctx);
+    const identity = current.identity;
 
     // 2. Abort all in-progress directives
     const activeDirectives = await ctx.db
       .query("directives")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", current.workspaceId))
       .filter((q) => q.eq(q.field("status"), "in_progress"))
       .collect();
 
@@ -31,6 +34,7 @@ export const systemHalt = mutation({
     // 3. Abort legacy task rows and active work runs
     const activeTasks = await ctx.db
       .query("tasks")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", current.workspaceId))
       .filter((q) =>
         q.or(
           q.eq(q.field("status"), "in_progress"),
@@ -46,6 +50,7 @@ export const systemHalt = mutation({
 
     const activeRuns = await ctx.db
       .query("workRuns")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", current.workspaceId))
       .filter((q) =>
         q.or(
           q.eq(q.field("status"), "queued"),
@@ -76,6 +81,23 @@ export const systemHalt = mutation({
         },
       });
     }
+
+    await recordAuditEvent(ctx, {
+      actorId: String(current.user._id),
+      actorName: current.user.name,
+      actorType: "user",
+      workspaceId: current.workspaceId,
+      action: "system.halted",
+      resourceType: "workspace",
+      resourceId: String(current.workspaceId),
+      summary: "All active work was stopped.",
+      metadata: {
+        reason: args.reason,
+        directivesAborted: activeDirectives.length,
+        tasksBlocked: activeTasks.length,
+        runsStopped: activeRuns.length,
+      },
+    });
 
     return {
       directivesAborted: activeDirectives.length,

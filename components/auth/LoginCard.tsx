@@ -5,6 +5,8 @@ import { authClient } from "@/lib/auth-client";
 import { Loader2, ShieldAlert } from "lucide-react";
 
 export function LoginCard() {
+  const [mode, setMode] = useState<"signIn" | "signUp">("signIn");
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -16,10 +18,17 @@ export function LoginCard() {
     setErrorStatus(null);
 
     try {
-      const { error } = await authClient.signIn.email({
-        email,
-        password,
-      });
+      const { error } =
+        mode === "signUp"
+          ? await authClient.signUp.email({
+              email,
+              password,
+              name: name.trim() || email.split("@")[0],
+            })
+          : await authClient.signIn.email({
+              email,
+              password,
+            });
 
       if (error) throw error;
 
@@ -39,11 +48,22 @@ export function LoginCard() {
           FounderOS
         </h2>
         <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-text-muted">
-          AI business workspace
+          {mode === "signUp" ? "Create your workspace" : "AI business workspace"}
         </p>
       </div>
 
       <form onSubmit={handleLogin} className="w-full space-y-4">
+        {mode === "signUp" && (
+          <input
+            type="text"
+            placeholder="Your name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            className="h-11 w-full rounded-xl border border-black/[0.05] bg-white px-4 py-2.5 text-sm text-text-primary shadow-sm outline-none transition-all placeholder:text-text-muted/60 focus:border-accent/40 focus:bg-white focus:ring-4 focus:ring-accent/5"
+            disabled={isLoading}
+          />
+        )}
+
         <input
           type="email"
           placeholder="founder@company.com"
@@ -79,11 +99,25 @@ export function LoginCard() {
           {isLoading ? (
             <span className="flex items-center justify-center gap-1.5">
               <Loader2 size={13} className="animate-spin" />
-              Opening...
+              {mode === "signUp" ? "Creating..." : "Opening..."}
             </span>
           ) : (
-            "Open Workspace"
+            mode === "signUp" ? "Create Workspace" : "Open Workspace"
           )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setErrorStatus(null);
+            setMode((current) => (current === "signIn" ? "signUp" : "signIn"));
+          }}
+          className="w-full text-center text-xs font-semibold text-text-secondary hover:text-text-primary"
+          disabled={isLoading}
+        >
+          {mode === "signUp"
+            ? "Already have an account? Sign in"
+            : "New here? Create an account"}
         </button>
       </form>
     </div>

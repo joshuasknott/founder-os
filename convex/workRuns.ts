@@ -18,6 +18,8 @@ import {
   type TaskClassification,
   type WorkRunKind,
 } from "./taskRuntime";
+import { actorFromIdentity, ensureDocWorkspace, requireCurrentUser, requireWorkerToken, workerActor } from "./authz";
+import { recordAuditEvent } from "./audit";
 
 const workRunKind = v.union(
   v.literal("code_preview"),
@@ -135,6 +137,7 @@ async function addResultCardsToChat(
   ctx: MutationCtx,
   run: {
     _id: Id<"workRuns">;
+    workspaceId?: Id<"workspaces">;
     directiveId: Id<"directives">;
     resultCardMessageId?: Id<"chatMessages">;
     navigationCardMessageId?: Id<"chatMessages">;
@@ -212,6 +215,7 @@ async function saveRunOutputToLibrary(
   ctx: MutationCtx,
   run: {
     _id: Id<"workRuns">;
+    workspaceId?: Id<"workspaces">;
     directiveId: Id<"directives">;
     kind: WorkRunKind;
     title: string;
@@ -244,7 +248,12 @@ async function saveRunOutputToLibrary(
   const assignedAgent = task?.assignedAgentId ? await ctx.db.get(task.assignedAgentId) : null;
   const department = assignedAgent
     ? await ctx.db.get(assignedAgent.departmentId)
-    : await ctx.db.query("departments").first();
+    : run.workspaceId
+      ? await ctx.db
+          .query("departments")
+          .withIndex("by_workspace", (q) => q.eq("workspaceId", run.workspaceId))
+          .first()
+      : null;
   if (!department) return null;
 
   const now = Date.now();
@@ -436,11 +445,17 @@ export const create = mutation({
     maxAttempts: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
     const directive = await ctx.db.get(args.directiveId);
     if (!directive) throw new Error("Task not found.");
+    ensureDocWorkspace(directive, current.workspaceId, "Task");
+    if (args.taskId) {
+      ensureDocWorkspace(await ctx.db.get(args.taskId), current.workspaceId, "Task step");
+    }
 
     const now = Date.now();
     const runId = await ctx.db.insert("workRuns", {
+      workspaceId: current.workspaceId,
       directiveId: args.directiveId,
       taskId: args.taskId,
       kind: args.kind,
@@ -464,13 +479,24 @@ export const create = mutation({
       createdAt: now,
     });
 
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "work_run.created",
+      resourceType: "workRun",
+      resourceId: String(runId),
+      summary: `Queued work: ${args.title}.`,
+      metadata: { directiveId: args.directiveId, taskId: args.taskId, kind: args.kind },
+    });
+
     return runId;
   },
 });
 
 export const listQueuedCodePreview = query({
-  args: { limit: v.optional(v.number()) },
+  args: { limit: v.optional(v.number()), workerToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    requireWorkerToken(args.workerToken);
     const queued = await ctx.db
       .query("workRuns")
       .withIndex("by_status", (q) => q.eq("status", "queued"))
@@ -482,8 +508,9 @@ export const listQueuedCodePreview = query({
 });
 
 export const listQueuedDocuments = query({
-  args: { limit: v.optional(v.number()) },
+  args: { limit: v.optional(v.number()), workerToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    requireWorkerToken(args.workerToken);
     const queued = await ctx.db
       .query("workRuns")
       .withIndex("by_status", (q) => q.eq("status", "queued"))
@@ -495,8 +522,9 @@ export const listQueuedDocuments = query({
 });
 
 export const listQueuedDesigns = query({
-  args: { limit: v.optional(v.number()) },
+  args: { limit: v.optional(v.number()), workerToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    requireWorkerToken(args.workerToken);
     const queued = await ctx.db
       .query("workRuns")
       .withIndex("by_status", (q) => q.eq("status", "queued"))
@@ -508,8 +536,9 @@ export const listQueuedDesigns = query({
 });
 
 export const listQueuedCommunications = query({
-  args: { limit: v.optional(v.number()) },
+  args: { limit: v.optional(v.number()), workerToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    requireWorkerToken(args.workerToken);
     const queued = await ctx.db
       .query("workRuns")
       .withIndex("by_status", (q) => q.eq("status", "queued"))
@@ -521,8 +550,9 @@ export const listQueuedCommunications = query({
 });
 
 export const listQueuedGeneric = query({
-  args: { limit: v.optional(v.number()) },
+  args: { limit: v.optional(v.number()), workerToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    requireWorkerToken(args.workerToken);
     const queued = await ctx.db
       .query("workRuns")
       .withIndex("by_status", (q) => q.eq("status", "queued"))
@@ -538,8 +568,10 @@ export const leaseNext = mutation({
     kinds: v.array(workRunKind),
     workerId: v.string(),
     leaseMs: v.optional(v.number()),
+    workerToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    requireWorkerToken(args.workerToken);
     const now = Date.now();
     const acceptedKinds = args.kinds as WorkRunKind[];
     const queued = await ctx.db
@@ -616,6 +648,16 @@ export const leaseNext = mutation({
       createdAt: now,
     });
 
+    await recordAuditEvent(ctx, {
+      ...workerActor(args.workerId),
+      workspaceId: candidate.workspaceId,
+      action: "work_run.leased",
+      resourceType: "workRun",
+      resourceId: String(candidate._id),
+      summary: `Worker started: ${candidate.title}.`,
+      metadata: { leaseId, attemptCount: patch.attemptCount },
+    });
+
     return { ...candidate, ...patch };
   },
 });
@@ -632,8 +674,10 @@ export const appendUpdate = mutation({
       v.literal("complete"),
       v.literal("error")
     ),
+    workerToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    requireWorkerToken(args.workerToken);
     const run = await ctx.db.get(args.runId);
     if (!run) throw new Error("Run not found.");
 
@@ -647,8 +691,9 @@ export const appendUpdate = mutation({
 });
 
 export const markWorking = mutation({
-  args: { runId: v.id("workRuns") },
+  args: { runId: v.id("workRuns"), workerToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    requireWorkerToken(args.workerToken);
     const run = await ctx.db.get(args.runId);
     if (!run) throw new Error("Run not found.");
     if (run.status === "completed" || run.status === "failed" || run.status === "stopped") {
@@ -671,6 +716,15 @@ export const markWorking = mutation({
       createdAt: now,
     });
 
+    await recordAuditEvent(ctx, {
+      ...workerActor(run.leaseOwner),
+      workspaceId: run.workspaceId,
+      action: "work_run.needs_review",
+      resourceType: "workRun",
+      resourceId: String(args.runId),
+      summary: `Ready for review: ${run.title}.`,
+    });
+
     return args.runId;
   },
 });
@@ -679,8 +733,10 @@ export const markNeedsReview = mutation({
   args: {
     runId: v.id("workRuns"),
     leaseId: v.optional(v.string()),
+    workerToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    requireWorkerToken(args.workerToken);
     const run = await ctx.db.get(args.runId);
     if (!run) throw new Error("Run not found.");
     if (!leaseIsValid(run, { leaseId: args.leaseId, now: Date.now() })) {
@@ -716,8 +772,10 @@ export const markNeedsReviewWithResult = mutation({
     internalNotes: v.optional(v.string()),
     message: v.optional(v.string()),
     metadata: v.optional(v.any()),
+    workerToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    requireWorkerToken(args.workerToken);
     const run = await ctx.db.get(args.runId);
     if (!run) throw new Error("Run not found.");
     if (!leaseIsValid(run, { leaseId: args.leaseId, now: Date.now() })) {
@@ -753,6 +811,16 @@ export const markNeedsReviewWithResult = mutation({
       });
     }
 
+    await recordAuditEvent(ctx, {
+      ...workerActor(run.leaseOwner),
+      workspaceId: run.workspaceId,
+      action: "work_run.result_ready",
+      resourceType: "workRun",
+      resourceId: String(args.runId),
+      summary: args.summary ?? `Ready for review: ${run.title}.`,
+      metadata: { outputItemId: output?.itemId, outputDocumentId: output?.documentId },
+    });
+
     return args.runId;
   },
 });
@@ -761,8 +829,10 @@ export const markWaitingForApproval = mutation({
   args: {
     runId: v.id("workRuns"),
     leaseId: v.optional(v.string()),
+    workerToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    requireWorkerToken(args.workerToken);
     const run = await ctx.db.get(args.runId);
     if (!run) throw new Error("Run not found.");
     if (!leaseIsValid(run, { leaseId: args.leaseId, now: Date.now() })) {
@@ -778,6 +848,15 @@ export const markWaitingForApproval = mutation({
       createdAt: now,
     });
 
+    await recordAuditEvent(ctx, {
+      ...workerActor(run.leaseOwner),
+      workspaceId: run.workspaceId,
+      action: "work_run.waiting_for_approval",
+      resourceType: "workRun",
+      resourceId: String(args.runId),
+      summary: `Waiting for approval: ${run.title}.`,
+    });
+
     return args.runId;
   },
 });
@@ -786,8 +865,10 @@ export const markCompleted = mutation({
   args: {
     runId: v.id("workRuns"),
     leaseId: v.optional(v.string()),
+    workerToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    requireWorkerToken(args.workerToken);
     const run = await ctx.db.get(args.runId);
     if (!run) throw new Error("Run not found.");
     if (run.status === "completed") return args.runId;
@@ -815,6 +896,16 @@ export const markCompleted = mutation({
       });
     }
 
+    await recordAuditEvent(ctx, {
+      ...workerActor(run.leaseOwner),
+      workspaceId: run.workspaceId,
+      action: "work_run.completed",
+      resourceType: "workRun",
+      resourceId: String(args.runId),
+      summary: `Done: ${run.title}.`,
+      metadata: { outputItemId: output?.itemId, outputDocumentId: output?.documentId },
+    });
+
     return args.runId;
   },
 });
@@ -828,8 +919,10 @@ export const completeWithResult = mutation({
     previewUrl: v.optional(v.string()),
     internalNotes: v.optional(v.string()),
     metadata: v.optional(v.any()),
+    workerToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    requireWorkerToken(args.workerToken);
     const run = await ctx.db.get(args.runId);
     if (!run) throw new Error("Run not found.");
     if (run.status === "completed") return args.runId;
@@ -868,6 +961,16 @@ export const completeWithResult = mutation({
       });
     }
 
+    await recordAuditEvent(ctx, {
+      ...workerActor(run.leaseOwner),
+      workspaceId: run.workspaceId,
+      action: "work_run.completed",
+      resourceType: "workRun",
+      resourceId: String(args.runId),
+      summary: args.summary,
+      metadata: { outputItemId: output?.itemId, outputDocumentId: output?.documentId },
+    });
+
     return args.runId;
   },
 });
@@ -880,8 +983,10 @@ export const markFailed = mutation({
     internalError: v.optional(v.string()),
     retryable: v.optional(v.boolean()),
     leaseId: v.optional(v.string()),
+    workerToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    requireWorkerToken(args.workerToken);
     const run = await ctx.db.get(args.runId);
     if (!run) throw new Error("Run not found.");
     if (run.status === "completed" || run.status === "stopped") return args.runId;
@@ -914,6 +1019,16 @@ export const markFailed = mutation({
       createdAt: now,
     });
 
+    await recordAuditEvent(ctx, {
+      ...workerActor(run.leaseOwner),
+      workspaceId: run.workspaceId,
+      action: "work_run.failed",
+      resourceType: "workRun",
+      resourceId: String(args.runId),
+      summary: failure.patch.failureReason,
+      metadata: { retryScheduled: failure.retryScheduled },
+    });
+
     return args.runId;
   },
 });
@@ -921,8 +1036,10 @@ export const markFailed = mutation({
 export const stop = mutation({
   args: { runId: v.id("workRuns") },
   handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
     const run = await ctx.db.get(args.runId);
     if (!run) throw new Error("Run not found.");
+    ensureDocWorkspace(run, current.workspaceId, "Work run");
     if (run.status === "completed" || run.status === "stopped" || run.status === "failed") {
       return args.runId;
     }
@@ -948,6 +1065,15 @@ export const stop = mutation({
       createdAt: now,
     });
 
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "work_run.stopped",
+      resourceType: "workRun",
+      resourceId: String(args.runId),
+      summary: `Stopped: ${run.title}.`,
+    });
+
     return args.runId;
   },
 });
@@ -955,6 +1081,8 @@ export const stop = mutation({
 export const listByDirective = query({
   args: { directiveId: v.id("directives") },
   handler: async (ctx, args) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
+    ensureDocWorkspace(await ctx.db.get(args.directiveId), workspaceId, "Task");
     return await ctx.db
       .query("workRuns")
       .withIndex("by_directive", (q) => q.eq("directiveId", args.directiveId))
@@ -966,6 +1094,8 @@ export const listByDirective = query({
 export const listUpdates = query({
   args: { runId: v.id("workRuns") },
   handler: async (ctx, args) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
+    ensureDocWorkspace(await ctx.db.get(args.runId), workspaceId, "Work run");
     return await ctx.db
       .query("workRunUpdates")
       .withIndex("by_run", (q) => q.eq("runId", args.runId))
@@ -977,6 +1107,8 @@ export const listUpdates = query({
 export const listArtifacts = query({
   args: { runId: v.id("workRuns") },
   handler: async (ctx, args) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
+    ensureDocWorkspace(await ctx.db.get(args.runId), workspaceId, "Work run");
     return await ctx.db
       .query("workArtifacts")
       .withIndex("by_run", (q) => q.eq("runId", args.runId))
@@ -987,6 +1119,8 @@ export const listArtifacts = query({
 export const getRunsAndUpdates = query({
   args: { directiveId: v.id("directives") },
   handler: async (ctx, args) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
+    ensureDocWorkspace(await ctx.db.get(args.directiveId), workspaceId, "Task");
     const runs = await ctx.db
       .query("workRuns")
       .withIndex("by_directive", (q) => q.eq("directiveId", args.directiveId))
@@ -1013,6 +1147,7 @@ export const getRunsAndUpdates = query({
 export const getWorkPage = query({
   args: {},
   handler: async (ctx) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
     const activeRuns = [
       ...(await ctx.db
         .query("workRuns")
@@ -1034,25 +1169,25 @@ export const getWorkPage = query({
         .withIndex("by_status", (q) => q.eq("status", "stopped"))
         .order("desc")
         .take(10)),
-    ];
+    ].filter((run) => run.workspaceId === workspaceId);
 
-    const readyRuns = await ctx.db
+    const readyRuns = (await ctx.db
       .query("workRuns")
       .withIndex("by_status", (q) => q.eq("status", "needs_review"))
       .order("desc")
-      .take(40);
+      .take(40)).filter((run) => run.workspaceId === workspaceId);
 
-    const approvalRuns = await ctx.db
+    const approvalRuns = (await ctx.db
       .query("workRuns")
       .withIndex("by_status", (q) => q.eq("status", "waiting_for_approval"))
       .order("desc")
-      .take(40);
+      .take(40)).filter((run) => run.workspaceId === workspaceId);
 
-    const completedRuns = await ctx.db
+    const completedRuns = (await ctx.db
       .query("workRuns")
       .withIndex("by_status", (q) => q.eq("status", "completed"))
       .order("desc")
-      .take(40);
+      .take(40)).filter((run) => run.workspaceId === workspaceId);
 
     const pendingApprovals = await ctx.db
       .query("approvalQueue")

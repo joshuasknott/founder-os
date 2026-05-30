@@ -1,5 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { actorFromIdentity, isAuthorizedWorkerToken, requireCurrentUser, requireWorkspaceAccess, workerActor } from "./authz";
+import { recordAuditEvent } from "./audit";
 import {
   appendApprovalAudit,
   approvalDecisionPatch,
@@ -25,12 +27,18 @@ const sensitiveActionKind = v.union(
 
 export const getPendingApprovals = query({
   handler: async (ctx) => {
-    return await ctx.db
+    const { workspaceId } = await requireCurrentUser(ctx);
+    const directives = await ctx.db
+      .query("directives")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .collect();
+    const directiveIds = new Set(directives.map((directive) => directive._id));
+    return (await ctx.db
       .query("approvalQueue")
       .filter((q) =>
         q.or(q.eq(q.field("status"), "pending"), q.eq(q.field("status"), "shadow_pending")),
       )
-      .collect();
+      .collect()).filter((approval) => directiveIds.has(approval.directiveId));
   },
 });
 
@@ -42,6 +50,7 @@ export const createForRun = mutation({
     actionTitle: v.string(),
     actionDescription: v.optional(v.string()),
     actionPayload: v.optional(v.any()),
+    workerToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const run = await ctx.db.get(args.runId);
@@ -49,6 +58,12 @@ export const createForRun = mutation({
     if (run.directiveId !== args.directiveId) {
       throw new Error("Approval request does not match this work item.");
     }
+    const directive = await ctx.db.get(args.directiveId);
+    const workspaceId = run.workspaceId ?? directive?.workspaceId;
+    if (!workspaceId) throw new Error("Workspace not found.");
+    const workerAuthorized = isAuthorizedWorkerToken(args.workerToken);
+    const current = workerAuthorized ? null : await requireWorkspaceAccess(ctx, workspaceId, ["Owner", "Contributor"]);
+    const actor = current ? actorFromIdentity(current.identity, current.user) : workerActor("worker");
 
     const now = Date.now();
     const existing = await ctx.db
@@ -80,7 +95,7 @@ export const createForRun = mutation({
       createdAt: now,
     });
 
-    return await ctx.db.insert("approvalQueue", {
+    const approvalId = await ctx.db.insert("approvalQueue", {
       type: "integration_gate",
       directiveId: args.directiveId,
       runId: args.runId,
@@ -101,12 +116,30 @@ export const createForRun = mutation({
         },
       ],
     });
+    await recordAuditEvent(ctx, {
+      ...actor,
+      workspaceId,
+      action: "approval.requested",
+      resourceType: "approval",
+      resourceId: String(approvalId),
+      summary: `Approval requested: ${args.actionTitle}.`,
+      metadata: { runId: args.runId, actionKind: args.actionKind },
+    });
+    return approvalId;
   },
 });
 
 export const getApprovedActionForRun = query({
-  args: { runId: v.id("workRuns") },
+  args: { runId: v.id("workRuns"), workerToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (!run) throw new Error("Run not found.");
+    if (!isAuthorizedWorkerToken(args.workerToken)) {
+      const directive = await ctx.db.get(run.directiveId);
+      const workspaceId = run.workspaceId ?? directive?.workspaceId;
+      if (!workspaceId) throw new Error("Workspace not found.");
+      await requireWorkspaceAccess(ctx, workspaceId);
+    }
     const approvals = await ctx.db
       .query("approvalQueue")
       .filter((q) =>
@@ -134,11 +167,17 @@ export const getApprovedActionForRun = query({
 });
 
 export const markApprovedActionHandled = mutation({
-  args: { approvalId: v.id("approvalQueue") },
+  args: { approvalId: v.id("approvalQueue"), workerToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const approval = await ctx.db.get(args.approvalId);
     if (!approval) throw new Error("Approval request not found.");
     if (approval.handledAt) return args.approvalId;
+    const directive = await ctx.db.get(approval.directiveId);
+    const workspaceId = directive?.workspaceId;
+    if (!workspaceId) throw new Error("Workspace not found.");
+    if (!isAuthorizedWorkerToken(args.workerToken)) {
+      await requireWorkspaceAccess(ctx, workspaceId, ["Owner", "Contributor"]);
+    }
 
     const now = Date.now();
     const actionKind = approval.actionKind as SensitiveActionKind | undefined;
@@ -155,6 +194,14 @@ export const markApprovedActionHandled = mutation({
         },
       ),
     });
+    await recordAuditEvent(ctx, {
+      ...workerActor("worker"),
+      workspaceId,
+      action: "approval.handled",
+      resourceType: "approval",
+      resourceId: String(args.approvalId),
+      summary: `Handled approval: ${approval.actionTitle ?? "Approval"}.`,
+    });
 
     return args.approvalId;
   },
@@ -165,6 +212,9 @@ export const approve = mutation({
   handler: async (ctx, args) => {
     const approval = await ctx.db.get(args.approvalId);
     if (!approval) throw new Error("Approval request not found.");
+    const directive = await ctx.db.get(approval.directiveId);
+    if (!directive?.workspaceId) throw new Error("Workspace not found.");
+    const current = await requireWorkspaceAccess(ctx, directive.workspaceId, ["Owner"]);
     if (approval.status === "approved") return args.approvalId;
     if (approval.status === "denied") throw new Error("This approval was already declined.");
 
@@ -197,6 +247,16 @@ export const approve = mutation({
       });
     }
 
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: directive.workspaceId,
+      action: "approval.approved",
+      resourceType: "approval",
+      resourceId: String(args.approvalId),
+      summary: `Approved: ${approval.actionTitle ?? "Approval"}.`,
+      metadata: { actionKind },
+    });
+
     return args.approvalId;
   },
 });
@@ -206,6 +266,7 @@ export const resumeApprovedActionWithoutConnector = mutation({
     approvalId: v.id("approvalQueue"),
     runId: v.id("workRuns"),
     leaseId: v.optional(v.string()),
+    workerToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const approval = await ctx.db.get(args.approvalId);
@@ -215,6 +276,11 @@ export const resumeApprovedActionWithoutConnector = mutation({
     if (approval.status !== "approved") throw new Error("This action has not been approved.");
     if (approval.runId !== args.runId) throw new Error("Approval does not belong to this run.");
     if (run.leaseId !== args.leaseId) throw new Error("This work is already being handled.");
+    const workspaceId = run.workspaceId ?? (await ctx.db.get(run.directiveId))?.workspaceId;
+    if (!workspaceId) throw new Error("Workspace not found.");
+    if (!isAuthorizedWorkerToken(args.workerToken)) {
+      await requireWorkspaceAccess(ctx, workspaceId, ["Owner", "Contributor"]);
+    }
 
     const now = Date.now();
     const result = approvedActionFallbackResult({
@@ -256,6 +322,14 @@ export const resumeApprovedActionWithoutConnector = mutation({
       tone: "review",
       createdAt: now,
     });
+    await recordAuditEvent(ctx, {
+      ...workerActor("worker"),
+      workspaceId,
+      action: "approval.resumed_without_connector",
+      resourceType: "approval",
+      resourceId: String(args.approvalId),
+      summary: "Approved action returned to review without external connector action.",
+    });
 
     return args.runId;
   },
@@ -266,6 +340,9 @@ export const deny = mutation({
   handler: async (ctx, args) => {
     const approval = await ctx.db.get(args.approvalId);
     if (!approval) throw new Error("Approval request not found.");
+    const directive = await ctx.db.get(approval.directiveId);
+    if (!directive?.workspaceId) throw new Error("Workspace not found.");
+    const current = await requireWorkspaceAccess(ctx, directive.workspaceId, ["Owner"]);
     if (approval.status === "denied") return args.approvalId;
     if (approval.status === "approved") throw new Error("This approval was already approved.");
 
@@ -297,6 +374,16 @@ export const deny = mutation({
         createdAt: now,
       });
     }
+
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: directive.workspaceId,
+      action: "approval.denied",
+      resourceType: "approval",
+      resourceId: String(args.approvalId),
+      summary: `Declined: ${approval.actionTitle ?? "Approval"}.`,
+      metadata: { actionKind },
+    });
 
     return args.approvalId;
   },

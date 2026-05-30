@@ -1,36 +1,43 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useMockUser } from "@/hooks/use-mock-user";
+import { useMutation, useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import { ConnectedServicesSettings } from "@/components/settings/connected-services-settings";
 import { Mail, Save, User, Camera, Building } from "lucide-react";
 
 export default function SettingsPage() {
-  const { user, updateUser, mounted } = useMockUser();
+  const user = useQuery(api.users.current);
+  const workspaces = useQuery(api.workspaces.get);
+  const updateProfile = useMutation(api.users.updateProfile);
+  const updateWorkspace = useMutation(api.workspaces.updateDetails);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
   const [businessName, setBusinessName] = useState("");
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const workspace = workspaces?.[0];
+  const loading = user === undefined || workspaces === undefined;
 
   useEffect(() => {
-    if (mounted) {
+    if (user && workspace) {
       queueMicrotask(() => {
         setName(user.name);
         setEmail(user.email);
-        setAvatarUrl(user.avatarUrl);
-        setBusinessName(user.businessName || "");
+        setAvatarUrl(user.avatarUrl ?? "");
+        setBusinessName(workspace.name);
       });
     }
-  }, [mounted, user]);
+  }, [user, workspace]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Limit file size to 2MB to stay within localStorage constraints
-    if (file.size > 2 * 1024 * 1024) {
-      alert("Please select an image smaller than 2MB.");
+    if (file.size > 512 * 1024) {
+      setError("Please select an image smaller than 512KB.");
       return;
     }
 
@@ -43,14 +50,26 @@ export default function SettingsPage() {
     reader.readAsDataURL(file);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    updateUser({ name, email, avatarUrl, businessName });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    if (!workspace) return;
+    setSaving(true);
+    setError("");
+    try {
+      await updateProfile({ name, avatarUrl: avatarUrl.trim() || undefined });
+      if (businessName.trim() && businessName.trim() !== workspace.name) {
+        await updateWorkspace({ workspaceId: workspace._id, name: businessName.trim() });
+      }
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not save those changes.");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  if (!mounted) {
+  if (loading) {
     return (
       <div className="min-h-full px-8 py-7">
         <div className="mx-auto max-w-2xl animate-pulse">
@@ -154,9 +173,9 @@ export default function SettingsPage() {
                     type="email"
                     required
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    readOnly
                     placeholder="e.g. josh@founderos.co"
-                    className="h-10 w-full rounded-lg border border-black/[0.07] bg-surface px-3 text-sm font-medium outline-none transition duration-150 focus:border-black/20 focus:bg-white"
+                    className="h-10 w-full rounded-lg border border-black/[0.07] bg-black/[0.025] px-3 text-sm font-medium text-text-muted outline-none"
                   />
                 </div>
 
@@ -177,17 +196,26 @@ export default function SettingsPage() {
               </div>
             </div>
 
+            {error && (
+              <p className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+                {error}
+              </p>
+            )}
+
             <div className="flex items-center gap-3">
               <button
                 type="submit"
+                disabled={saving}
                 className={`flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition duration-150 ${
                   saved
                     ? "bg-emerald-600 text-white hover:bg-emerald-600"
+                    : saving
+                      ? "bg-black/60 text-white"
                     : "bg-black text-white hover:bg-black/90 active:scale-[0.98]"
                 }`}
               >
                 <Save size={15} />
-                {saved ? "Saved Profile" : "Save Changes"}
+                {saved ? "Saved Profile" : saving ? "Saving" : "Save Changes"}
               </button>
             </div>
           </form>

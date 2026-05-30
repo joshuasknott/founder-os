@@ -1,18 +1,31 @@
 import { mutation, query } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
+import { actorFromIdentity, ensureUserWorkspace, findUserForIdentity, requireIdentity } from "./authz";
+import { recordAuditEvent } from "./audit";
 
 export const isSeeded = query({
   args: {},
   handler: async (ctx) => {
-    const workspace = await ctx.db.query("workspaces").first();
+    const identity = await requireIdentity(ctx);
+    const user = await findUserForIdentity(ctx, identity);
+    if (!user) return false;
+    const workspace = await ctx.db.get(user.workspaceId);
     const strategyDepartment = await ctx.db
       .query("departments")
-      .filter((q) =>
-        q.or(q.eq(q.field("name"), "Strategy"), q.eq(q.field("name"), "Command")),
-      )
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", user.workspaceId))
+      .filter((q) => q.eq(q.field("name"), "Strategy"))
       .first();
-    const agent = await ctx.db.query("agents").first();
-    const playbook = await ctx.db.query("playbooks").first();
+    const departments = await ctx.db
+      .query("departments")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", user.workspaceId))
+      .collect();
+    const departmentIds = departments.map((department) => department._id);
+    const agent = (await ctx.db.query("agents").collect()).find((candidate) =>
+      departmentIds.includes(candidate.departmentId),
+    );
+    const playbook = (await ctx.db.query("playbooks").collect()).find((candidate) =>
+      departmentIds.includes(candidate.departmentId),
+    );
 
     return workspace !== null && strategyDepartment !== null && agent !== null && playbook !== null;
   },
@@ -21,37 +34,9 @@ export const isSeeded = query({
 export const seedSwarm = mutation({
   args: {},
   handler: async (ctx) => {
-    const now = Date.now();
+    const { identity, user, workspaceId } = await ensureUserWorkspace(ctx);
 
-    let workspace = await ctx.db.query("workspaces").first();
-    const workspaceId =
-      workspace?._id ??
-      (await ctx.db.insert("workspaces", {
-        name: "FounderOS",
-        iconSlug: "building-2",
-        createdAt: now,
-        dailySpendLimit: 50,
-        alertThreshold: 40,
-      }));
-
-    workspace = await ctx.db.get(workspaceId);
-
-    const owner = await ctx.db
-      .query("users")
-      .filter((q) => q.eq(q.field("externalId"), "owner_seed"))
-      .first();
-
-    if (!owner) {
-      await ctx.db.insert("users", {
-        externalId: "owner_seed",
-        workspaceId,
-        name: "Founder",
-        email: "founder@example.com",
-        role: "Owner",
-        status: "online",
-        joinedAt: now,
-      });
-    }
+    const workspace = await ctx.db.get(workspaceId);
 
     const departmentSeeds = [
       {
@@ -121,6 +106,7 @@ export const seedSwarm = mutation({
     for (const departmentSeed of departmentSeeds) {
       const existing = await ctx.db
         .query("departments")
+        .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
         .filter((q) => q.eq(q.field("name"), departmentSeed.name))
         .first();
 
@@ -217,6 +203,7 @@ export const seedSwarm = mutation({
     for (const agentSeed of agentSeeds) {
       const existing = await ctx.db
         .query("agents")
+        .withIndex("by_department", (q) => q.eq("departmentId", agentSeed.departmentId))
         .filter((q) => q.eq(q.field("name"), agentSeed.name))
         .first();
 
@@ -346,6 +333,7 @@ export const seedSwarm = mutation({
     for (const playbookSeed of playbookSeeds) {
       const existing = await ctx.db
         .query("playbooks")
+        .withIndex("by_department", (q) => q.eq("departmentId", playbookSeed.departmentId))
         .filter((q) => q.eq(q.field("name"), playbookSeed.name))
         .first();
 
@@ -353,6 +341,15 @@ export const seedSwarm = mutation({
         await ctx.db.insert("playbooks", playbookSeed);
       }
     }
+
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(identity, user),
+      workspaceId,
+      action: "workspace.onboarded",
+      resourceType: "workspace",
+      resourceId: String(workspaceId),
+      summary: "Workspace prepared.",
+    });
 
     return workspaceId;
   },

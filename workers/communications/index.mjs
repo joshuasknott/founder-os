@@ -44,6 +44,12 @@ function convexUrl() {
   );
 }
 
+function workerToken() {
+  const token = process.env.FOUNDEROS_WORKER_TOKEN || readLocalEnv("FOUNDEROS_WORKER_TOKEN");
+  if (!token) throw new Error("Set FOUNDEROS_WORKER_TOKEN before running the communications worker.");
+  return token;
+}
+
 function sleep(ms) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
@@ -53,12 +59,12 @@ async function append(client, runId, message, tone = "progress") {
     runId,
     message,
     tone,
+    workerToken: workerToken(),
   });
 }
 
-async function defaultWorkspaceId(client) {
-  const workspaces = await client.query(api.workspaces.get);
-  return workspaces?.[0]?._id;
+function defaultWorkspaceId(run) {
+  return run.workspaceId;
 }
 
 async function requestConnectorAction(client, workspaceId, args) {
@@ -78,6 +84,7 @@ async function requestConnectorAction(client, workspaceId, args) {
     directiveId: args.directiveId,
     runId: args.runId,
     approvalId: args.approvalId,
+    workerToken: workerToken(),
   });
 }
 
@@ -154,11 +161,12 @@ async function createApprovalIfNeeded(client, run, prepared) {
     actionTitle: prepared.externalAction.actionTitle,
     actionDescription: prepared.externalAction.actionDescription,
     actionPayload: prepared.approvalPayload,
+    workerToken: workerToken(),
   });
 }
 
 async function finishApprovedCommunication(client, run, approvedAction) {
-  const workspaceId = await defaultWorkspaceId(client);
+  const workspaceId = defaultWorkspaceId(run);
   const payload = approvedAction.actionPayload ?? {};
   const connectorId = payload.connectorId ??
     (approvedAction.actionKind === "create_calendar_event" ? "google_calendar" : "gmail");
@@ -186,6 +194,7 @@ async function finishApprovedCommunication(client, run, approvedAction) {
     const failure = approvedCommunicationFailureResult(run, approvedAction, actionResult.safeMessage);
     await client.mutation(api.approvals.markApprovedActionHandled, {
       approvalId: approvedAction.approvalId,
+      workerToken: workerToken(),
     });
     await client.mutation(api.workRuns.markNeedsReviewWithResult, {
       runId: run._id,
@@ -200,6 +209,7 @@ async function finishApprovedCommunication(client, run, approvedAction) {
       }),
       metadata: failure.metadata,
       message: failure.summary,
+      workerToken: workerToken(),
     });
     return true;
   }
@@ -219,6 +229,7 @@ async function finishApprovedCommunication(client, run, approvedAction) {
 
   await client.mutation(api.approvals.markApprovedActionHandled, {
     approvalId: approvedAction.approvalId,
+    workerToken: workerToken(),
   });
   await client.mutation(api.workRuns.completeWithResult, {
     runId: run._id,
@@ -227,6 +238,7 @@ async function finishApprovedCommunication(client, run, approvedAction) {
     content: history.content,
     internalNotes: JSON.stringify(metadata),
     metadata,
+    workerToken: workerToken(),
   });
   return true;
 }
@@ -235,6 +247,7 @@ async function processRun(client, run) {
   console.log(`Starting hidden communications run: ${run._id}`);
   const approvedAction = await client.query(api.approvals.getApprovedActionForRun, {
     runId: run._id,
+    workerToken: workerToken(),
   });
   if (approvedAction) {
     await append(client, run._id, "I'm resuming the approved step.");
@@ -248,6 +261,7 @@ async function processRun(client, run) {
       approvalId: approvedAction.approvalId,
       runId: run._id,
       leaseId: run.leaseId,
+      workerToken: workerToken(),
     });
     console.log(`Hidden communications run returned approved action to review: ${run._id}`);
     return;
@@ -261,12 +275,13 @@ async function processRun(client, run) {
 
   const directive = await client.query(api.directives.getDirectiveById, {
     directiveId: run.directiveId,
+    workerToken: workerToken(),
   });
   if (!directive) throw new Error("Task not found.");
 
   await sleep(400);
   await append(client, run._id, "I'm importing the relevant context I can use.");
-  const workspaceId = await defaultWorkspaceId(client);
+  const workspaceId = defaultWorkspaceId(run);
   const context = await importContextForRun(client, run, directive, workspaceId);
 
   await sleep(400);
@@ -295,6 +310,7 @@ async function processRun(client, run) {
       },
     },
     message: "This is ready for your review.",
+    workerToken: workerToken(),
   });
 
   if (result.externalAction) {
@@ -318,6 +334,7 @@ async function tick(client) {
     kinds: ["email", "schedule"],
     workerId: WORKER_ID,
     leaseMs: LEASE_MS,
+    workerToken: workerToken(),
   });
   if (!run) return false;
 
@@ -331,6 +348,7 @@ async function tick(client) {
       leaseId: run.leaseId,
       failureReason: "FounderOS could not prepare this for review yet.",
       internalError: message,
+      workerToken: workerToken(),
     });
   }
 

@@ -5,6 +5,8 @@ import {
   createItemWithVersion,
   documentKindToItemKind,
 } from "./itemModel";
+import { actorFromIdentity, ensureDocWorkspace, requireCurrentUser, requireWorkspaceAccess } from "./authz";
+import { recordAuditEvent } from "./audit";
 
 const artifactKind = v.union(
   v.literal("document"),
@@ -37,6 +39,10 @@ export const list = query({
     includeArchived: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
+    if (args.departmentId) {
+      ensureDocWorkspace(await ctx.db.get(args.departmentId), workspaceId, "Department");
+    }
     const docs = args.departmentId
       ? await ctx.db
           .query("documents")
@@ -45,7 +51,7 @@ export const list = query({
       : await ctx.db.query("documents").collect();
 
     const activeDocs = docs.filter(
-      (doc) => (args.includeArchived || !doc.isArchived) && !isLegacySeedLibraryItem(doc),
+      (doc) => doc.workspaceId === workspaceId && (args.includeArchived || !doc.isArchived) && !isLegacySeedLibraryItem(doc),
     );
     const departments = await ctx.db.query("departments").collect();
     const departmentById = new Map(departments.map((department) => [department._id, department]));
@@ -91,6 +97,8 @@ export const list = query({
 export const getVersions = query({
   args: { artifactId: v.id("documents") },
   handler: async (ctx, args) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
+    ensureDocWorkspace(await ctx.db.get(args.artifactId), workspaceId, "Library item");
     const versions = await ctx.db
       .query("documentVersions")
       .withIndex("by_document", (q) => q.eq("documentId", args.artifactId))
@@ -105,13 +113,15 @@ export const getVersions = query({
 export const listByTrace = query({
   args: { directiveId: v.id("directives") },
   handler: async (ctx, args) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
+    ensureDocWorkspace(await ctx.db.get(args.directiveId), workspaceId, "Task");
     const docs = await ctx.db
       .query("documents")
       .filter((q) => q.eq(q.field("traceId"), args.directiveId))
       .collect();
 
     return docs
-      .filter((doc) => !doc.isArchived)
+      .filter((doc) => doc.workspaceId === workspaceId && !doc.isArchived)
       .sort((a, b) => (b.updatedAt ?? b._creationTime) - (a.updatedAt ?? a._creationTime))
       .map((doc) => ({
         _id: doc._id,
@@ -133,11 +143,12 @@ export const create = mutation({
     summary: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const department = await ctx.db.get(args.departmentId);
+    const current = await requireCurrentUser(ctx);
+    ensureDocWorkspace(await ctx.db.get(args.departmentId), current.workspaceId, "Department");
     const now = Date.now();
     const kind = args.kind ?? "document";
     const { itemId, versionId: itemVersionId } = await createItemWithVersion(ctx, {
-      workspaceId: department?.workspaceId,
+      workspaceId: current.workspaceId,
       departmentId: args.departmentId,
       title: args.title,
       kind: documentKindToItemKind(kind),
@@ -151,7 +162,7 @@ export const create = mutation({
     });
 
     const docId = await ctx.db.insert("documents", {
-      workspaceId: department?.workspaceId,
+      workspaceId: current.workspaceId,
       itemId,
       title: args.title,
       departmentTag: args.departmentId,
@@ -178,6 +189,14 @@ export const create = mutation({
     await ctx.db.patch(docId, { currentVersionId: versionId });
     await ctx.db.patch(itemId, { legacyDocumentId: docId });
     await ctx.db.patch(itemVersionId, { legacyDocumentVersionId: versionId });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "artifact.created",
+      resourceType: "document",
+      resourceId: String(docId),
+      summary: `Created Library document: ${args.title}.`,
+    });
     return docId;
   },
 });
@@ -189,7 +208,8 @@ export const update = mutation({
     summary: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const doc = await ctx.db.get(args.artifactId);
+    const current = await requireCurrentUser(ctx);
+    const doc = ensureDocWorkspace(await ctx.db.get(args.artifactId), current.workspaceId, "Library item");
     if (!doc || doc.isArchived) throw new Error("Library item not found.");
 
     const versions = await ctx.db
@@ -230,6 +250,16 @@ export const update = mutation({
       await ctx.db.patch(itemVersionId, { legacyDocumentVersionId: versionId });
     }
 
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "artifact.updated",
+      resourceType: "document",
+      resourceId: String(args.artifactId),
+      summary: `Updated Library document: ${doc.title}.`,
+      metadata: { versionId },
+    });
+
     return versionId;
   },
 });
@@ -239,6 +269,8 @@ export const remove = mutation({
   handler: async (ctx, args) => {
     const doc = await ctx.db.get(args.artifactId);
     if (!doc) throw new Error("Library item not found.");
+    if (!doc.workspaceId) throw new Error("Library item not found.");
+    const current = await requireWorkspaceAccess(ctx, doc.workspaceId, ["Owner"]);
 
     const versions = await ctx.db
       .query("documentVersions")
@@ -278,14 +310,22 @@ export const remove = mutation({
     }
 
     await ctx.db.delete(args.artifactId);
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "artifact.deleted",
+      resourceType: "document",
+      resourceId: String(args.artifactId),
+      summary: `Deleted Library document: ${doc.title}.`,
+    });
   },
 });
 
 export const archive = mutation({
   args: { artifactId: v.id("documents") },
   handler: async (ctx, args) => {
-    const doc = await ctx.db.get(args.artifactId);
-    if (!doc) throw new Error("Library item not found.");
+    const current = await requireCurrentUser(ctx);
+    const doc = ensureDocWorkspace(await ctx.db.get(args.artifactId), current.workspaceId, "Library item");
     const now = Date.now();
     await ctx.db.patch(args.artifactId, {
       isArchived: true,
@@ -300,14 +340,22 @@ export const archive = mutation({
         updatedAt: now,
       });
     }
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "artifact.archived",
+      resourceType: "document",
+      resourceId: String(args.artifactId),
+      summary: `Archived Library document: ${doc.title}.`,
+    });
   },
 });
 
 export const restore = mutation({
   args: { artifactId: v.id("documents") },
   handler: async (ctx, args) => {
-    const doc = await ctx.db.get(args.artifactId);
-    if (!doc) throw new Error("Library item not found.");
+    const current = await requireCurrentUser(ctx);
+    const doc = ensureDocWorkspace(await ctx.db.get(args.artifactId), current.workspaceId, "Library item");
     const now = Date.now();
     await ctx.db.patch(args.artifactId, {
       isArchived: false,
@@ -322,6 +370,14 @@ export const restore = mutation({
         updatedAt: now,
       });
     }
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "artifact.restored",
+      resourceType: "document",
+      resourceId: String(args.artifactId),
+      summary: `Restored Library document: ${doc.title}.`,
+    });
   },
 });
 
@@ -331,7 +387,8 @@ export const revert = mutation({
     versionId: v.id("documentVersions"),
   },
   handler: async (ctx, args) => {
-    const doc = await ctx.db.get(args.artifactId);
+    const current = await requireCurrentUser(ctx);
+    const doc = ensureDocWorkspace(await ctx.db.get(args.artifactId), current.workspaceId, "Library item");
     const target = await ctx.db.get(args.versionId);
     if (!doc || doc.isArchived || !target || target.documentId !== args.artifactId) {
       throw new Error("Version not found.");

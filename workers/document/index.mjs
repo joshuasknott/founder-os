@@ -32,6 +32,12 @@ function convexUrl() {
   );
 }
 
+function workerToken() {
+  const token = process.env.FOUNDEROS_WORKER_TOKEN || readLocalEnv("FOUNDEROS_WORKER_TOKEN");
+  if (!token) throw new Error("Set FOUNDEROS_WORKER_TOKEN before running the document worker.");
+  return token;
+}
+
 function sleep(ms) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
@@ -41,6 +47,7 @@ async function append(client, runId, message, tone = "progress") {
     runId,
     message,
     tone,
+    workerToken: workerToken(),
   });
 }
 
@@ -79,6 +86,7 @@ async function processRun(client, run) {
   console.log(`Starting hidden document run: ${run._id}`);
   const approvedAction = await client.query(api.approvals.getApprovedActionForRun, {
     runId: run._id,
+    workerToken: workerToken(),
   });
   if (approvedAction) {
     await append(client, run._id, "I'm resuming the approved step.");
@@ -87,6 +95,7 @@ async function processRun(client, run) {
       approvalId: approvedAction.approvalId,
       runId: run._id,
       leaseId: run.leaseId,
+      workerToken: workerToken(),
     });
     console.log(`Hidden document run returned approved action to review: ${run._id}`);
     return;
@@ -96,6 +105,7 @@ async function processRun(client, run) {
 
   const directive = await client.query(api.directives.getDirectiveById, {
     directiveId: run.directiveId,
+    workerToken: workerToken(),
   });
   if (!directive) throw new Error("Task not found.");
 
@@ -115,6 +125,7 @@ async function processRun(client, run) {
       documentType: result.documentType,
       source: "FounderOS Library",
     }),
+    workerToken: workerToken(),
   });
 
   console.log(`Hidden document run completed: ${run._id}`);
@@ -125,6 +136,7 @@ async function tick(client) {
     kinds: ["document"],
     workerId: WORKER_ID,
     leaseMs: LEASE_MS,
+    workerToken: workerToken(),
   });
   if (!run) return false;
 
@@ -138,6 +150,7 @@ async function tick(client) {
       leaseId: run.leaseId,
       failureReason: "FounderOS could not prepare the document yet.",
       internalError: message,
+      workerToken: workerToken(),
     });
   }
 

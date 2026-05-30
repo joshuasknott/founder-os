@@ -1,7 +1,9 @@
 import { betterAuth } from "better-auth";
 import { createClient, type GenericCtx } from "@convex-dev/better-auth";
+import { convex } from "@convex-dev/better-auth/plugins";
 import { components } from "./_generated/api";
 import { DataModel } from "./_generated/dataModel";
+import authConfig from "./auth.config";
 
 // 1. Correctly initialize the client from the root package
 export const authComponent = createClient<DataModel>(components.betterAuth);
@@ -13,6 +15,9 @@ export const createAuth = (ctx: GenericCtx<DataModel>) => {
     emailAndPassword: {
       enabled: true,
     },
+    plugins: [convex({ authConfig })],
     // Social providers can be added here later
   });
 };
+
+export const { getAuthUser } = authComponent.clientApi();

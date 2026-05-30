@@ -1,5 +1,7 @@
 import { internalMutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
+import { ensureDocWorkspace, requireCurrentUser } from "./authz";
 
 // =========================================================================
 // SENSITIVE KEY PATTERNS — keys whose values must be redacted before logging
@@ -55,8 +57,10 @@ function sanitizePayload(input: unknown): unknown {
 
 export const getRecentLogs = query({
   handler: async (ctx) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
     return await ctx.db
       .query("observabilityLogs")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
       .order("desc")
       .take(50);
   },
@@ -65,6 +69,8 @@ export const getRecentLogs = query({
 export const getLogsByDirective = query({
   args: { directiveId: v.id("directives") },
   handler: async (ctx, args) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
+    ensureDocWorkspace(await ctx.db.get(args.directiveId), workspaceId, "Task");
     return await ctx.db
       .query("observabilityLogs")
       .withIndex("by_traceId", (q) => q.eq("traceId", args.directiveId))
@@ -125,7 +131,15 @@ export const logEvent = internalMutation({
       : undefined;
 
     // 3. Insert the immutable log entry
+    let workspaceId: Id<"workspaces"> | undefined;
+    try {
+      const directive = await ctx.db.get(args.traceId as Id<"directives">);
+      workspaceId = directive?.workspaceId;
+    } catch {
+      workspaceId = undefined;
+    }
     await ctx.db.insert("observabilityLogs", {
+      workspaceId,
       traceId: args.traceId,
       actor: args.actor,
       eventType: args.eventType,

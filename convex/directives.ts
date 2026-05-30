@@ -3,6 +3,8 @@ import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
+import { actorFromIdentity, ensureDocWorkspace, isAuthorizedWorkerToken, requireCurrentUser } from "./authz";
+import { recordAuditEvent } from "./audit";
 import {
   classifyTaskObjective,
   normalizePlainWorkerMessage,
@@ -18,8 +20,16 @@ function autonomyForClassification(classification: TaskClassification): 1 | 2 | 
 async function chooseAssignedAgent(
   ctx: MutationCtx,
   classification: TaskClassification,
+  workspaceId: Doc<"users">["workspaceId"],
 ): Promise<Doc<"agents"> | null> {
-  const agents = await ctx.db.query("agents").collect();
+  const departments = await ctx.db
+    .query("departments")
+    .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+    .collect();
+  const departmentIds = new Set(departments.map((department) => department._id));
+  const agents = (await ctx.db.query("agents").collect()).filter((agent) =>
+    departmentIds.has(agent.departmentId),
+  );
   if (agents.length === 0) return null;
 
   const preferredRouting: Record<TaskClassification["workerKind"], Array<Doc<"agents">["routingRequest"]>> = {
@@ -46,12 +56,18 @@ export const createDirective = mutation({
     sessionId: v.optional(v.id("chatSessions")),
   },
   handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
+    if (args.sessionId) {
+      const session = await ctx.db.get(args.sessionId);
+      ensureDocWorkspace(session, current.workspaceId, "Chat");
+    }
     const classification = classifyTaskObjective({
       title: args.title,
       objective: args.objective,
     });
-    const assignedAgent = await chooseAssignedAgent(ctx, classification);
+    const assignedAgent = await chooseAssignedAgent(ctx, classification, current.workspaceId);
     const directiveId = await ctx.db.insert("directives", {
+      workspaceId: current.workspaceId,
       title: args.title,
       objective: args.objective,
       sessionId: args.sessionId,
@@ -60,6 +76,7 @@ export const createDirective = mutation({
 
     const now = Date.now();
     const taskId = await ctx.db.insert("tasks", {
+      workspaceId: current.workspaceId,
       directiveId,
       title: args.title,
       description: args.objective,
@@ -74,6 +91,7 @@ export const createDirective = mutation({
     });
 
     const runId = await ctx.db.insert("workRuns", {
+      workspaceId: current.workspaceId,
       directiveId,
       taskId,
       kind: classification.runKind,
@@ -121,6 +139,16 @@ export const createDirective = mutation({
       },
     });
 
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "directive.created",
+      resourceType: "directive",
+      resourceId: String(directiveId),
+      summary: `Created task: ${args.title}.`,
+      metadata: { taskId, runId, classification },
+    });
+
     return directiveId;
   },
 });
@@ -132,10 +160,16 @@ export const addClarification = mutation({
     sessionId: v.optional(v.id("chatSessions")),
   },
   handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
     const directive = await ctx.db.get(args.directiveId);
     if (!directive) throw new Error("Task not found.");
+    ensureDocWorkspace(directive, current.workspaceId, "Task");
 
     const sessionId = args.sessionId ?? directive.sessionId;
+    if (sessionId) {
+      const session = await ctx.db.get(sessionId);
+      ensureDocWorkspace(session, current.workspaceId, "Chat");
+    }
     const updatedObjective = `${directive.objective}\n\nFounder clarification: ${args.content}`;
 
     await ctx.db.patch(args.directiveId, {
@@ -161,6 +195,15 @@ export const addClarification = mutation({
       await ctx.db.patch(sessionId, { lastMessageAt: Date.now() });
     }
 
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "directive.clarified",
+      resourceType: "directive",
+      resourceId: String(args.directiveId),
+      summary: `Added clarification to ${directive.title}.`,
+    });
+
     return args.directiveId;
   },
 });
@@ -168,8 +211,10 @@ export const addClarification = mutation({
 export const stopDirective = mutation({
   args: { directiveId: v.id("directives") },
   handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
     const directive = await ctx.db.get(args.directiveId);
     if (!directive) throw new Error("Task not found.");
+    ensureDocWorkspace(directive, current.workspaceId, "Task");
     if (directive.status === "completed" || directive.status === "aborted_by_principal") {
       return args.directiveId;
     }
@@ -228,6 +273,52 @@ export const stopDirective = mutation({
       await ctx.db.patch(directive.sessionId, { lastMessageAt: Date.now() });
     }
 
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "directive.stopped",
+      resourceType: "directive",
+      resourceId: String(args.directiveId),
+      summary: `Stopped task: ${directive.title}.`,
+    });
+
+    return args.directiveId;
+  },
+});
+
+export const archiveDirective = mutation({
+  args: { directiveId: v.id("directives") },
+  handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
+    const directive = ensureDocWorkspace(await ctx.db.get(args.directiveId), current.workspaceId, "Task");
+    const now = Date.now();
+    await ctx.db.patch(args.directiveId, { archivedAt: now });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "directive.archived",
+      resourceType: "directive",
+      resourceId: String(args.directiveId),
+      summary: `Archived task: ${directive.title}.`,
+    });
+    return args.directiveId;
+  },
+});
+
+export const restoreDirective = mutation({
+  args: { directiveId: v.id("directives") },
+  handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
+    const directive = ensureDocWorkspace(await ctx.db.get(args.directiveId), current.workspaceId, "Task");
+    await ctx.db.patch(args.directiveId, { archivedAt: undefined });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "directive.restored",
+      resourceType: "directive",
+      resourceId: String(args.directiveId),
+      summary: `Restored task: ${directive.title}.`,
+    });
     return args.directiveId;
   },
 });
@@ -235,8 +326,10 @@ export const stopDirective = mutation({
 export const deleteDirective = mutation({
   args: { directiveId: v.id("directives") },
   handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
     const directive = await ctx.db.get(args.directiveId);
     if (!directive) throw new Error("Task not found.");
+    ensureDocWorkspace(directive, current.workspaceId, "Task");
 
     const tasks = await ctx.db
       .query("tasks")
@@ -291,13 +384,23 @@ export const deleteDirective = mutation({
     }
 
     await ctx.db.delete(args.directiveId);
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "directive.deleted",
+      resourceType: "directive",
+      resourceId: String(args.directiveId),
+      summary: `Deleted task: ${directive.title}.`,
+    });
   },
 });
 
 export const getActiveDirective = query({
   handler: async (ctx) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
     return await ctx.db
       .query("directives")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
       .filter((q) =>
         q.or(
           q.eq(q.field("status"), "pending_spec"),
@@ -310,15 +413,21 @@ export const getActiveDirective = query({
 });
 
 export const getDirectiveById = query({
-  args: { directiveId: v.id("directives") },
+  args: { directiveId: v.id("directives"), workerToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.directiveId);
+    if (isAuthorizedWorkerToken(args.workerToken)) {
+      return await ctx.db.get(args.directiveId);
+    }
+    const { workspaceId } = await requireCurrentUser(ctx);
+    return ensureDocWorkspace(await ctx.db.get(args.directiveId), workspaceId, "Task");
   },
 });
 
 export const getTasksByDirective = query({
   args: { directiveId: v.id("directives") },
   handler: async (ctx, args) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
+    ensureDocWorkspace(await ctx.db.get(args.directiveId), workspaceId, "Task");
     return await ctx.db
       .query("tasks")
       .withIndex("by_directive", (q) => q.eq("directiveId", args.directiveId))
@@ -328,9 +437,12 @@ export const getTasksByDirective = query({
 
 export const getRecentDirectives = query({
   handler: async (ctx) => {
-    return await ctx.db
+    const { workspaceId } = await requireCurrentUser(ctx);
+    const directives = await ctx.db
       .query("directives")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
       .order("desc")
       .take(20);
+    return directives.filter((directive) => !directive.archivedAt);
   },
 });

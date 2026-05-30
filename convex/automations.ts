@@ -2,6 +2,8 @@ import { mutation, query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
+import { actorFromIdentity, ensureDocWorkspace, isAuthorizedWorkerToken, requireCurrentUser, requireWorkspaceAccess, workerActor } from "./authz";
+import { recordAuditEvent } from "./audit";
 import {
   classifyTaskObjective,
   nextScheduledRunAt,
@@ -27,8 +29,16 @@ function autonomyForClassification(classification: TaskClassification): 1 | 2 | 
 async function chooseAssignedAgent(
   ctx: MutationCtx,
   classification: TaskClassification,
+  workspaceId: Id<"workspaces">,
 ): Promise<Doc<"agents"> | null> {
-  const agents = await ctx.db.query("agents").collect();
+  const departments = await ctx.db
+    .query("departments")
+    .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+    .collect();
+  const departmentIds = new Set(departments.map((department) => department._id));
+  const agents = (await ctx.db.query("agents").collect()).filter((agent) =>
+    departmentIds.has(agent.departmentId),
+  );
   if (agents.length === 0) return null;
 
   const preferredRouting: Record<TaskClassification["workerKind"], Array<Doc<"agents">["routingRequest"]>> = {
@@ -55,22 +65,25 @@ async function createScheduleRun(
 ) {
   if (!schedule.prompt) throw new Error("Schedule prompt is missing.");
   if (schedule.status !== "scheduled") throw new Error("Schedule is paused.");
+  if (!schedule.workspaceId) throw new Error("Schedule workspace is missing.");
 
   const now = Date.now();
   const classification = classifyTaskObjective({
     title: schedule.title,
     objective: schedule.prompt,
   });
-  const assignedAgent = await chooseAssignedAgent(ctx, classification);
+  const assignedAgent = await chooseAssignedAgent(ctx, classification, schedule.workspaceId);
   const title = trigger === "manual" ? schedule.title : `Scheduled: ${schedule.title}`;
 
   const directiveId = await ctx.db.insert("directives", {
+    workspaceId: schedule.workspaceId,
     title,
     objective: schedule.prompt,
     status: "pending_spec",
   });
 
   const taskId = await ctx.db.insert("tasks", {
+    workspaceId: schedule.workspaceId,
     directiveId,
     title,
     description: schedule.prompt,
@@ -85,6 +98,7 @@ async function createScheduleRun(
   });
 
   const runId = await ctx.db.insert("workRuns", {
+    workspaceId: schedule.workspaceId,
     directiveId,
     taskId,
     scheduleItemId: schedule._id,
@@ -125,13 +139,26 @@ async function createScheduleRun(
     updatedAt: now,
   });
 
+  await recordAuditEvent(ctx, {
+    ...workerActor(trigger === "manual" ? "user" : "schedule-runner"),
+    workspaceId: schedule.workspaceId,
+    action: "schedule.run_queued",
+    resourceType: "schedule",
+    resourceId: String(schedule._id),
+    summary: `Queued scheduled work: ${title}.`,
+    metadata: { runId, trigger },
+  });
+
   return runId;
 }
 
 export const list = query({
   args: {},
   handler: async (ctx) => {
-    const items = await ctx.db.query("scheduleItems").withIndex("by_start").collect();
+    const { workspaceId } = await requireCurrentUser(ctx);
+    const items = (await ctx.db.query("scheduleItems").withIndex("by_start").collect()).filter(
+      (item) => item.workspaceId === workspaceId,
+    );
     const schedules = items
       .filter((item) => item.kind === "automation" && item.status !== "deleted")
       .sort((a, b) => (a.nextRunAt ?? a.startAt) - (b.nextRunAt ?? b.startAt));
@@ -187,12 +214,15 @@ export const create = mutation({
     timezone: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const workspace = await ctx.db.query("workspaces").first();
-    const internalArea = await ctx.db.query("departments").first();
+    const current = await requireCurrentUser(ctx);
+    const internalArea = await ctx.db
+      .query("departments")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", current.workspaceId))
+      .first();
     const now = Date.now();
 
     const workflowId = await ctx.db.insert("workflows", {
-      workspaceId: workspace?._id,
+      workspaceId: current.workspaceId,
       title: args.title,
       description: args.prompt,
       kind: "automation",
@@ -235,8 +265,8 @@ export const create = mutation({
       updatedAt: now,
     });
 
-    return await ctx.db.insert("scheduleItems", {
-      workspaceId: workspace?._id,
+    const scheduleId = await ctx.db.insert("scheduleItems", {
+      workspaceId: current.workspaceId,
       departmentId: internalArea?._id,
       workflowId,
       title: args.title,
@@ -251,6 +281,16 @@ export const create = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "schedule.created",
+      resourceType: "schedule",
+      resourceId: String(scheduleId),
+      summary: `Created schedule: ${args.title}.`,
+      metadata: { workflowId, cadence: args.cadence, startAt: args.startAt },
+    });
+    return scheduleId;
   },
 });
 
@@ -259,6 +299,7 @@ export const remove = mutation({
   handler: async (ctx, args) => {
     const item = await ctx.db.get(args.automationId);
     if (!item) throw new Error("Schedule not found.");
+    const current = await requireWorkspaceAccess(ctx, item.workspaceId, ["Owner", "Contributor"]);
     const now = Date.now();
 
     await ctx.db.patch(args.automationId, {
@@ -273,6 +314,48 @@ export const remove = mutation({
         updatedAt: now,
       });
     }
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: item.workspaceId,
+      action: "schedule.archived",
+      resourceType: "schedule",
+      resourceId: String(args.automationId),
+      summary: `Archived schedule: ${item.title}.`,
+    });
+  },
+});
+
+export const restore = mutation({
+  args: { automationId: v.id("scheduleItems") },
+  handler: async (ctx, args) => {
+    const item = await ctx.db.get(args.automationId);
+    if (!item) throw new Error("Schedule not found.");
+    const current = await requireWorkspaceAccess(ctx, item.workspaceId, ["Owner", "Contributor"]);
+    const now = Date.now();
+
+    await ctx.db.patch(args.automationId, {
+      status: "scheduled",
+      deletedAt: undefined,
+      nextRunAt: item.nextRunAt && item.nextRunAt > now ? item.nextRunAt : item.startAt,
+      updatedAt: now,
+    });
+
+    if (item.workflowId) {
+      await ctx.db.patch(item.workflowId, {
+        status: "active",
+        updatedAt: now,
+      });
+    }
+
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: item.workspaceId,
+      action: "schedule.restored",
+      resourceType: "schedule",
+      resourceId: String(args.automationId),
+      summary: `Restored schedule: ${item.title}.`,
+    });
+    return args.automationId;
   },
 });
 
@@ -281,6 +364,7 @@ export const pause = mutation({
   handler: async (ctx, args) => {
     const item = await ctx.db.get(args.automationId);
     if (!item) throw new Error("Schedule not found.");
+    const current = await requireWorkspaceAccess(ctx, item.workspaceId, ["Owner", "Contributor"]);
     const now = Date.now();
     await ctx.db.patch(args.automationId, {
       status: "paused",
@@ -292,6 +376,14 @@ export const pause = mutation({
         updatedAt: now,
       });
     }
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: item.workspaceId,
+      action: "schedule.paused",
+      resourceType: "schedule",
+      resourceId: String(args.automationId),
+      summary: `Paused schedule: ${item.title}.`,
+    });
   },
 });
 
@@ -300,6 +392,7 @@ export const resume = mutation({
   handler: async (ctx, args) => {
     const item = await ctx.db.get(args.automationId);
     if (!item) throw new Error("Schedule not found.");
+    const current = await requireWorkspaceAccess(ctx, item.workspaceId, ["Owner", "Contributor"]);
     const now = Date.now();
     await ctx.db.patch(args.automationId, {
       status: "scheduled",
@@ -312,6 +405,14 @@ export const resume = mutation({
         updatedAt: now,
       });
     }
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: item.workspaceId,
+      action: "schedule.resumed",
+      resourceType: "schedule",
+      resourceId: String(args.automationId),
+      summary: `Resumed schedule: ${item.title}.`,
+    });
   },
 });
 
@@ -320,13 +421,17 @@ export const runNow = mutation({
   handler: async (ctx, args) => {
     const item = await ctx.db.get(args.automationId);
     if (!item) throw new Error("Schedule not found.");
+    ensureDocWorkspace(item, (await requireCurrentUser(ctx)).workspaceId, "Schedule");
     return await createScheduleRun(ctx, item, "manual");
   },
 });
 
 export const runDueSchedules = mutation({
-  args: { limit: v.optional(v.number()) },
+  args: { limit: v.optional(v.number()), workerToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    if (!isAuthorizedWorkerToken(args.workerToken)) {
+      throw new Error("Worker authorization required.");
+    }
     const now = Date.now();
     const due = await ctx.db
       .query("scheduleItems")
@@ -342,5 +447,22 @@ export const runDueSchedules = mutation({
     // TODO: call this from a Convex cron at a short interval once recurring
     // execution is enabled for the hosted workspace.
     return runIds;
+  },
+});
+
+export const exportSchedule = query({
+  args: { automationId: v.id("scheduleItems") },
+  handler: async (ctx, args) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
+    const item = ensureDocWorkspace(await ctx.db.get(args.automationId), workspaceId, "Schedule");
+    const runs = await ctx.db
+      .query("workRuns")
+      .withIndex("by_schedule", (q) => q.eq("scheduleItemId", args.automationId))
+      .collect();
+    return {
+      exportedAt: Date.now(),
+      schedule: item,
+      runs,
+    };
   },
 });

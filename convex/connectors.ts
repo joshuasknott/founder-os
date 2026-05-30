@@ -2,6 +2,8 @@ import { action, internalMutation, internalQuery, mutation, query } from "./_gen
 import type { MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { anyApi, type FunctionReference } from "convex/server";
+import { actorFromIdentity, isAuthorizedWorkerToken, requireCurrentUser, requireWorkspaceAccess, workerActor } from "./authz";
+import { recordAuditEvent } from "./audit";
 import { appendItemVersion, createItemWithVersion } from "./itemModel";
 import { buildConnectorImport } from "./connectorContent";
 import {
@@ -58,6 +60,9 @@ const internalConnectors = anyApi.connectors as unknown as {
     connectionId?: string;
     requestedBy?: string;
     dataset: unknown;
+  }, unknown>;
+  authorizeWorkspaceForAction: FunctionReference<"query", "internal", {
+    workspaceId: string;
   }, unknown>;
 };
 
@@ -205,7 +210,8 @@ async function replaceStripeFactsForItem(
 
 export const listRegistry = query({
   args: {},
-  handler: async () => {
+  handler: async (ctx) => {
+    await requireCurrentUser(ctx);
     return listConnectorDefinitions().map(publicConnectorDefinition);
   },
 });
@@ -213,6 +219,7 @@ export const listRegistry = query({
 export const listForWorkspace = query({
   args: { workspaceId: v.id("workspaces") },
   handler: async (ctx, args) => {
+    await requireWorkspaceAccess(ctx, args.workspaceId);
     const connections = await ctx.db
       .query("connectorConnections")
       .withIndex("by_workspace", (q) => q.eq("workspaceId", args.workspaceId))
@@ -231,6 +238,7 @@ export const getActionLogs = query({
     connectorId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    await requireWorkspaceAccess(ctx, args.workspaceId);
     const logs = await ctx.db
       .query("connectorActionLogs")
       .withIndex("by_workspace", (q) => q.eq("workspaceId", args.workspaceId))
@@ -268,6 +276,14 @@ export const getConnectorConnectionForSync = internalQuery({
   },
 });
 
+export const authorizeWorkspaceForAction = internalQuery({
+  args: { workspaceId: v.id("workspaces") },
+  handler: async (ctx, args) => {
+    await requireWorkspaceAccess(ctx, args.workspaceId);
+    return { ok: true };
+  },
+});
+
 export const logConnectorAction = internalMutation({
   args: {
     workspaceId: v.id("workspaces"),
@@ -302,6 +318,21 @@ export const logConnectorAction = internalMutation({
       internalErrorCode: args.internalErrorCode,
       createdAt: now,
       completedAt: now,
+    });
+    await recordAuditEvent(ctx, {
+      actorId: args.requestedBy ?? "system",
+      actorName: args.requestedBy ?? "FounderOS",
+      actorType: "system",
+      workspaceId: args.workspaceId,
+      action: "connector.action_logged",
+      resourceType: "connectorAction",
+      summary: args.safeSummary,
+      metadata: {
+        connectorId: args.connectorId,
+        actionType: args.actionType,
+        status: args.status,
+        approvalRequired: args.approvalRequired,
+      },
     });
   },
 });
@@ -363,6 +394,16 @@ export const persistStripeSync = internalMutation({
       createdAt: now,
       completedAt: now,
     });
+    await recordAuditEvent(ctx, {
+      actorId: args.requestedBy ?? "system",
+      actorName: args.requestedBy ?? "FounderOS",
+      actorType: "system",
+      workspaceId: args.workspaceId,
+      action: "connector.stripe_synced",
+      resourceType: "connectorAction",
+      summary: prepared.summary.safeSummary,
+      metadata: prepared.summary.counts,
+    });
 
     return {
       allowed: true,
@@ -382,6 +423,9 @@ export const syncStripeFinance = action({
     requestedBy: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    await ctx.runQuery(internalConnectors.authorizeWorkspaceForAction, {
+      workspaceId: args.workspaceId,
+    });
     const connection = await ctx.runQuery(internalConnectors.getConnectorConnectionForSync, {
       workspaceId: args.workspaceId,
       connectorId: STRIPE_CONNECTOR_ID,
@@ -476,6 +520,7 @@ export const startConnection = mutation({
     settings: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
+    const current = await requireWorkspaceAccess(ctx, args.workspaceId, ["Owner"]);
     const definition = getConnectorDefinition(args.connectorId);
     if (!definition) throw new Error("That service is not available yet.");
 
@@ -521,6 +566,15 @@ export const startConnection = mutation({
       createdAt: now,
       completedAt: now,
     });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: args.workspaceId,
+      action: "connector.connection_started",
+      resourceType: "connectorConnection",
+      resourceId: String(connectionId),
+      summary: `Connection setup started for ${definition.safeDisplayName}.`,
+      metadata: { connectorId: definition.id },
+    });
 
     return connectionId;
   },
@@ -536,6 +590,7 @@ export const completeManagedConnection = mutation({
     connectedBy: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const current = await requireWorkspaceAccess(ctx, args.workspaceId, ["Owner"]);
     const definition = getConnectorDefinition(args.connectorId);
     if (!definition) throw new Error("That service is not available yet.");
 
@@ -613,6 +668,15 @@ export const completeManagedConnection = mutation({
       createdAt: now,
       completedAt: now,
     });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: args.workspaceId,
+      action: "connector.connection_completed",
+      resourceType: "connectorConnection",
+      resourceId: String(connectionId),
+      summary: result.safeMessage,
+      metadata: { connectorId: definition.id, status: result.status },
+    });
 
     return connectionId;
   },
@@ -626,6 +690,7 @@ export const updateConnectionSettings = mutation({
   handler: async (ctx, args) => {
     const connection = await ctx.db.get(args.connectionId);
     if (!connection) throw new Error("Connection not found.");
+    const current = await requireWorkspaceAccess(ctx, connection.workspaceId, ["Owner"]);
 
     const definition = getConnectorDefinition(connection.connectorId);
     if (!definition) throw new Error("That service is not available yet.");
@@ -657,6 +722,15 @@ export const updateConnectionSettings = mutation({
       createdAt: now,
       completedAt: now,
     });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: connection.workspaceId,
+      action: "connector.settings_updated",
+      resourceType: "connectorConnection",
+      resourceId: String(args.connectionId),
+      summary: result.safeMessage,
+      metadata: { connectorId: connection.connectorId, status: result.status },
+    });
 
     return result;
   },
@@ -667,6 +741,7 @@ export const testConnection = mutation({
   handler: async (ctx, args) => {
     const connection = await ctx.db.get(args.connectionId);
     if (!connection) throw new Error("Connection not found.");
+    const current = await requireWorkspaceAccess(ctx, connection.workspaceId, ["Owner", "Contributor"]);
 
     const definition = getConnectorDefinition(connection.connectorId);
     if (!definition) throw new Error("That service is not available yet.");
@@ -692,6 +767,15 @@ export const testConnection = mutation({
       createdAt: now,
       completedAt: now,
     });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: connection.workspaceId,
+      action: "connector.connection_tested",
+      resourceType: "connectorConnection",
+      resourceId: String(args.connectionId),
+      summary: result.safeMessage,
+      metadata: { connectorId: connection.connectorId, status: result.status },
+    });
 
     return result;
   },
@@ -702,6 +786,7 @@ export const disconnect = mutation({
   handler: async (ctx, args) => {
     const connection = await ctx.db.get(args.connectionId);
     if (!connection) throw new Error("Connection not found.");
+    const current = await requireWorkspaceAccess(ctx, connection.workspaceId, ["Owner"]);
 
     const now = Date.now();
     await ctx.db.patch(args.connectionId, {
@@ -725,6 +810,15 @@ export const disconnect = mutation({
       safeSummary: "Connection turned off.",
       createdAt: now,
       completedAt: now,
+    });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: connection.workspaceId,
+      action: "connector.disconnected",
+      resourceType: "connectorConnection",
+      resourceId: String(args.connectionId),
+      summary: "Connection turned off.",
+      metadata: { connectorId: connection.connectorId },
     });
 
     return args.connectionId;
@@ -769,8 +863,12 @@ export const importContent = mutation({
     requestedBy: v.optional(v.string()),
     externalCreatedAt: v.optional(v.number()),
     externalUpdatedAt: v.optional(v.number()),
+    workerToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const workerAuthorized = isAuthorizedWorkerToken(args.workerToken);
+    const current = workerAuthorized ? null : await requireWorkspaceAccess(ctx, args.workspaceId, ["Owner", "Contributor"]);
+    const actor = current ? actorFromIdentity(current.identity, current.user) : workerActor(args.requestedBy ?? "worker");
     const definition = getConnectorDefinition(args.connectorId);
     if (!definition) throw new Error("That service is not available yet.");
 
@@ -801,6 +899,14 @@ export const importContent = mutation({
         safeSummary: evaluation.safeMessage,
         createdAt: now,
         completedAt: now,
+      });
+      await recordAuditEvent(ctx, {
+        ...actor,
+        workspaceId: args.workspaceId,
+        action: "connector.import_blocked",
+        resourceType: "connectorAction",
+        summary: evaluation.safeMessage,
+        metadata: { connectorId: args.connectorId, reason: evaluation.reason },
       });
       return evaluation;
     }
@@ -922,6 +1028,15 @@ export const importContent = mutation({
       createdAt: now,
       completedAt: now,
     });
+    await recordAuditEvent(ctx, {
+      ...actor,
+      workspaceId: args.workspaceId,
+      action: "connector.content_imported",
+      resourceType: "item",
+      resourceId: String(itemId),
+      summary: "Imported content is ready in Library.",
+      metadata: { connectorId: definition.id, actionType: "import_content", versionId },
+    });
 
     return {
       ...evaluation,
@@ -942,8 +1057,12 @@ export const requestAction = mutation({
     directiveId: v.optional(v.id("directives")),
     runId: v.optional(v.id("workRuns")),
     approvalId: v.optional(v.id("approvalQueue")),
+    workerToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const workerAuthorized = isAuthorizedWorkerToken(args.workerToken);
+    const current = workerAuthorized ? null : await requireWorkspaceAccess(ctx, args.workspaceId, ["Owner", "Contributor"]);
+    const actor = current ? actorFromIdentity(current.identity, current.user) : workerActor(args.requestedBy ?? "worker");
     const definition = getConnectorDefinition(args.connectorId);
     const connection = await ctx.db
       .query("connectorConnections")
@@ -975,6 +1094,19 @@ export const requestAction = mutation({
         createdAt: now,
         completedAt: now,
       });
+      await recordAuditEvent(ctx, {
+        ...actor,
+        workspaceId: args.workspaceId,
+        action: "connector.action_blocked",
+        resourceType: "connectorAction",
+        summary: evaluation.safeMessage,
+        metadata: {
+          connectorId: args.connectorId,
+          actionType: args.actionType,
+          reason: evaluation.reason,
+          approvalRequired: evaluation.approvalRequired,
+        },
+      });
       return evaluation;
     }
 
@@ -1005,6 +1137,14 @@ export const requestAction = mutation({
         createdAt: now,
         completedAt: Date.now(),
       });
+      await recordAuditEvent(ctx, {
+        ...actor,
+        workspaceId: args.workspaceId,
+        action: "connector.action_completed",
+        resourceType: "connectorAction",
+        summary: result.safeSummary,
+        metadata: { connectorId: args.connectorId, actionType: args.actionType },
+      });
 
       return {
         ...evaluation,
@@ -1028,6 +1168,14 @@ export const requestAction = mutation({
         internalErrorCode: "CONNECTOR_ACTION_FAILED",
         createdAt: now,
         completedAt: Date.now(),
+      });
+      await recordAuditEvent(ctx, {
+        ...actor,
+        workspaceId: args.workspaceId,
+        action: "connector.action_failed",
+        resourceType: "connectorAction",
+        summary: safeError,
+        metadata: { connectorId: args.connectorId, actionType: args.actionType },
       });
 
       return {

@@ -1,5 +1,6 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import { requireCurrentUser, requireWorkspaceAccess } from "./authz";
 
 // ---------------------------------------------------------------------------
 // Queries
@@ -8,18 +9,23 @@ import { v } from "convex/values";
 export const getNodes = query({
   args: {},
   handler: async (ctx) => {
-    return await ctx.db.query("knowledge_nodes").collect();
+    const { workspaceId } = await requireCurrentUser(ctx);
+    return await ctx.db
+      .query("knowledge_nodes")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .collect();
   },
 });
 
 export const getHistory = query({
   args: {},
   handler: async (ctx) => {
-    return await ctx.db
+    const { workspaceId } = await requireCurrentUser(ctx);
+    return (await ctx.db
       .query("event_ledger")
-      .withIndex("by_timestamp")
-      .order("desc")
-      .collect();
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .collect())
+      .sort((a, b) => b.timestamp - a.timestamp);
   },
 });
 
@@ -36,6 +42,7 @@ export const createNode = mutation({
     content: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    await requireWorkspaceAccess(ctx, args.workspaceId, ["Owner", "Contributor"]);
     return await ctx.db.insert("knowledge_nodes", {
       workspaceId: args.workspaceId,
       type: args.type,
@@ -51,6 +58,9 @@ export const deleteNode = mutation({
     nodeId: v.id("knowledge_nodes"),
   },
   handler: async (ctx, { nodeId }) => {
+    const node = await ctx.db.get(nodeId);
+    if (!node) throw new Error("Node not found.");
+    await requireWorkspaceAccess(ctx, node.workspaceId, ["Owner", "Contributor"]);
     await ctx.db.delete(nodeId);
   },
 });

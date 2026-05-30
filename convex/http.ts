@@ -3,6 +3,7 @@ import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
 import { httpAction } from "./_generated/server";
 import { v } from "convex/values";
+import { authComponent, createAuth } from "./auth";
 
 // =========================================================================
 // HMAC SIGNATURE VALIDATION (Doc 7 §3)
@@ -64,7 +65,6 @@ export const logWebhookEvent = internalMutation({
     previewUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const workspace = await ctx.db.query("workspaces").first();
     const status =
       args.eventType === "workflow_run"
         ? "building"
@@ -73,7 +73,6 @@ export const logWebhookEvent = internalMutation({
           : "received";
 
     await ctx.db.insert("buildActivities", {
-      workspaceId: workspace?._id,
       source: args.source,
       title: args.title,
       summary: args.summary,
@@ -91,6 +90,8 @@ export const logWebhookEvent = internalMutation({
 // =========================================================================
 
 const http = httpRouter();
+
+authComponent.registerRoutes(http, createAuth);
 
 // -------------------------------------------------------------------------
 // POST /webhooks/github

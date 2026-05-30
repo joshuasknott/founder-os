@@ -228,7 +228,12 @@ export default defineSchema({
     status: v.union(v.literal("online"), v.literal("offline")),
     avatarUrl: v.optional(v.string()),
     joinedAt: v.number(),
-  }).index("by_workspace", ["workspaceId"]),
+  })
+    .index("by_workspace", ["workspaceId"])
+    .index("by_external", ["externalId"])
+    .index("by_email", ["email"])
+    .index("by_workspace_external", ["workspaceId", "externalId"])
+    .index("by_workspace_email", ["workspaceId", "email"]),
 
   knowledge_nodes: defineTable({
     workspaceId: v.id("workspaces"),
@@ -313,6 +318,7 @@ export default defineSchema({
   // ===========================================================================
 
   directives: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
     title: v.string(),
     objective: v.string(),
     sessionId: v.optional(v.id("chatSessions")),
@@ -327,9 +333,14 @@ export default defineSchema({
       v.literal("completed")
     ),
     tokenBudgetUSD: v.optional(v.number()),
-  }).index("by_status", ["status"]),
+    archivedAt: v.optional(v.number()),
+  })
+    .index("by_status", ["status"])
+    .index("by_workspace", ["workspaceId"])
+    .index("by_workspace_status", ["workspaceId", "status"]),
 
   tasks: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
     directiveId: v.id("directives"),
     title: v.string(),
     description: v.string(),
@@ -355,7 +366,9 @@ export default defineSchema({
     completedAt: v.optional(v.number()),
     failedAt: v.optional(v.number()),
     updatedAt: v.optional(v.number()),
-  }).index("by_directive", ["directiveId"]),
+  })
+    .index("by_directive", ["directiveId"])
+    .index("by_workspace", ["workspaceId"]),
 
   // ===========================================================================
   // 3. THE CIRCUIT BREAKER (Tiered Autonomy Approval Gate)
@@ -391,10 +404,14 @@ export default defineSchema({
   }).index("by_directive", ["directiveId"]),
 
   chatSessions: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
+    userId: v.optional(v.id("users")),
     title: v.string(),
     agentId: v.id("agents"),
     lastMessageAt: v.number(),
-  }).index("by_lastMessage", ["lastMessageAt"]),
+  })
+    .index("by_lastMessage", ["lastMessageAt"])
+    .index("by_workspace_lastMessage", ["workspaceId", "lastMessageAt"]),
 
   chatMessages: defineTable({
     sessionId: v.id("chatSessions"),
@@ -723,6 +740,7 @@ export default defineSchema({
     updatedAt: v.optional(v.number()),
   })
     .index("by_start", ["startAt"])
+    .index("by_workspace", ["workspaceId"])
     .index("by_next_run", ["status", "nextRunAt"])
     .index("by_workflow", ["workflowId"]),
 
@@ -741,13 +759,16 @@ export default defineSchema({
     commitSha: v.optional(v.string()),
     previewUrl: v.optional(v.string()),
     createdAt: v.number(),
-  }).index("by_created", ["createdAt"]),
+  })
+    .index("by_created", ["createdAt"])
+    .index("by_workspace_created", ["workspaceId", "createdAt"]),
 
   // ===========================================================================
   // 5. THE WORK RUNS LAYER (Hidden Task Execution Tracking)
   // ===========================================================================
 
   workRuns: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
     directiveId: v.id("directives"),
     taskId: v.optional(v.id("tasks")),
     scheduleItemId: v.optional(v.id("scheduleItems")),
@@ -795,6 +816,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_directive", ["directiveId"])
+    .index("by_workspace", ["workspaceId"])
+    .index("by_workspace_status", ["workspaceId", "status"])
     .index("by_schedule", ["scheduleItemId"])
     .index("by_workflow", ["workflowId"])
     .index("by_status", ["status"])
@@ -834,6 +857,7 @@ export default defineSchema({
   // ===========================================================================
 
   observabilityLogs: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
     traceId: v.union(v.id("directives"), v.string()),
     actor: v.string(),
     eventType: v.union(
@@ -856,5 +880,23 @@ export default defineSchema({
         useCase: v.optional(v.string()),
       })
     ),
-  }).index("by_traceId", ["traceId"]),
+  })
+    .index("by_traceId", ["traceId"])
+    .index("by_workspace", ["workspaceId"]),
+
+  auditEvents: defineTable({
+    workspaceId: v.id("workspaces"),
+    actorId: v.string(),
+    actorName: v.string(),
+    actorType: v.union(v.literal("user"), v.literal("worker"), v.literal("system")),
+    action: v.string(),
+    resourceType: v.string(),
+    resourceId: v.optional(v.string()),
+    summary: v.string(),
+    metadata: v.optional(v.any()),
+    createdAt: v.number(),
+  })
+    .index("by_workspace", ["workspaceId"])
+    .index("by_workspace_created", ["workspaceId", "createdAt"])
+    .index("by_resource", ["resourceType", "resourceId"]),
 });

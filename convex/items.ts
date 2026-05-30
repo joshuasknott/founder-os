@@ -19,6 +19,8 @@ import {
   itemKindToDocumentKind,
   type DocumentKind,
 } from "./itemModel";
+import { actorFromIdentity, ensureDocWorkspace, requireCurrentUser, requireWorkspaceAccess } from "./authz";
+import { recordAuditEvent } from "./audit";
 
 const publicItemStatus = v.union(
   v.literal("draft"),
@@ -145,6 +147,12 @@ function inferTags(content?: string, sourceUrl?: string, fileNames?: string[]) {
   return Array.from(tags).slice(0, 8);
 }
 
+async function getOwnedItem(ctx: Parameters<typeof requireCurrentUser>[0], itemId: Id<"items">) {
+  const current = await requireCurrentUser(ctx);
+  const item = ensureDocWorkspace(await ctx.db.get(itemId), current.workspaceId, "Item");
+  return { ...current, item };
+}
+
 export const list = query({
   args: {
     workspaceId: v.optional(v.id("workspaces")),
@@ -154,8 +162,12 @@ export const list = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
     const limit = args.limit ?? 100;
-    const workspaceId = args.workspaceId;
+    if (args.workspaceId && args.workspaceId !== current.workspaceId) {
+      throw new Error("You do not have access to that workspace.");
+    }
+    const workspaceId = current.workspaceId;
     const kind = args.kind;
     const traceId = args.traceId;
     let items =
@@ -171,17 +183,13 @@ export const list = query({
               .query("items")
               .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
               .collect()
-          : traceId
-            ? await ctx.db
-                .query("items")
-                .withIndex("by_trace", (q) => q.eq("traceId", traceId))
-                .collect()
-            : await ctx.db.query("items").collect();
+          : await ctx.db
+              .query("items")
+              .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+              .collect();
 
-    if (kind && !workspaceId) {
-      items = items.filter((item) => item.kind === kind);
-    }
-    if (traceId && !workspaceId) {
+    if (traceId) {
+      ensureDocWorkspace(await ctx.db.get(traceId), workspaceId, "Task");
       items = items.filter((item) => item.traceId === traceId);
     }
 
@@ -203,8 +211,7 @@ export const list = query({
 export const get = query({
   args: { itemId: v.id("items") },
   handler: async (ctx, args) => {
-    const item = await ctx.db.get(args.itemId);
-    if (!item) return null;
+    const { item } = await getOwnedItem(ctx, args.itemId);
     const currentVersion = item.currentVersionId ? await ctx.db.get(item.currentVersionId) : null;
     return { ...item, currentVersion };
   },
@@ -213,8 +220,7 @@ export const get = query({
 export const getDetail = query({
   args: { itemId: v.id("items") },
   handler: async (ctx, args) => {
-    const item = await ctx.db.get(args.itemId);
-    if (!item) return null;
+    const { item, workspaceId } = await getOwnedItem(ctx, args.itemId);
 
     const currentVersion = item.currentVersionId ? await ctx.db.get(item.currentVersionId) : null;
     const versions = (
@@ -268,14 +274,14 @@ export const getDetail = query({
       ]),
     ).slice(0, 8);
     const relatedItems = (await Promise.all(relatedItemIds.map((id) => ctx.db.get(id)))).filter(
-      (relatedItem) => relatedItem !== null,
+      (relatedItem) => relatedItem !== null && relatedItem.workspaceId === workspaceId,
     );
 
     const relatedEntityIds = Array.from(
       new Set(outgoing.flatMap((relation) => (relation.toEntityId ? [relation.toEntityId] : []))),
     ).slice(0, 8);
     const relatedEntities = (await Promise.all(relatedEntityIds.map((id) => ctx.db.get(id)))).filter(
-      (entity) => entity !== null,
+      (entity) => entity !== null && entity.workspaceId === workspaceId,
     );
 
     const facts = await ctx.db
@@ -307,6 +313,7 @@ export const getDetail = query({
 export const getVersions = query({
   args: { itemId: v.id("items") },
   handler: async (ctx, args) => {
+    await getOwnedItem(ctx, args.itemId);
     const versions = await ctx.db
       .query("itemVersions")
       .withIndex("by_item", (q) => q.eq("itemId", args.itemId))
@@ -340,13 +347,24 @@ export const create = mutation({
     createDocumentMirror: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const { itemId, versionId } = await createItemWithVersion(ctx, args);
+    const current = await requireCurrentUser(ctx);
+    if (args.workspaceId && args.workspaceId !== current.workspaceId) {
+      throw new Error("You do not have access to that workspace.");
+    }
+    if (args.departmentId) {
+      ensureDocWorkspace(await ctx.db.get(args.departmentId), current.workspaceId, "Department");
+    }
+    if (args.traceId) ensureDocWorkspace(await ctx.db.get(args.traceId), current.workspaceId, "Task");
+    const { itemId, versionId } = await createItemWithVersion(ctx, {
+      ...args,
+      workspaceId: current.workspaceId,
+    });
 
     if (args.createDocumentMirror && args.departmentId) {
       const now = Date.now();
       const documentKind = itemKindToDocumentKind(args.kind);
       const docId = await ctx.db.insert("documents", {
-        workspaceId: args.workspaceId,
+        workspaceId: current.workspaceId,
         itemId,
         title: args.title,
         departmentTag: args.departmentId,
@@ -375,6 +393,16 @@ export const create = mutation({
       await ctx.db.patch(itemId, { legacyDocumentId: docId });
       await ctx.db.patch(versionId, { legacyDocumentVersionId: docVersionId });
     }
+
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "item.created",
+      resourceType: "item",
+      resourceId: String(itemId),
+      summary: `Created Library item: ${args.title}.`,
+      metadata: { kind: args.kind, versionId },
+    });
 
     return itemId;
   },
@@ -405,8 +433,16 @@ export const intake = mutation({
     metadata: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
+    if (args.workspaceId && args.workspaceId !== current.workspaceId) {
+      throw new Error("You do not have access to that workspace.");
+    }
     const department = await ctx.db.get(args.departmentId);
-    if (!department) throw new Error("Department not found.");
+    ensureDocWorkspace(department, current.workspaceId, "Department");
+    if (args.traceId) ensureDocWorkspace(await ctx.db.get(args.traceId), current.workspaceId, "Task");
+    if (args.sourceChatSessionId) {
+      ensureDocWorkspace(await ctx.db.get(args.sourceChatSessionId), current.workspaceId, "Chat");
+    }
 
     const now = Date.now();
     const fileNames = args.files?.map((file) => file.name);
@@ -450,7 +486,7 @@ export const intake = mutation({
     };
 
     const { itemId, versionId: itemVersionId } = await createItemWithVersion(ctx, {
-      workspaceId: args.workspaceId ?? department.workspaceId,
+      workspaceId: current.workspaceId,
       departmentId: args.departmentId,
       title,
       kind,
@@ -472,7 +508,7 @@ export const intake = mutation({
 
     const documentKind = itemKindToDocumentKind(kind);
     const docId = await ctx.db.insert("documents", {
-      workspaceId: args.workspaceId ?? department.workspaceId,
+      workspaceId: current.workspaceId,
       itemId,
       title,
       departmentTag: args.departmentId,
@@ -507,7 +543,7 @@ export const intake = mutation({
 
     if (extractedUrls.length > 0) {
       await ctx.db.insert("facts", {
-        workspaceId: args.workspaceId ?? department.workspaceId,
+        workspaceId: current.workspaceId,
         itemId,
         subject: title,
         predicate: "mentions_url",
@@ -523,7 +559,7 @@ export const intake = mutation({
 
     if (extractedEmails.length > 0) {
       await ctx.db.insert("facts", {
-        workspaceId: args.workspaceId ?? department.workspaceId,
+        workspaceId: current.workspaceId,
         itemId,
         subject: title,
         predicate: "mentions_email",
@@ -536,6 +572,16 @@ export const intake = mutation({
         updatedAt: now,
       });
     }
+
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "item.intaked",
+      resourceType: "item",
+      resourceId: String(itemId),
+      summary: `Added to Library: ${title}.`,
+      metadata: { documentId: docId, versionId: itemVersionId, sourceUrl: args.sourceUrl },
+    });
 
     return { itemId, documentId: docId, versionId: itemVersionId };
   },
@@ -555,15 +601,27 @@ export const update = mutation({
     metadata: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
-    return await appendItemVersion(ctx, args);
+    const current = await requireCurrentUser(ctx);
+    const item = ensureDocWorkspace(await ctx.db.get(args.itemId), current.workspaceId, "Item");
+    const versionId = await appendItemVersion(ctx, args);
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "item.updated",
+      resourceType: "item",
+      resourceId: String(args.itemId),
+      summary: `Updated Library item: ${args.title ?? item.title}.`,
+      metadata: { versionId },
+    });
+    return versionId;
   },
 });
 
 export const archive = mutation({
   args: { itemId: v.id("items") },
   handler: async (ctx, args) => {
-    const item = await ctx.db.get(args.itemId);
-    if (!item) throw new Error("Item not found.");
+    const current = await requireCurrentUser(ctx);
+    const item = ensureDocWorkspace(await ctx.db.get(args.itemId), current.workspaceId, "Item");
     const now = Date.now();
     await ctx.db.patch(args.itemId, {
       status: "archived",
@@ -578,14 +636,22 @@ export const archive = mutation({
         updatedAt: now,
       });
     }
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "item.archived",
+      resourceType: "item",
+      resourceId: String(args.itemId),
+      summary: `Archived Library item: ${item.title}.`,
+    });
   },
 });
 
 export const restore = mutation({
   args: { itemId: v.id("items") },
   handler: async (ctx, args) => {
-    const item = await ctx.db.get(args.itemId);
-    if (!item) throw new Error("Item not found.");
+    const current = await requireCurrentUser(ctx);
+    const item = ensureDocWorkspace(await ctx.db.get(args.itemId), current.workspaceId, "Item");
     const now = Date.now();
     await ctx.db.patch(args.itemId, {
       status: item.status === "deprecated" ? "draft" : "active",
@@ -600,6 +666,14 @@ export const restore = mutation({
         updatedAt: now,
       });
     }
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "item.restored",
+      resourceType: "item",
+      resourceId: String(args.itemId),
+      summary: `Restored Library item: ${item.title}.`,
+    });
   },
 });
 
@@ -609,8 +683,8 @@ export const setPinned = mutation({
     isPinned: v.boolean(),
   },
   handler: async (ctx, args) => {
-    const item = await ctx.db.get(args.itemId);
-    if (!item) throw new Error("Item not found.");
+    const current = await requireCurrentUser(ctx);
+    const item = ensureDocWorkspace(await ctx.db.get(args.itemId), current.workspaceId, "Item");
     await ctx.db.patch(args.itemId, {
       metadata: {
         ...((item.metadata && typeof item.metadata === "object" && !Array.isArray(item.metadata))
@@ -620,12 +694,23 @@ export const setPinned = mutation({
       },
       updatedAt: Date.now(),
     });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: args.isPinned ? "item.pinned" : "item.unpinned",
+      resourceType: "item",
+      resourceId: String(args.itemId),
+      summary: `${args.isPinned ? "Pinned" : "Unpinned"} Library item: ${item.title}.`,
+    });
   },
 });
 
 export const remove = mutation({
   args: { itemId: v.id("items") },
   handler: async (ctx, args) => {
+    const item = await ctx.db.get(args.itemId);
+    if (!item?.workspaceId) throw new Error("Item not found.");
+    const current = await requireWorkspaceAccess(ctx, item.workspaceId, ["Owner"]);
     const versions = await ctx.db
       .query("itemVersions")
       .withIndex("by_item", (q) => q.eq("itemId", args.itemId))
@@ -643,6 +728,14 @@ export const remove = mutation({
     }
 
     await ctx.db.delete(args.itemId);
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "item.deleted",
+      resourceType: "item",
+      resourceId: String(args.itemId),
+      summary: `Deleted Library item: ${item.title}.`,
+    });
   },
 });
 
@@ -662,11 +755,17 @@ export const relate = mutation({
       throw new Error("Relation needs a target item or entity.");
     }
 
-    const item = await ctx.db.get(args.fromItemId);
-    if (!item) throw new Error("Item not found.");
+    const current = await requireCurrentUser(ctx);
+    const item = ensureDocWorkspace(await ctx.db.get(args.fromItemId), current.workspaceId, "Item");
+    if (args.toItemId) {
+      ensureDocWorkspace(await ctx.db.get(args.toItemId), current.workspaceId, "Related item");
+    }
+    if (args.toEntityId) {
+      ensureDocWorkspace(await ctx.db.get(args.toEntityId), current.workspaceId, "Entity");
+    }
 
-    return await ctx.db.insert("itemRelations", {
-      workspaceId: item.workspaceId,
+    const relationId = await ctx.db.insert("itemRelations", {
+      workspaceId: current.workspaceId,
       fromItemId: args.fromItemId,
       toItemId: args.toItemId,
       toEntityId: args.toEntityId,
@@ -677,12 +776,24 @@ export const relate = mutation({
       createdBy: args.createdBy,
       createdAt: Date.now(),
     });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "item.related",
+      resourceType: "itemRelation",
+      resourceId: String(relationId),
+      summary: `Related Library item: ${item.title}.`,
+      metadata: { relationType: args.relationType, toItemId: args.toItemId, toEntityId: args.toEntityId },
+    });
+    return relationId;
   },
 });
 
 export const listRelations = query({
   args: { itemId: v.id("items") },
   handler: async (ctx, args) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
+    ensureDocWorkspace(await ctx.db.get(args.itemId), workspaceId, "Item");
     const outgoing = await ctx.db
       .query("itemRelations")
       .withIndex("by_from", (q) => q.eq("fromItemId", args.itemId))
@@ -691,7 +802,10 @@ export const listRelations = query({
       .query("itemRelations")
       .withIndex("by_to_item", (q) => q.eq("toItemId", args.itemId))
       .collect();
-    return { outgoing, incoming };
+    return {
+      outgoing: outgoing.filter((relation) => relation.workspaceId === workspaceId),
+      incoming: incoming.filter((relation) => relation.workspaceId === workspaceId),
+    };
   },
 });
 
@@ -707,11 +821,18 @@ export const upsertEntity = mutation({
     metadata: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
+    if (args.workspaceId && args.workspaceId !== current.workspaceId) {
+      throw new Error("You do not have access to that workspace.");
+    }
+    if (args.sourceItemId) {
+      ensureDocWorkspace(await ctx.db.get(args.sourceItemId), current.workspaceId, "Source item");
+    }
     const canonical = canonicalName(args.name);
     const existing = await ctx.db
       .query("entities")
       .withIndex("by_canonical", (q) =>
-        q.eq("workspaceId", args.workspaceId).eq("canonicalName", canonical),
+        q.eq("workspaceId", current.workspaceId).eq("canonicalName", canonical),
       )
       .first();
 
@@ -731,7 +852,7 @@ export const upsertEntity = mutation({
     }
 
     return await ctx.db.insert("entities", {
-      workspaceId: args.workspaceId,
+      workspaceId: current.workspaceId,
       type: args.type,
       name: args.name,
       canonicalName: canonical,
@@ -764,9 +885,16 @@ export const addFact = mutation({
     metadata: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
+    if (args.workspaceId && args.workspaceId !== current.workspaceId) {
+      throw new Error("You do not have access to that workspace.");
+    }
+    if (args.entityId) ensureDocWorkspace(await ctx.db.get(args.entityId), current.workspaceId, "Entity");
+    if (args.itemId) ensureDocWorkspace(await ctx.db.get(args.itemId), current.workspaceId, "Item");
+    if (args.sourceItemId) ensureDocWorkspace(await ctx.db.get(args.sourceItemId), current.workspaceId, "Source item");
     const now = Date.now();
     return await ctx.db.insert("facts", {
-      workspaceId: args.workspaceId,
+      workspaceId: current.workspaceId,
       entityId: args.entityId,
       itemId: args.itemId,
       subject: args.subject,
@@ -793,25 +921,29 @@ export const listFacts = query({
     sourceItemId: v.optional(v.id("items")),
   },
   handler: async (ctx, args) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
     if (args.entityId) {
+      ensureDocWorkspace(await ctx.db.get(args.entityId), workspaceId, "Entity");
       return await ctx.db
         .query("facts")
         .withIndex("by_entity", (q) => q.eq("entityId", args.entityId))
         .collect();
     }
     if (args.itemId) {
+      ensureDocWorkspace(await ctx.db.get(args.itemId), workspaceId, "Item");
       return await ctx.db
         .query("facts")
         .withIndex("by_item", (q) => q.eq("itemId", args.itemId))
         .collect();
     }
     if (args.sourceItemId) {
+      ensureDocWorkspace(await ctx.db.get(args.sourceItemId), workspaceId, "Source item");
       return await ctx.db
         .query("facts")
         .withIndex("by_source_item", (q) => q.eq("sourceItemId", args.sourceItemId))
         .collect();
     }
-    return await ctx.db.query("facts").collect();
+    return (await ctx.db.query("facts").collect()).filter((fact) => fact.workspaceId === workspaceId);
   },
 });
 
@@ -821,7 +953,11 @@ export const listSavedViews = query({
     pinnedOnly: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const workspaceId = args.workspaceId;
+    const current = await requireCurrentUser(ctx);
+    if (args.workspaceId && args.workspaceId !== current.workspaceId) {
+      throw new Error("You do not have access to that workspace.");
+    }
+    const workspaceId = current.workspaceId;
     const pinnedOnly = args.pinnedOnly;
     const views =
       workspaceId && pinnedOnly !== undefined
@@ -836,7 +972,10 @@ export const listSavedViews = query({
               .query("savedViews")
               .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
               .collect()
-          : await ctx.db.query("savedViews").collect();
+          : await ctx.db
+              .query("savedViews")
+              .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+              .collect();
 
     return views.sort((a, b) => b.updatedAt - a.updatedAt);
   },
@@ -856,9 +995,13 @@ export const saveView = mutation({
     createdBy: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
+    if (args.workspaceId && args.workspaceId !== current.workspaceId) {
+      throw new Error("You do not have access to that workspace.");
+    }
     const now = Date.now();
     return await ctx.db.insert("savedViews", {
-      workspaceId: args.workspaceId,
+      workspaceId: current.workspaceId,
       title: args.title,
       description: args.description,
       scope: args.scope,
@@ -880,8 +1023,9 @@ export const setViewPinned = mutation({
     isPinned: v.boolean(),
   },
   handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
     const view = await ctx.db.get(args.viewId);
-    if (!view) throw new Error("Saved view not found.");
+    ensureDocWorkspace(view, current.workspaceId, "Saved view");
     await ctx.db.patch(args.viewId, {
       isPinned: args.isPinned,
       updatedAt: Date.now(),
@@ -892,6 +1036,9 @@ export const setViewPinned = mutation({
 export const removeView = mutation({
   args: { viewId: v.id("savedViews") },
   handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
+    const view = await ctx.db.get(args.viewId);
+    ensureDocWorkspace(view, current.workspaceId, "Saved view");
     await ctx.db.delete(args.viewId);
   },
 });
@@ -908,13 +1055,15 @@ export const recordViewUse = mutation({
     sort: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
+    if (args.workspaceId && args.workspaceId !== current.workspaceId) {
+      throw new Error("You do not have access to that workspace.");
+    }
     const now = Date.now();
-    const views = args.workspaceId
-      ? await ctx.db
-          .query("savedViews")
-          .withIndex("by_workspace", (q) => q.eq("workspaceId", args.workspaceId))
-          .collect()
-      : await ctx.db.query("savedViews").collect();
+    const views = await ctx.db
+      .query("savedViews")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", current.workspaceId))
+      .collect();
     const signature = JSON.stringify({
       scope: args.scope,
       query: args.query ?? "",
@@ -945,7 +1094,7 @@ export const recordViewUse = mutation({
     }
 
     return await ctx.db.insert("savedViews", {
-      workspaceId: args.workspaceId,
+      workspaceId: current.workspaceId,
       title: args.title,
       description: args.description,
       scope: args.scope,
@@ -968,7 +1117,11 @@ export const listWorkflows = query({
     status: v.optional(workflowStatus),
   },
   handler: async (ctx, args) => {
-    const workspaceId = args.workspaceId;
+    const current = await requireCurrentUser(ctx);
+    if (args.workspaceId && args.workspaceId !== current.workspaceId) {
+      throw new Error("You do not have access to that workspace.");
+    }
+    const workspaceId = current.workspaceId;
     const status = args.status;
     const workflows =
       workspaceId && status
@@ -983,7 +1136,10 @@ export const listWorkflows = query({
               .query("workflows")
               .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
               .collect()
-          : await ctx.db.query("workflows").collect();
+          : await ctx.db
+              .query("workflows")
+              .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+              .collect();
 
     return workflows.sort((a, b) => b.updatedAt - a.updatedAt);
   },
@@ -1005,9 +1161,17 @@ export const saveWorkflow = mutation({
     metadata: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
+    if (args.workspaceId && args.workspaceId !== current.workspaceId) {
+      throw new Error("You do not have access to that workspace.");
+    }
+    if (args.ownerId) {
+      const owner = await ctx.db.get(args.ownerId);
+      if (!owner || owner.workspaceId !== current.workspaceId) throw new Error("Owner not found.");
+    }
     const now = Date.now();
-    return await ctx.db.insert("workflows", {
-      workspaceId: args.workspaceId,
+    const workflowId = await ctx.db.insert("workflows", {
+      workspaceId: current.workspaceId,
       title: args.title,
       description: args.description,
       kind: args.kind,
@@ -1022,14 +1186,25 @@ export const saveWorkflow = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "workflow.saved",
+      resourceType: "workflow",
+      resourceId: String(workflowId),
+      summary: `Saved workflow: ${args.title}.`,
+      metadata: { kind: args.kind, status: args.status ?? "draft" },
+    });
+    return workflowId;
   },
 });
 
 export const migrateLegacyDocuments = mutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
+    const current = await requireWorkspaceAccess(ctx, undefined, ["Owner"]);
     const docs = (await ctx.db.query("documents").collect())
-      .filter((doc) => !doc.itemId)
+      .filter((doc) => !doc.itemId && doc.workspaceId === current.workspaceId)
       .slice(0, args.limit ?? 50);
     let migrated = 0;
 

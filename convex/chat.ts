@@ -1,6 +1,8 @@
 import { query, mutation, action, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
+import { actorFromIdentity, ensureDocWorkspace, requireCurrentUser } from "./authz";
+import { recordAuditEvent } from "./audit";
 
 export const createSession = mutation({
   args: {
@@ -8,19 +10,37 @@ export const createSession = mutation({
     title: v.string(),
   },
   handler: async (ctx, args) => {
-    return await ctx.db.insert("chatSessions", {
+    const current = await requireCurrentUser(ctx);
+    const agent = await ctx.db.get(args.agentId);
+    if (!agent) throw new Error("Agent not found.");
+    const department = await ctx.db.get(agent.departmentId);
+    ensureDocWorkspace(department, current.workspaceId, "Department");
+
+    const sessionId = await ctx.db.insert("chatSessions", {
+      workspaceId: current.workspaceId,
+      userId: current.user._id,
       title: args.title,
       agentId: args.agentId,
       lastMessageAt: Date.now(),
     });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "chat.created",
+      resourceType: "chatSession",
+      resourceId: String(sessionId),
+      summary: `Started chat: ${args.title}.`,
+    });
+    return sessionId;
   },
 });
 
 export const getSessions = query({
   handler: async (ctx) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
     return await ctx.db
       .query("chatSessions")
-      .withIndex("by_lastMessage")
+      .withIndex("by_workspace_lastMessage", (q) => q.eq("workspaceId", workspaceId))
       .order("desc")
       .take(20);
   },
@@ -29,9 +49,11 @@ export const getSessions = query({
 export const getMessages = query({
   args: { sessionId: v.id("chatSessions") },
   handler: async (ctx, args) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
+    const session = ensureDocWorkspace(await ctx.db.get(args.sessionId), workspaceId, "Chat");
     return await ctx.db
       .query("chatMessages")
-      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .withIndex("by_session", (q) => q.eq("sessionId", session._id))
       .collect();
   },
 });
@@ -43,6 +65,11 @@ export const sendMessage = action({
     content: v.string(),
   },
   handler: async (ctx, args) => {
+    const authorization = await ctx.runQuery(internal.chat.authorizeSessionForAction, {
+      sessionId: args.sessionId,
+      agentId: args.agentId,
+    });
+
     await ctx.runMutation(internal.chat.storeMessage, {
       sessionId: args.sessionId,
       role: "user",
@@ -76,6 +103,7 @@ export const sendMessage = action({
       const context = await ctx.runAction(internal.search.retrieveContext, {
         queryText: args.content,
         limit: 8,
+        workspaceId: authorization.workspaceId,
       });
       libraryContext = context.text;
     } catch {
@@ -183,11 +211,29 @@ export const getRecentHistory = internalQuery({
   },
 });
 
+export const authorizeSessionForAction = internalQuery({
+  args: {
+    sessionId: v.id("chatSessions"),
+    agentId: v.id("agents"),
+  },
+  handler: async (ctx, args) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
+    const session = ensureDocWorkspace(await ctx.db.get(args.sessionId), workspaceId, "Chat");
+    const agent = await ctx.db.get(args.agentId);
+    if (!agent) throw new Error("Agent not found.");
+    const department = await ctx.db.get(agent.departmentId);
+    ensureDocWorkspace(department, workspaceId, "Department");
+    return { sessionId: session._id, workspaceId };
+  },
+});
+
 export const deleteSession = mutation({
   args: { sessionId: v.id("chatSessions") },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
     if (!session) throw new Error("Session not found.");
+    const current = await requireCurrentUser(ctx);
+    ensureDocWorkspace(session, current.workspaceId, "Chat");
 
     const messages = await ctx.db
       .query("chatMessages")
@@ -199,6 +245,14 @@ export const deleteSession = mutation({
     }
 
     await ctx.db.delete(args.sessionId);
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "chat.deleted",
+      resourceType: "chatSession",
+      resourceId: String(args.sessionId),
+      summary: `Deleted chat: ${session.title}.`,
+    });
   },
 });
 

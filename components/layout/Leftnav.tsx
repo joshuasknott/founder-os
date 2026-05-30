@@ -6,7 +6,6 @@ import { usePathname } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { useMockUser } from "@/hooks/use-mock-user";
 import { authClient } from "@/lib/auth-client";
 import {
   CalendarClock,
@@ -123,10 +122,18 @@ export function Leftnav() {
   const stopTask = useMutation(api.directives.stopDirective);
   const deleteTask = useMutation(api.directives.deleteDirective);
   const deleteChat = useMutation(api.chat.deleteSession);
-
-  const { user, mounted } = useMockUser();
+  const currentUser = useQuery(api.users.current);
+  const workspaces = useQuery(api.workspaces.get);
   const [popoverOpen, setPopoverOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const accountReady = currentUser !== undefined && workspaces !== undefined;
+  const workspaceName = workspaces?.[0]?.name ?? "FounderOS";
+  const user = {
+    name: currentUser?.name ?? "Founder",
+    email: currentUser?.email ?? "",
+    avatarUrl: currentUser?.avatarUrl,
+    businessName: workspaceName,
+  };
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -293,7 +300,7 @@ export function Leftnav() {
       </div>
 
       <div className="mt-auto hidden border-t border-black/[0.05] pt-4 lg:block px-3">
-        {mounted ? (
+        {accountReady ? (
           <div className="relative" ref={popoverRef}>
             {/* Profile Popover */}
             {popoverOpen && (

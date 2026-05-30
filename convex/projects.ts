@@ -1,17 +1,23 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { actorFromIdentity, ensureDocWorkspace, requireCurrentUser, requireWorkspaceAccess } from "./authz";
+import { recordAuditEvent } from "./audit";
 
 export const list = query({
   args: {},
   handler: async (ctx) => {
-    return await ctx.db.query("projects").collect();
+    const { workspaceId } = await requireCurrentUser(ctx);
+    return (await ctx.db.query("projects").collect()).filter((project) => project.workspaceId === workspaceId);
   },
 });
 
 export const listSchedule = query({
   args: {},
   handler: async (ctx) => {
-    return await ctx.db.query("scheduleItems").withIndex("by_start").collect();
+    const { workspaceId } = await requireCurrentUser(ctx);
+    return (await ctx.db.query("scheduleItems").withIndex("by_start").collect()).filter(
+      (item) => item.workspaceId === workspaceId,
+    );
   },
 });
 
@@ -23,14 +29,13 @@ export const create = mutation({
     dueAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
     const department = args.departmentId ? await ctx.db.get(args.departmentId) : null;
-    const workspace = department?.workspaceId
-      ? await ctx.db.get(department.workspaceId)
-      : await ctx.db.query("workspaces").first();
+    if (department) ensureDocWorkspace(department, current.workspaceId, "Department");
     const now = Date.now();
 
-    return await ctx.db.insert("projects", {
-      workspaceId: workspace?._id,
+    const projectId = await ctx.db.insert("projects", {
+      workspaceId: current.workspaceId,
       departmentId: args.departmentId,
       name: args.name,
       outcome: args.outcome,
@@ -39,6 +44,15 @@ export const create = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "project.created",
+      resourceType: "project",
+      resourceId: String(projectId),
+      summary: `Created project ${args.name}.`,
+    });
+    return projectId;
   },
 });
 
@@ -56,13 +70,16 @@ export const schedule = mutation({
     projectId: v.optional(v.id("projects")),
   },
   handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
     const department = args.departmentId ? await ctx.db.get(args.departmentId) : null;
-    const workspace = department?.workspaceId
-      ? await ctx.db.get(department.workspaceId)
-      : await ctx.db.query("workspaces").first();
+    if (department) ensureDocWorkspace(department, current.workspaceId, "Department");
+    if (args.projectId) {
+      const project = await ctx.db.get(args.projectId);
+      ensureDocWorkspace(project, current.workspaceId, "Project");
+    }
 
     return await ctx.db.insert("scheduleItems", {
-      workspaceId: workspace?._id,
+      workspaceId: current.workspaceId,
       departmentId: args.departmentId,
       projectId: args.projectId,
       title: args.title,
@@ -85,6 +102,9 @@ export const updateStatus = mutation({
     ),
   },
   handler: async (ctx, args) => {
+    const project = await ctx.db.get(args.projectId);
+    if (!project?.workspaceId) throw new Error("Project not found.");
+    await requireWorkspaceAccess(ctx, project.workspaceId, ["Owner", "Contributor"]);
     await ctx.db.patch(args.projectId, {
       status: args.status,
       updatedAt: Date.now(),

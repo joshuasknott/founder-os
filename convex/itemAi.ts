@@ -11,6 +11,8 @@ import {
   type SensitiveActionKind,
   type TaskClassification,
 } from "./taskRuntime";
+import { ensureDocWorkspace, requireCurrentUser } from "./authz";
+import { recordAuditEvent } from "./audit";
 
 const contextualActionKind = v.union(
   v.literal("question"),
@@ -182,8 +184,18 @@ function replyForVersion(args: {
 async function chooseAssignedAgent(
   ctx: MutationCtx,
   classification: TaskClassification,
+  workspaceId?: Id<"workspaces">,
 ): Promise<Doc<"agents"> | null> {
-  const agents = await ctx.db.query("agents").collect();
+  const departments = workspaceId
+    ? await ctx.db
+        .query("departments")
+        .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+        .collect()
+    : [];
+  const departmentIds = new Set(departments.map((department) => department._id));
+  const agents = (await ctx.db.query("agents").collect()).filter((agent) =>
+    departmentIds.has(agent.departmentId),
+  );
   if (agents.length === 0) return null;
 
   const preferredRouting: Record<TaskClassification["workerKind"], Array<Doc<"agents">["routingRequest"]>> = {
@@ -224,6 +236,9 @@ export const run = action({
     approvalRequired?: boolean;
     href?: string;
   }> => {
+    await ctx.runQuery(internal.itemAi.authorizeItemForAction, {
+      itemId: args.itemId,
+    });
     const snapshot = await ctx.runQuery(internal.itemAi.getItemSnapshot, {
       itemId: args.itemId,
     });
@@ -234,6 +249,7 @@ export const run = action({
       queryText,
       itemId: args.itemId,
       limit: args.includeRelatedContext === false ? 4 : 10,
+      workspaceId: snapshot.item.workspaceId,
     });
 
     if (args.actionKind === "start_task") {
@@ -411,6 +427,15 @@ export const run = action({
   },
 });
 
+export const authorizeItemForAction = internalQuery({
+  args: { itemId: v.id("items") },
+  handler: async (ctx, args) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
+    ensureDocWorkspace(await ctx.db.get(args.itemId), workspaceId, "Item");
+    return { workspaceId };
+  },
+});
+
 export const getItemSnapshot = internalQuery({
   args: { itemId: v.id("items") },
   handler: async (ctx, args): Promise<ItemSnapshot | null> => {
@@ -475,6 +500,7 @@ export const createRevision = internalMutation({
     if (!item || item.status === "archived" || item.status === "deprecated") {
       throw new Error("Item not found.");
     }
+    if (!item.workspaceId) throw new Error("Item workspace is missing.");
 
     const now = Date.now();
     const versionId = await appendItemVersion(ctx, {
@@ -557,6 +583,18 @@ export const createRevision = internalMutation({
       }
     }
 
+    await recordAuditEvent(ctx, {
+      actorId: "system",
+      actorName: "FounderOS",
+      actorType: "system",
+      workspaceId: item.workspaceId,
+      action: "item.ai_revision_created",
+      resourceType: "item",
+      resourceId: String(args.itemId),
+      summary: `Created AI revision for ${item.title}.`,
+      metadata: { versionId, actionKind: args.actionKind },
+    });
+
     return {
       versionId,
       versionNumber: version.versionNumber,
@@ -587,14 +625,16 @@ export const startTaskFromItem = internalMutation({
       args.contextText ? `Related context:\n${trimForPrompt(args.contextText, 1800)}` : "",
     ].filter(Boolean).join("\n");
     const classification = classifyTaskObjective({ title, objective });
-    const assignedAgent = await chooseAssignedAgent(ctx, classification);
+    const assignedAgent = await chooseAssignedAgent(ctx, classification, item.workspaceId);
     const now = Date.now();
     const directiveId = await ctx.db.insert("directives", {
+      workspaceId: item.workspaceId,
       title,
       objective,
       status: "pending_spec",
     });
     const taskId = await ctx.db.insert("tasks", {
+      workspaceId: item.workspaceId,
       directiveId,
       title,
       description: objective,
@@ -608,6 +648,7 @@ export const startTaskFromItem = internalMutation({
       updatedAt: now,
     });
     const runId = await ctx.db.insert("workRuns", {
+      workspaceId: item.workspaceId,
       directiveId,
       taskId,
       kind: classification.runKind,
@@ -681,6 +722,18 @@ export const startTaskFromItem = internalMutation({
         createdAt: now,
       });
     }
+
+    await recordAuditEvent(ctx, {
+      actorId: "system",
+      actorName: "FounderOS",
+      actorType: "system",
+      workspaceId: item.workspaceId,
+      action: "item.task_started",
+      resourceType: "item",
+      resourceId: String(args.itemId),
+      summary: `Started task from Library item: ${item.title}.`,
+      metadata: { directiveId, runId, approvalRequired: Boolean(sensitiveActionKind) },
+    });
 
     return {
       title,

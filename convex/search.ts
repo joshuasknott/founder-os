@@ -3,6 +3,7 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
+import { ensureDocWorkspace, requireCurrentUser } from "./authz";
 
 type GroupId = "library" | "versions" | "chats" | "tasks" | "work" | "facts" | "entities";
 
@@ -299,10 +300,13 @@ async function buildKeywordResults(
     limit: number;
     includeArchived?: boolean;
     itemId?: Id<"items">;
+    workspaceId?: Id<"workspaces">;
   },
 ) {
   const terms = queryTerms(args.queryText);
   if (terms.length === 0) return [];
+  const sourceItem = args.itemId ? await ctx.db.get(args.itemId) : null;
+  const workspaceId = args.workspaceId ?? sourceItem?.workspaceId;
 
   const candidates: ScoredSearchResult[] = [];
   const boosts = await relationshipBoosts(ctx, args.itemId);
@@ -335,16 +339,33 @@ async function buildKeywordResults(
     ctx.db.query("entities").collect(),
   ]);
 
-  const itemsById = new Map<string, Doc<"items">>(items.map((item: Doc<"items">) => [item._id, item]));
-  const sessionsById = new Map<string, Doc<"chatSessions">>(chatSessions.map((session: Doc<"chatSessions">) => [session._id, session]));
-  const directivesById = new Map<string, Doc<"directives">>(directives.map((directive: Doc<"directives">) => [directive._id, directive]));
-  const workRunsById = new Map<string, Doc<"workRuns">>(workRuns.map((run: Doc<"workRuns">) => [run._id, run]));
+  const scopedItems = (items as Doc<"items">[]).filter((item) => !workspaceId || item.workspaceId === workspaceId);
+  const scopedDocuments = (documents as Doc<"documents">[]).filter((document) => !workspaceId || document.workspaceId === workspaceId);
+  const scopedChatSessions = (chatSessions as Doc<"chatSessions">[]).filter((session) => !workspaceId || session.workspaceId === workspaceId);
+  const scopedDirectives = (directives as Doc<"directives">[]).filter((directive) => !workspaceId || directive.workspaceId === workspaceId);
+  const scopedTasks = (tasks as Doc<"tasks">[]).filter((task) => !workspaceId || task.workspaceId === workspaceId);
+  const scopedWorkRuns = (workRuns as Doc<"workRuns">[]).filter((run) => !workspaceId || run.workspaceId === workspaceId);
+  const scopedFacts = (facts as Doc<"facts">[]).filter((fact) => !workspaceId || fact.workspaceId === workspaceId);
+  const scopedEntities = (entities as Doc<"entities">[]).filter((entity) => !workspaceId || entity.workspaceId === workspaceId);
+
+  const itemsById = new Map<string, Doc<"items">>(scopedItems.map((item: Doc<"items">) => [item._id, item]));
+  const sessionsById = new Map<string, Doc<"chatSessions">>(scopedChatSessions.map((session: Doc<"chatSessions">) => [session._id, session]));
+  const directivesById = new Map<string, Doc<"directives">>(scopedDirectives.map((directive: Doc<"directives">) => [directive._id, directive]));
+  const workRunsById = new Map<string, Doc<"workRuns">>(scopedWorkRuns.map((run: Doc<"workRuns">) => [run._id, run]));
   const updatesByRunId = new Map<string, Doc<"workRunUpdates">[]>();
-  for (const update of workRunUpdates as Doc<"workRunUpdates">[]) {
+  const scopedRunIds = new Set(scopedWorkRuns.map((run) => run._id));
+  const scopedWorkArtifacts = (workArtifacts as Doc<"workArtifacts">[]).filter((artifact) =>
+    !workspaceId || scopedRunIds.has(artifact.runId),
+  );
+  const scopedWorkRunUpdates = (workRunUpdates as Doc<"workRunUpdates">[]).filter((update) =>
+    !workspaceId || scopedRunIds.has(update.runId),
+  );
+
+  for (const update of scopedWorkRunUpdates) {
     updatesByRunId.set(update.runId, [...(updatesByRunId.get(update.runId) ?? []), update]);
   }
 
-  for (const item of items as Doc<"items">[]) {
+  for (const item of scopedItems) {
     if (!args.includeArchived && (item.status === "archived" || item.status === "deprecated")) continue;
     const searchableText = [
       item.title,
@@ -397,7 +418,7 @@ async function buildKeywordResults(
     );
   }
 
-  for (const document of documents as Doc<"documents">[]) {
+  for (const document of scopedDocuments) {
     if (document.itemId || (!args.includeArchived && document.isArchived)) continue;
     const currentVersion = document.currentVersionId
       ? (await ctx.db.get(document.currentVersionId)) as Doc<"documentVersions"> | null
@@ -421,7 +442,7 @@ async function buildKeywordResults(
     );
   }
 
-  for (const session of chatSessions as Doc<"chatSessions">[]) {
+  for (const session of scopedChatSessions) {
     addCandidate(
       candidates,
       {
@@ -442,6 +463,7 @@ async function buildKeywordResults(
 
   for (const message of chatMessages as Doc<"chatMessages">[]) {
     const session = sessionsById.get(message.sessionId);
+    if (!session) continue;
     addCandidate(
       candidates,
       {
@@ -460,7 +482,7 @@ async function buildKeywordResults(
     );
   }
 
-  for (const directive of directives as Doc<"directives">[]) {
+  for (const directive of scopedDirectives) {
     addCandidate(
       candidates,
       {
@@ -479,7 +501,7 @@ async function buildKeywordResults(
     );
   }
 
-  for (const task of tasks as Doc<"tasks">[]) {
+  for (const task of scopedTasks) {
     const directive = directivesById.get(task.directiveId);
     addCandidate(
       candidates,
@@ -499,7 +521,7 @@ async function buildKeywordResults(
     );
   }
 
-  for (const run of workRuns as Doc<"workRuns">[]) {
+  for (const run of scopedWorkRuns) {
     const directive = directivesById.get(run.directiveId);
     const updates = (updatesByRunId.get(run._id) ?? []).map((update) => update.message).join(" ");
     addCandidate(
@@ -520,7 +542,7 @@ async function buildKeywordResults(
     );
   }
 
-  for (const artifact of workArtifacts as Doc<"workArtifacts">[]) {
+  for (const artifact of scopedWorkArtifacts) {
     const run = workRunsById.get(artifact.runId);
     const directive = artifact.directiveId ? directivesById.get(artifact.directiveId) : run ? directivesById.get(run.directiveId) : undefined;
     addCandidate(
@@ -546,7 +568,7 @@ async function buildKeywordResults(
     );
   }
 
-  for (const fact of facts as Doc<"facts">[]) {
+  for (const fact of scopedFacts) {
     const itemId = fact.itemId ?? fact.sourceItemId;
     addCandidate(
       candidates,
@@ -567,7 +589,7 @@ async function buildKeywordResults(
     );
   }
 
-  for (const entity of entities as Doc<"entities">[]) {
+  for (const entity of scopedEntities) {
     addCandidate(
       candidates,
       {
@@ -616,11 +638,13 @@ export const globalSearch = query({
     includeArchived: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
     const limit = Math.min(Math.max(args.limit ?? 40, 1), 80);
     const results = await buildKeywordResults(ctx, {
       queryText: args.query,
       limit,
       includeArchived: args.includeArchived,
+      workspaceId,
     });
     const publicResults = results.map(withoutScore);
     return {
@@ -642,8 +666,8 @@ export const itemContext = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const item = await ctx.db.get(args.itemId);
-    if (!item) return null;
+    const { workspaceId } = await requireCurrentUser(ctx);
+    const item = ensureDocWorkspace(await ctx.db.get(args.itemId), workspaceId, "Item");
 
     const outgoing = await ctx.db
       .query("itemRelations")
@@ -661,14 +685,14 @@ export const itemContext = query({
       ]),
     ).slice(0, 8);
     const relatedItems = (await Promise.all(relatedItemIds.map((id) => ctx.db.get(id)))).filter(
-      (related): related is Doc<"items"> => related !== null,
+      (related): related is Doc<"items"> => related !== null && related.workspaceId === workspaceId,
     );
 
     const entityIds = Array.from(
       new Set(outgoing.flatMap((relation) => (relation.toEntityId ? [relation.toEntityId] : []))),
     ).slice(0, 8);
     const entities = (await Promise.all(entityIds.map((id) => ctx.db.get(id)))).filter(
-      (entity): entity is Doc<"entities"> => entity !== null,
+      (entity): entity is Doc<"entities"> => entity !== null && entity.workspaceId === workspaceId,
     );
 
     const facts = await ctx.db
@@ -686,6 +710,7 @@ export const itemContext = query({
       itemId: args.itemId,
       limit: args.limit ?? 12,
       includeArchived: false,
+      workspaceId,
     });
 
     return {
@@ -747,6 +772,7 @@ export const keywordContext = internalQuery({
     queryText: v.string(),
     itemId: v.optional(v.id("items")),
     limit: v.optional(v.number()),
+    workspaceId: v.optional(v.id("workspaces")),
   },
   handler: async (ctx, args) => {
     const results = await buildKeywordResults(ctx, {
@@ -754,6 +780,7 @@ export const keywordContext = internalQuery({
       itemId: args.itemId,
       limit: args.limit ?? 12,
       includeArchived: false,
+      workspaceId: args.workspaceId,
     });
     return {
       groups: groupResults(results.map(withoutScore)),
@@ -780,6 +807,7 @@ export const retrieveContext = internalAction({
     queryText: v.string(),
     itemId: v.optional(v.id("items")),
     limit: v.optional(v.number()),
+    workspaceId: v.optional(v.id("workspaces")),
   },
   handler: async (ctx, args): Promise<{
     text: string;
@@ -791,6 +819,7 @@ export const retrieveContext = internalAction({
       queryText: args.queryText,
       itemId: args.itemId,
       limit,
+      workspaceId: args.workspaceId,
     });
 
     const semanticMatches: Array<{ title: string; content: string }> = [];
@@ -813,7 +842,11 @@ export const retrieveContext = internalAction({
       );
       const items = await ctx.runQuery(internal.search.getItemsByIds, { ids: itemIds });
       const itemsById = new Map(
-        items.filter((item): item is Doc<"items"> => item !== null).map((item) => [item._id, item]),
+        items
+          .filter((item): item is Doc<"items"> =>
+            item !== null && (!args.workspaceId || item.workspaceId === args.workspaceId),
+          )
+          .map((item) => [item._id, item]),
       );
 
       for (const version of versions) {

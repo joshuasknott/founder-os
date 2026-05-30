@@ -32,6 +32,12 @@ function convexUrl() {
   );
 }
 
+function workerToken() {
+  const token = process.env.FOUNDEROS_WORKER_TOKEN || readLocalEnv("FOUNDEROS_WORKER_TOKEN");
+  if (!token) throw new Error("Set FOUNDEROS_WORKER_TOKEN before running the generic worker.");
+  return token;
+}
+
 function sleep(ms) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
@@ -41,6 +47,7 @@ async function append(client, runId, message, tone = "progress") {
     runId,
     message,
     tone,
+    workerToken: workerToken(),
   });
 }
 
@@ -78,6 +85,7 @@ async function processRun(client, run) {
   console.log(`Starting hidden generic run: ${run._id}`);
   const approvedAction = await client.query(api.approvals.getApprovedActionForRun, {
     runId: run._id,
+    workerToken: workerToken(),
   });
   if (approvedAction) {
     await append(client, run._id, "I'm resuming the approved step.");
@@ -86,6 +94,7 @@ async function processRun(client, run) {
       approvalId: approvedAction.approvalId,
       runId: run._id,
       leaseId: run.leaseId,
+      workerToken: workerToken(),
     });
     console.log(`Hidden generic run returned approved action to review: ${run._id}`);
     return;
@@ -95,6 +104,7 @@ async function processRun(client, run) {
 
   const directive = await client.query(api.directives.getDirectiveById, {
     directiveId: run.directiveId,
+    workerToken: workerToken(),
   });
   if (!directive) throw new Error("Task not found.");
 
@@ -113,6 +123,7 @@ async function processRun(client, run) {
       mode: "generic_worker",
       kind: run.kind,
     }),
+    workerToken: workerToken(),
   });
 
   console.log(`Hidden generic run completed: ${run._id}`);
@@ -123,6 +134,7 @@ async function tick(client) {
     kinds: ["generic", "data_update"],
     workerId: WORKER_ID,
     leaseMs: LEASE_MS,
+    workerToken: workerToken(),
   });
   if (!run) return false;
 
@@ -136,6 +148,7 @@ async function tick(client) {
       leaseId: run.leaseId,
       failureReason: "FounderOS could not finish this task yet.",
       internalError: message,
+      workerToken: workerToken(),
     });
   }
 

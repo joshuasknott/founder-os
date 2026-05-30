@@ -1,4 +1,5 @@
 import { query } from "./_generated/server";
+import { requireCurrentUser } from "./authz";
 
 const legacySeedTitles = new Set([
   "Founder briefing",
@@ -13,11 +14,24 @@ function isLegacySeedLibraryItem(doc: { title: string; author: string; traceId?:
 export const getOverview = query({
   args: {},
   handler: async (ctx) => {
-    const workspace = await ctx.db.query("workspaces").first();
-    const departments = await ctx.db.query("departments").collect();
-    const agents = await ctx.db.query("agents").collect();
-    const directives = await ctx.db.query("directives").order("desc").take(8);
-    const tasks = await ctx.db.query("tasks").collect();
+    const { workspaceId } = await requireCurrentUser(ctx);
+    const workspace = await ctx.db.get(workspaceId);
+    const departments = await ctx.db
+      .query("departments")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .collect();
+    const departmentIds = new Set(departments.map((department) => department._id));
+    const agents = (await ctx.db.query("agents").collect()).filter((agent) =>
+      departmentIds.has(agent.departmentId),
+    );
+    const allDirectives = await ctx.db
+      .query("directives")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .collect();
+    const directives = [...allDirectives]
+      .sort((a, b) => b._creationTime - a._creationTime)
+      .slice(0, 8);
+    const tasks = (await ctx.db.query("tasks").collect()).filter((task) => task.workspaceId === workspaceId);
     const approvals = await ctx.db
       .query("approvalQueue")
       .filter((q) =>
@@ -25,15 +39,23 @@ export const getOverview = query({
       )
       .collect();
     const artifacts = (await ctx.db.query("documents").collect()).filter(
-      (artifact) => !isLegacySeedLibraryItem(artifact),
+      (artifact) => artifact.workspaceId === workspaceId && !isLegacySeedLibraryItem(artifact),
     );
-    const projects = await ctx.db.query("projects").collect();
-    const schedule = await ctx.db.query("scheduleItems").withIndex("by_start").take(6);
+    const projects = (await ctx.db.query("projects").collect()).filter((project) => project.workspaceId === workspaceId);
+    const schedule = (await ctx.db
+      .query("scheduleItems")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .collect())
+      .sort((a, b) => a.startAt - b.startAt)
+      .slice(0, 6);
     const buildActivity = await ctx.db
       .query("buildActivities")
-      .withIndex("by_created")
+      .withIndex("by_workspace_created", (q) => q.eq("workspaceId", workspaceId))
       .order("desc")
       .take(5);
+    const workspaceApprovals = approvals.filter((approval) =>
+      allDirectives.some((directive) => directive._id === approval.directiveId),
+    );
 
     const tasksByDirective = new Map<string, typeof tasks>();
     for (const task of tasks) {
@@ -73,7 +95,7 @@ export const getOverview = query({
         departments: departments.length,
         activeProjects: projects.filter((project) => project.status !== "complete").length,
         artifacts: artifacts.filter((artifact) => !artifact.isArchived).length,
-        approvals: approvals.length,
+        approvals: workspaceApprovals.length,
       },
       departments: departments.map((department) => ({
         ...department,
@@ -95,7 +117,7 @@ export const getOverview = query({
         .sort((a, b) => (a.dueAt ?? Number.MAX_SAFE_INTEGER) - (b.dueAt ?? Number.MAX_SAFE_INTEGER))
         .slice(0, 5),
       schedule,
-      approvals,
+      approvals: workspaceApprovals,
       buildActivity,
       artifacts: artifacts
         .filter((artifact) => !artifact.isArchived)

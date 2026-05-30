@@ -1,5 +1,7 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import { actorFromIdentity, ensureDocWorkspace, requireCurrentUser, requireWorkspaceAccess } from "./authz";
+import { recordAuditEvent } from "./audit";
 
 // =========================================================================
 // QUERIES
@@ -7,39 +9,63 @@ import { v } from "convex/values";
 
 export const getDepartments = query({
   handler: async (ctx) => {
-    return await ctx.db.query("departments").collect();
+    const { workspaceId } = await requireCurrentUser(ctx);
+    return await ctx.db
+      .query("departments")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .collect();
   },
 });
 
 export const getAgentsByDepartment = query({
   args: { departmentId: v.id("departments") },
   handler: async (ctx, args) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
+    const department = ensureDocWorkspace(await ctx.db.get(args.departmentId), workspaceId, "Department");
     return await ctx.db
       .query("agents")
-      .withIndex("by_department", (q) => q.eq("departmentId", args.departmentId))
+      .withIndex("by_department", (q) => q.eq("departmentId", department._id))
       .collect();
   },
 });
 
 export const getAllAgents = query({
   handler: async (ctx) => {
-    return await ctx.db.query("agents").collect();
+    const { workspaceId } = await requireCurrentUser(ctx);
+    const departments = await ctx.db
+      .query("departments")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .collect();
+    const departmentIds = new Set(departments.map((department) => department._id));
+    return (await ctx.db.query("agents").collect()).filter((agent) =>
+      departmentIds.has(agent.departmentId),
+    );
   },
 });
 
 export const getPlaybooksByDepartment = query({
   args: { departmentId: v.id("departments") },
   handler: async (ctx, args) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
+    const department = ensureDocWorkspace(await ctx.db.get(args.departmentId), workspaceId, "Department");
     return await ctx.db
       .query("playbooks")
-      .withIndex("by_department", (q) => q.eq("departmentId", args.departmentId))
+      .withIndex("by_department", (q) => q.eq("departmentId", department._id))
       .collect();
   },
 });
 
 export const getAllPlaybooks = query({
   handler: async (ctx) => {
-    return await ctx.db.query("playbooks").collect();
+    const { workspaceId } = await requireCurrentUser(ctx);
+    const departments = await ctx.db
+      .query("departments")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .collect();
+    const departmentIds = new Set(departments.map((department) => department._id));
+    return (await ctx.db.query("playbooks").collect()).filter((playbook) =>
+      departmentIds.has(playbook.departmentId),
+    );
   },
 });
 
@@ -54,11 +80,22 @@ export const createDepartment = mutation({
     description: v.string(),
   },
   handler: async (ctx, args) => {
-    return await ctx.db.insert("departments", {
+    const current = await requireCurrentUser(ctx);
+    const departmentId = await ctx.db.insert("departments", {
+      workspaceId: current.workspaceId,
       name: args.name,
       icon: args.icon,
       description: args.description,
     });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "department.created",
+      resourceType: "department",
+      resourceId: String(departmentId),
+      summary: `Created department ${args.name}.`,
+    });
+    return departmentId;
   },
 });
 
@@ -82,7 +119,10 @@ export const hireAgent = mutation({
     reportsTo: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    return await ctx.db.insert("agents", {
+    const department = await ctx.db.get(args.departmentId);
+    if (!department?.workspaceId) throw new Error("Department not found.");
+    const current = await requireWorkspaceAccess(ctx, department.workspaceId, ["Owner"]);
+    const agentId = await ctx.db.insert("agents", {
       name: args.name,
       role: args.role,
       description: args.description,
@@ -95,6 +135,15 @@ export const hireAgent = mutation({
       reportsTo: args.reportsTo,
       isActive: true,
     });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: department.workspaceId,
+      action: "agent.hired",
+      resourceType: "agent",
+      resourceId: String(agentId),
+      summary: `Added ${args.name}.`,
+    });
+    return agentId;
   },
 });
 
@@ -114,6 +163,9 @@ export const createPlaybook = mutation({
     ),
   },
   handler: async (ctx, args) => {
+    const department = await ctx.db.get(args.departmentId);
+    if (!department?.workspaceId) throw new Error("Department not found.");
+    await requireWorkspaceAccess(ctx, department.workspaceId, ["Owner", "Contributor"]);
     return await ctx.db.insert("playbooks", {
       name: args.name,
       departmentId: args.departmentId,

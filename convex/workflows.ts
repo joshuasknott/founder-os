@@ -8,6 +8,8 @@ import {
   type TaskClassification,
 } from "./taskRuntime";
 import { itemKind, workflowKind, workflowStatus } from "./itemValidators";
+import { actorFromIdentity, ensureDocWorkspace, requireCurrentUser, requireWorkspaceAccess } from "./authz";
+import { recordAuditEvent } from "./audit";
 
 const cadence = v.union(
   v.literal("once"),
@@ -77,8 +79,16 @@ function autonomyForClassification(classification: TaskClassification): 1 | 2 | 
 async function chooseAssignedAgent(
   ctx: MutationCtx,
   classification: TaskClassification,
+  workspaceId: Id<"workspaces">,
 ): Promise<Doc<"agents"> | null> {
-  const agents = await ctx.db.query("agents").collect();
+  const departments = await ctx.db
+    .query("departments")
+    .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+    .collect();
+  const departmentIds = new Set(departments.map((department) => department._id));
+  const agents = (await ctx.db.query("agents").collect()).filter((agent) =>
+    departmentIds.has(agent.departmentId),
+  );
   if (agents.length === 0) return null;
 
   const preferredRouting: Record<TaskClassification["workerKind"], Array<Doc<"agents">["routingRequest"]>> = {
@@ -137,21 +147,25 @@ async function createWorkflowRun(
   workflow: Doc<"workflows">,
   inputValues: Record<string, unknown>,
   trigger: "manual" | "schedule",
+  actor: Awaited<ReturnType<typeof requireCurrentUser>>,
   scheduleItemId?: Id<"scheduleItems">,
 ) {
+  if (!workflow.workspaceId) throw new Error("Workflow workspace is missing.");
   const now = Date.now();
   const objective = workflowPrompt(workflow, inputValues);
   const title = trigger === "schedule" ? `Scheduled: ${workflow.title}` : workflow.title;
   const classification = classifyTaskObjective({ title, objective });
-  const assignedAgent = await chooseAssignedAgent(ctx, classification);
+  const assignedAgent = await chooseAssignedAgent(ctx, classification, workflow.workspaceId);
 
   const directiveId = await ctx.db.insert("directives", {
+    workspaceId: workflow.workspaceId,
     title,
     objective,
     status: "pending_spec",
   });
 
   const taskId = await ctx.db.insert("tasks", {
+    workspaceId: workflow.workspaceId,
     directiveId,
     title,
     description: objective,
@@ -166,6 +180,7 @@ async function createWorkflowRun(
   });
 
   const runId = await ctx.db.insert("workRuns", {
+    workspaceId: workflow.workspaceId,
     directiveId,
     taskId,
     scheduleItemId,
@@ -206,7 +221,7 @@ async function createWorkflowRun(
         {
           event: "requested",
           at: now,
-          actor: "FounderOS",
+          actor: actor.user.name,
           actionKind: rule.actionKind,
           message: "Workflow approval rule.",
         },
@@ -224,6 +239,16 @@ async function createWorkflowRun(
     updatedAt: now,
   });
 
+  await recordAuditEvent(ctx, {
+    ...actorFromIdentity(actor.identity, actor.user),
+    workspaceId: workflow.workspaceId,
+    action: "workflow.run_queued",
+    resourceType: "workflow",
+    resourceId: String(workflow._id),
+    summary: `Queued workflow: ${workflow.title}.`,
+    metadata: { runId, trigger, scheduleItemId },
+  });
+
   return runId;
 }
 
@@ -233,9 +258,17 @@ export const list = query({
     includeArchived: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const workflows = (await ctx.db.query("workflows").collect()).filter(
-      (workflow) => !args.status || workflow.status === args.status,
-    );
+    const { workspaceId } = await requireCurrentUser(ctx);
+    const status = args.status;
+    const workflows = status
+      ? await ctx.db
+          .query("workflows")
+          .withIndex("by_status", (q) => q.eq("workspaceId", workspaceId).eq("status", status))
+          .collect()
+      : await ctx.db
+          .query("workflows")
+          .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+          .collect();
     const visible = args.includeArchived
       ? workflows
       : workflows.filter((workflow) => workflow.status !== "archived");
@@ -256,8 +289,10 @@ export const list = query({
           return {
             ...workflow,
             isPinned: Boolean(metadataObject(workflow.metadata).isPinned),
-            schedules: schedules.filter((schedule) => schedule.status !== "deleted"),
-            recentRuns: runs,
+            schedules: schedules.filter(
+              (schedule) => schedule.workspaceId === workspaceId && schedule.status !== "deleted",
+            ),
+            recentRuns: runs.filter((run) => run.workspaceId === workspaceId),
           };
         }),
     );
@@ -278,10 +313,11 @@ export const save = mutation({
     metadata: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
-    const workspace = await ctx.db.query("workspaces").first();
+    const current = await requireCurrentUser(ctx);
     const now = Date.now();
     const patch = {
-      workspaceId: workspace?._id,
+      workspaceId: current.workspaceId,
+      ownerId: current.user._id,
       title: args.title,
       description: args.description,
       kind: args.kind,
@@ -295,8 +331,7 @@ export const save = mutation({
     };
 
     if (args.workflowId) {
-      const existing = await ctx.db.get(args.workflowId);
-      if (!existing) throw new Error("Workflow not found.");
+      const existing = ensureDocWorkspace(await ctx.db.get(args.workflowId), current.workspaceId, "Workflow");
       await ctx.db.patch(args.workflowId, {
         ...patch,
         metadata: {
@@ -304,13 +339,32 @@ export const save = mutation({
           ...metadataObject(args.metadata),
         },
       });
+      await recordAuditEvent(ctx, {
+        ...actorFromIdentity(current.identity, current.user),
+        workspaceId: current.workspaceId,
+        action: "workflow.updated",
+        resourceType: "workflow",
+        resourceId: String(args.workflowId),
+        summary: `Updated workflow: ${args.title}.`,
+        metadata: { kind: args.kind, status: args.status },
+      });
       return args.workflowId;
     }
 
-    return await ctx.db.insert("workflows", {
+    const workflowId = await ctx.db.insert("workflows", {
       ...patch,
       createdAt: now,
     });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "workflow.created",
+      resourceType: "workflow",
+      resourceId: String(workflowId),
+      summary: `Created workflow: ${args.title}.`,
+      metadata: { kind: args.kind, status: args.status },
+    });
+    return workflowId;
   },
 });
 
@@ -320,8 +374,9 @@ export const setPinned = mutation({
     isPinned: v.boolean(),
   },
   handler: async (ctx, args) => {
-    const workflow = await ctx.db.get(args.workflowId);
-    if (!workflow) throw new Error("Workflow not found.");
+    const existing = await ctx.db.get(args.workflowId);
+    const current = await requireWorkspaceAccess(ctx, existing?.workspaceId, ["Owner", "Contributor"]);
+    const workflow = ensureDocWorkspace(existing, current.workspaceId, "Workflow");
     await ctx.db.patch(args.workflowId, {
       metadata: {
         ...metadataObject(workflow.metadata),
@@ -329,18 +384,57 @@ export const setPinned = mutation({
       },
       updatedAt: Date.now(),
     });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: args.isPinned ? "workflow.pinned" : "workflow.unpinned",
+      resourceType: "workflow",
+      resourceId: String(args.workflowId),
+      summary: `${args.isPinned ? "Pinned" : "Unpinned"} workflow: ${workflow.title}.`,
+    });
   },
 });
 
 export const remove = mutation({
   args: { workflowId: v.id("workflows") },
   handler: async (ctx, args) => {
-    const workflow = await ctx.db.get(args.workflowId);
-    if (!workflow) throw new Error("Workflow not found.");
+    const existing = await ctx.db.get(args.workflowId);
+    const current = await requireWorkspaceAccess(ctx, existing?.workspaceId, ["Owner", "Contributor"]);
+    const workflow = ensureDocWorkspace(existing, current.workspaceId, "Workflow");
     await ctx.db.patch(args.workflowId, {
       status: "archived",
       updatedAt: Date.now(),
     });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "workflow.archived",
+      resourceType: "workflow",
+      resourceId: String(args.workflowId),
+      summary: `Archived workflow: ${workflow.title}.`,
+    });
+  },
+});
+
+export const restore = mutation({
+  args: { workflowId: v.id("workflows") },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.get(args.workflowId);
+    const current = await requireWorkspaceAccess(ctx, existing?.workspaceId, ["Owner", "Contributor"]);
+    const workflow = ensureDocWorkspace(existing, current.workspaceId, "Workflow");
+    await ctx.db.patch(args.workflowId, {
+      status: "active",
+      updatedAt: Date.now(),
+    });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "workflow.restored",
+      resourceType: "workflow",
+      resourceId: String(args.workflowId),
+      summary: `Restored workflow: ${workflow.title}.`,
+    });
+    return args.workflowId;
   },
 });
 
@@ -350,10 +444,11 @@ export const run = mutation({
     inputs: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
-    const workflow = await ctx.db.get(args.workflowId);
-    if (!workflow) throw new Error("Workflow not found.");
+    const existing = await ctx.db.get(args.workflowId);
+    const current = await requireWorkspaceAccess(ctx, existing?.workspaceId, ["Owner", "Contributor"]);
+    const workflow = ensureDocWorkspace(existing, current.workspaceId, "Workflow");
     if (workflow.status === "archived") throw new Error("Workflow is archived.");
-    return await createWorkflowRun(ctx, workflow, metadataObject(args.inputs), "manual");
+    return await createWorkflowRun(ctx, workflow, metadataObject(args.inputs), "manual", current);
   },
 });
 
@@ -365,10 +460,13 @@ export const schedule = mutation({
     timezone: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const workflow = await ctx.db.get(args.workflowId);
-    if (!workflow) throw new Error("Workflow not found.");
-    const workspace = await ctx.db.query("workspaces").first();
-    const internalArea = await ctx.db.query("departments").first();
+    const existingWorkflow = await ctx.db.get(args.workflowId);
+    const current = await requireWorkspaceAccess(ctx, existingWorkflow?.workspaceId, ["Owner", "Contributor"]);
+    const workflow = ensureDocWorkspace(existingWorkflow, current.workspaceId, "Workflow");
+    const internalArea = await ctx.db
+      .query("departments")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", current.workspaceId))
+      .first();
     const now = Date.now();
     const prompt = workflowPrompt(workflow, {});
 
@@ -376,9 +474,10 @@ export const schedule = mutation({
       .query("scheduleItems")
       .withIndex("by_workflow", (q) => q.eq("workflowId", args.workflowId))
       .collect();
-    const active = existing.find((item) => item.status !== "deleted");
+    const active = existing.find((item) => item.workspaceId === current.workspaceId && item.status !== "deleted");
     if (active) {
       await ctx.db.patch(active._id, {
+        workspaceId: current.workspaceId,
         status: "scheduled",
         startAt: args.startAt,
         nextRunAt: args.startAt,
@@ -387,11 +486,20 @@ export const schedule = mutation({
         prompt,
         updatedAt: now,
       });
+      await recordAuditEvent(ctx, {
+        ...actorFromIdentity(current.identity, current.user),
+        workspaceId: current.workspaceId,
+        action: "workflow.schedule_updated",
+        resourceType: "schedule",
+        resourceId: String(active._id),
+        summary: `Updated workflow schedule: ${workflow.title}.`,
+        metadata: { workflowId: workflow._id, cadence: args.cadence, startAt: args.startAt },
+      });
       return active._id;
     }
 
-    return await ctx.db.insert("scheduleItems", {
-      workspaceId: workspace?._id,
+    const scheduleId = await ctx.db.insert("scheduleItems", {
+      workspaceId: current.workspaceId,
       departmentId: internalArea?._id,
       workflowId: workflow._id,
       title: workflow.title,
@@ -406,5 +514,42 @@ export const schedule = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "workflow.scheduled",
+      resourceType: "schedule",
+      resourceId: String(scheduleId),
+      summary: `Scheduled workflow: ${workflow.title}.`,
+      metadata: { workflowId: workflow._id, cadence: args.cadence, startAt: args.startAt },
+    });
+    return scheduleId;
+  },
+});
+
+export const exportWorkflow = query({
+  args: { workflowId: v.id("workflows") },
+  handler: async (ctx, args) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
+    const workflow = ensureDocWorkspace(await ctx.db.get(args.workflowId), workspaceId, "Workflow");
+    const schedules = (
+      await ctx.db
+        .query("scheduleItems")
+        .withIndex("by_workflow", (q) => q.eq("workflowId", workflow._id))
+        .collect()
+    ).filter((schedule) => schedule.workspaceId === workspaceId);
+    const runs = (
+      await ctx.db
+        .query("workRuns")
+        .withIndex("by_workflow", (q) => q.eq("workflowId", workflow._id))
+        .collect()
+    ).filter((run) => run.workspaceId === workspaceId);
+
+    return {
+      exportedAt: Date.now(),
+      workflow,
+      schedules,
+      runs,
+    };
   },
 });

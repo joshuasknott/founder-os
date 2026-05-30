@@ -135,6 +135,12 @@ function convexUrl() {
   );
 }
 
+function workerToken() {
+  const token = process.env.FOUNDEROS_WORKER_TOKEN || readLocalEnv("FOUNDEROS_WORKER_TOKEN");
+  if (!token) throw new Error("Set FOUNDEROS_WORKER_TOKEN before running the builder.");
+  return token;
+}
+
 function openAiKey() {
   return process.env.OPENAI_API_KEY || readLocalEnv("OPENAI_API_KEY");
 }
@@ -430,6 +436,7 @@ async function append(client, runId, message, tone = "progress") {
     runId,
     message,
     tone,
+    workerToken: workerToken(),
   });
 }
 
@@ -1010,6 +1017,7 @@ async function createApprovalIfNeeded(client, run, externalAction, previewStatus
       externalActionPerformed: false,
       deployment: previewStatus ? deploymentMetadata(previewStatus) : undefined,
     },
+    workerToken: workerToken(),
   });
 }
 
@@ -1075,6 +1083,7 @@ async function publishApprovedDeployment(client, run, approvedAction) {
 
     await client.mutation(api.approvals.markApprovedActionHandled, {
       approvalId: approvedAction.approvalId,
+      workerToken: workerToken(),
     });
     await client.mutation(api.workRuns.completeWithResult, {
       runId: run._id,
@@ -1089,6 +1098,7 @@ async function publishApprovedDeployment(client, run, approvedAction) {
       previewUrl: liveUrl,
       internalNotes: JSON.stringify(nextMetadata),
       metadata: nextMetadata,
+      workerToken: workerToken(),
     });
     return true;
   } catch (error) {
@@ -1117,6 +1127,7 @@ async function publishApprovedDeployment(client, run, approvedAction) {
 
     await client.mutation(api.approvals.markApprovedActionHandled, {
       approvalId: approvedAction.approvalId,
+      workerToken: workerToken(),
     });
     await client.mutation(api.workRuns.markNeedsReviewWithResult, {
       runId: run._id,
@@ -1133,6 +1144,7 @@ async function publishApprovedDeployment(client, run, approvedAction) {
       internalNotes: JSON.stringify(nextMetadata),
       metadata: nextMetadata,
       message: safeError,
+      workerToken: workerToken(),
     });
     return true;
   }
@@ -1196,6 +1208,7 @@ async function simulateRun(client, run) {
     message: hasPreview
       ? "Your preview is ready to review."
       : "The work is ready for review, but I could not open the preview yet.",
+    workerToken: workerToken(),
   });
 }
 
@@ -1317,6 +1330,7 @@ async function runCodex(client, run, directive) {
       message: previewStatus.available
         ? "Your preview is ready to review."
         : "The work is ready for review, but I could not open the preview yet.",
+      workerToken: workerToken(),
     });
 
     try {
@@ -1343,6 +1357,7 @@ async function processRun(client, run) {
   console.log(`Starting hidden builder run: ${run._id}`);
   const approvedAction = await client.query(api.approvals.getApprovedActionForRun, {
     runId: run._id,
+    workerToken: workerToken(),
   });
   if (approvedAction) {
     await append(client, run._id, "I'm resuming the approved step.");
@@ -1355,6 +1370,7 @@ async function processRun(client, run) {
       approvalId: approvedAction.approvalId,
       runId: run._id,
       leaseId: run.leaseId,
+      workerToken: workerToken(),
     });
     console.log(`Hidden builder run returned approved action to review: ${run._id}`);
     return;
@@ -1368,6 +1384,7 @@ async function processRun(client, run) {
 
   const directive = await client.query(api.directives.getDirectiveById, {
     directiveId: run.directiveId,
+    workerToken: workerToken(),
   });
   if (!directive) throw new Error("Task not found.");
 
@@ -1380,6 +1397,7 @@ async function tick(client) {
     kinds: ["code_preview"],
     workerId: WORKER_ID,
     leaseMs: LEASE_MS,
+    workerToken: workerToken(),
   });
   if (!run) return false;
 
@@ -1393,6 +1411,7 @@ async function tick(client) {
       leaseId: run.leaseId,
       failureReason: "FounderOS could not prepare the preview yet.",
       internalError: message,
+      workerToken: workerToken(),
     });
   }
 

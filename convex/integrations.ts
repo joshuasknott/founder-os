@@ -1,15 +1,16 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import { connectorCredentialStorage } from "./connectorRuntime";
+import { actorFromIdentity, requireCurrentUser, requireWorkspaceAccess } from "./authz";
+import { recordAuditEvent } from "./audit";
 
 export const get = query({
   args: {},
   handler: async (ctx) => {
-    const workspaces = await ctx.db.query("workspaces").collect();
-    if (!workspaces[0]) return [];
+    const { workspaceId } = await requireCurrentUser(ctx);
     const keys = await ctx.db
       .query("api_keys")
-      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaces[0]._id))
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
       .collect();
 
     return keys.map((key) => ({
@@ -30,6 +31,7 @@ export const add = mutation({
     value: v.string(),
   },
   handler: async (ctx, { workspaceId, name, value }) => {
+    const current = await requireWorkspaceAccess(ctx, workspaceId, ["Owner"]);
     const now = Date.now();
     const envelope = connectorCredentialStorage.seal({
       workspaceId: String(workspaceId),
@@ -38,18 +40,38 @@ export const add = mutation({
       now,
     });
 
-    await ctx.db.insert("api_keys", {
+    const keyId = await ctx.db.insert("api_keys", {
       workspaceId,
       name,
       value: envelope.sealedReference,
       createdAt: now,
     });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId,
+      action: "integration.api_key_added",
+      resourceType: "api_key",
+      resourceId: String(keyId),
+      summary: `Added ${name}.`,
+    });
+    return keyId;
   },
 });
 
 export const remove = mutation({
   args: { keyId: v.id("api_keys") },
   handler: async (ctx, { keyId }) => {
+    const key = await ctx.db.get(keyId);
+    if (!key) throw new Error("Key not found.");
+    const current = await requireWorkspaceAccess(ctx, key.workspaceId, ["Owner"]);
     await ctx.db.delete(keyId);
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: key.workspaceId,
+      action: "integration.api_key_removed",
+      resourceType: "api_key",
+      resourceId: String(keyId),
+      summary: `Removed ${key.name}.`,
+    });
   },
 });
