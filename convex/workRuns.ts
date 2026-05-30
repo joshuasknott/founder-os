@@ -1151,50 +1151,54 @@ export const getWorkPage = query({
     const activeRuns = [
       ...(await ctx.db
         .query("workRuns")
-        .withIndex("by_status", (q) => q.eq("status", "queued"))
+        .withIndex("by_workspace_status", (q) => q.eq("workspaceId", workspaceId).eq("status", "queued"))
         .order("desc")
         .take(20)),
       ...(await ctx.db
         .query("workRuns")
-        .withIndex("by_status", (q) => q.eq("status", "working"))
+        .withIndex("by_workspace_status", (q) => q.eq("workspaceId", workspaceId).eq("status", "working"))
         .order("desc")
         .take(20)),
       ...(await ctx.db
         .query("workRuns")
-        .withIndex("by_status", (q) => q.eq("status", "failed"))
+        .withIndex("by_workspace_status", (q) => q.eq("workspaceId", workspaceId).eq("status", "failed"))
         .order("desc")
         .take(10)),
       ...(await ctx.db
         .query("workRuns")
-        .withIndex("by_status", (q) => q.eq("status", "stopped"))
+        .withIndex("by_workspace_status", (q) => q.eq("workspaceId", workspaceId).eq("status", "stopped"))
         .order("desc")
         .take(10)),
-    ].filter((run) => run.workspaceId === workspaceId);
+    ];
 
     const readyRuns = (await ctx.db
       .query("workRuns")
-      .withIndex("by_status", (q) => q.eq("status", "needs_review"))
+      .withIndex("by_workspace_status", (q) => q.eq("workspaceId", workspaceId).eq("status", "needs_review"))
       .order("desc")
-      .take(40)).filter((run) => run.workspaceId === workspaceId);
+      .take(40));
 
     const approvalRuns = (await ctx.db
       .query("workRuns")
-      .withIndex("by_status", (q) => q.eq("status", "waiting_for_approval"))
+      .withIndex("by_workspace_status", (q) => q.eq("workspaceId", workspaceId).eq("status", "waiting_for_approval"))
       .order("desc")
-      .take(40)).filter((run) => run.workspaceId === workspaceId);
+      .take(40));
 
     const completedRuns = (await ctx.db
       .query("workRuns")
-      .withIndex("by_status", (q) => q.eq("status", "completed"))
+      .withIndex("by_workspace_status", (q) => q.eq("workspaceId", workspaceId).eq("status", "completed"))
       .order("desc")
-      .take(40)).filter((run) => run.workspaceId === workspaceId);
+      .take(40));
 
-    const pendingApprovals = await ctx.db
+    const pendingApprovals = [
+      ...(await ctx.db
       .query("approvalQueue")
-      .filter((q) =>
-        q.or(q.eq(q.field("status"), "pending"), q.eq(q.field("status"), "shadow_pending")),
-      )
-      .collect();
+        .withIndex("by_workspace_status", (q) => q.eq("workspaceId", workspaceId).eq("status", "pending"))
+        .collect()),
+      ...(await ctx.db
+        .query("approvalQueue")
+        .withIndex("by_workspace_status", (q) => q.eq("workspaceId", workspaceId).eq("status", "shadow_pending"))
+        .collect()),
+    ];
 
     const pendingApprovalsByRun = new Map(
       pendingApprovals

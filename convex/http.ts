@@ -65,6 +65,7 @@ export const logWebhookEvent = internalMutation({
     previewUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const workspace = await ctx.db.query("workspaces").first();
     const status =
       args.eventType === "workflow_run"
         ? "building"
@@ -73,6 +74,7 @@ export const logWebhookEvent = internalMutation({
           : "received";
 
     await ctx.db.insert("buildActivities", {
+      workspaceId: workspace?._id,
       source: args.source,
       title: args.title,
       summary: args.summary,

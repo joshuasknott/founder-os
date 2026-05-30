@@ -26,10 +26,16 @@ async function chooseAssignedAgent(
     .query("departments")
     .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
     .collect();
-  const departmentIds = new Set(departments.map((department) => department._id));
-  const agents = (await ctx.db.query("agents").collect()).filter((agent) =>
-    departmentIds.has(agent.departmentId),
-  );
+  const agents = (
+    await Promise.all(
+      departments.map((department) =>
+        ctx.db
+          .query("agents")
+          .withIndex("by_department", (q) => q.eq("departmentId", department._id))
+          .collect(),
+      ),
+    )
+  ).flat();
   if (agents.length === 0) return null;
 
   const preferredRouting: Record<TaskClassification["workerKind"], Array<Doc<"agents">["routingRequest"]>> = {
@@ -438,11 +444,10 @@ export const getTasksByDirective = query({
 export const getRecentDirectives = query({
   handler: async (ctx) => {
     const { workspaceId } = await requireCurrentUser(ctx);
-    const directives = await ctx.db
+    return await ctx.db
       .query("directives")
-      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .withIndex("by_workspace_archived", (q) => q.eq("workspaceId", workspaceId).eq("archivedAt", undefined))
       .order("desc")
       .take(20);
-    return directives.filter((directive) => !directive.archivedAt);
   },
 });

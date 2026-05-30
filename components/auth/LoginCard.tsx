@@ -41,6 +41,22 @@ export function LoginCard() {
     }
   };
 
+  const handleGoogle = async () => {
+    setIsLoading(true);
+    setErrorStatus(null);
+    try {
+      const { error } = await authClient.signIn.social({
+        provider: "google",
+        callbackURL: "/",
+      });
+      if (error) throw error;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Google sign-in is not available here.";
+      setErrorStatus(message);
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div className="flex w-full max-w-[400px] select-none flex-col items-center justify-center rounded-2xl border border-black/[0.04] bg-white/75 p-8 shadow-[0_10px_35px_rgba(0,0,0,0.03)] backdrop-blur-xl animate-slide-up">
       <div className="mb-6 w-full text-center">
@@ -52,7 +68,29 @@ export function LoginCard() {
         </p>
       </div>
 
-      <form onSubmit={handleLogin} className="w-full space-y-4">
+      <div className="w-full space-y-4">
+        <button
+          type="button"
+          onClick={() => void handleGoogle()}
+          disabled={isLoading}
+          className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-black/[0.08] bg-white px-4 text-sm font-semibold text-text-primary shadow-sm transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <span className="flex h-5 w-5 items-center justify-center rounded-full border border-black/[0.08] text-xs font-bold text-[#4285F4]">
+            G
+          </span>
+          Continue with Google
+        </button>
+
+        <div className="flex items-center gap-3">
+          <div className="h-px flex-1 bg-black/[0.06]" />
+          <span className="text-[10px] font-bold uppercase tracking-widest text-text-muted">
+            or
+          </span>
+          <div className="h-px flex-1 bg-black/[0.06]" />
+        </div>
+      </div>
+
+      <form onSubmit={handleLogin} className="mt-4 w-full space-y-4">
         {mode === "signUp" && (
           <input
             type="text"

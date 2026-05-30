@@ -85,10 +85,16 @@ async function chooseAssignedAgent(
     .query("departments")
     .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
     .collect();
-  const departmentIds = new Set(departments.map((department) => department._id));
-  const agents = (await ctx.db.query("agents").collect()).filter((agent) =>
-    departmentIds.has(agent.departmentId),
-  );
+  const agents = (
+    await Promise.all(
+      departments.map((department) =>
+        ctx.db
+          .query("agents")
+          .withIndex("by_department", (q) => q.eq("departmentId", department._id))
+          .collect(),
+      ),
+    )
+  ).flat();
   if (agents.length === 0) return null;
 
   const preferredRouting: Record<TaskClassification["workerKind"], Array<Doc<"agents">["routingRequest"]>> = {
@@ -208,6 +214,7 @@ async function createWorkflowRun(
   for (const rule of workflow.approvalRules ?? []) {
     if (rule.policy !== "always") continue;
     await ctx.db.insert("approvalQueue", {
+      workspaceId: workflow.workspaceId,
       type: "shadow_approval",
       directiveId,
       taskId,

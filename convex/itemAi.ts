@@ -684,6 +684,7 @@ export const startTaskFromItem = internalMutation({
         status: "awaiting_approval",
       });
       await ctx.db.insert("approvalQueue", {
+        workspaceId: item.workspaceId,
         type: "integration_gate",
         directiveId,
         taskId,

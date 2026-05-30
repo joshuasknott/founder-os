@@ -10,6 +10,7 @@ import {
   rm,
   stat,
   symlink,
+  writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import {
@@ -36,6 +37,7 @@ const POLL_INTERVAL_MS = Number(process.env.BUILDER_POLL_INTERVAL_MS ?? 5000);
 const PREVIEW_URL = process.env.BUILDER_PREVIEW_URL ?? "http://localhost:3000";
 const ROOT_WORKSPACE_DIR = resolve(process.env.BUILDER_WORKSPACE_DIR ?? process.cwd());
 const USE_CODEX = process.env.BUILDER_USE_CODEX === "true";
+const BUILDER_PROVIDER = (process.env.BUILDER_PROVIDER ?? (USE_CODEX ? "codex" : "simulated")).toLowerCase();
 const START_PREVIEW = process.env.BUILDER_START_PREVIEW === "true";
 const PREVIEW_COMMAND = process.env.BUILDER_PREVIEW_COMMAND ?? "npm run dev";
 const PREVIEW_TIMEOUT_MS = Number(process.env.BUILDER_PREVIEW_TIMEOUT_MS ?? 30000);
@@ -50,6 +52,16 @@ const CLEAN_WORKSPACE_AFTER_RUN = process.env.BUILDER_CLEAN_WORKSPACE_AFTER_RUN 
 const TEST_TIMEOUT_MS = Number(process.env.BUILDER_TEST_TIMEOUT_MS ?? 120000);
 const MAX_CAPTURED_OUTPUT_CHARS = 6000;
 const MAX_SNAPSHOT_FILE_BYTES = Number(process.env.BUILDER_SNAPSHOT_FILE_BYTES ?? 5 * 1024 * 1024);
+const MAX_LLM_CONTEXT_CHARS = Number(
+  process.env.BUILDER_LLM_CONTEXT_CHARS ??
+  process.env.BUILDER_DEEPSEEK_CONTEXT_CHARS ??
+  120000,
+);
+const MAX_LLM_FILE_CHARS = Number(
+  process.env.BUILDER_LLM_FILE_CHARS ??
+  process.env.BUILDER_DEEPSEEK_FILE_CHARS ??
+  50000,
+);
 
 const CODEX_RESULT_SCHEMA = {
   type: "object",
@@ -145,6 +157,67 @@ function openAiKey() {
   return process.env.OPENAI_API_KEY || readLocalEnv("OPENAI_API_KEY");
 }
 
+function deepSeekKey() {
+  return process.env.DEEPSEEK_API_KEY || readLocalEnv("DEEPSEEK_API_KEY");
+}
+
+function zAiKey() {
+  return (
+    process.env.ZAI_API_KEY ||
+    process.env.Z_AI_API_KEY ||
+    process.env.ZHIPU_API_KEY ||
+    readLocalEnv("ZAI_API_KEY") ||
+    readLocalEnv("Z_AI_API_KEY") ||
+    readLocalEnv("ZHIPU_API_KEY")
+  );
+}
+
+function llmApiKey() {
+  return (
+    process.env.BUILDER_LLM_API_KEY ||
+    readLocalEnv("BUILDER_LLM_API_KEY") ||
+    (BUILDER_PROVIDER === "zai" || BUILDER_PROVIDER === "z.ai" || BUILDER_PROVIDER === "z_ai"
+      ? zAiKey()
+      : deepSeekKey())
+  );
+}
+
+function llmChatCompletionsUrl() {
+  const explicit =
+    process.env.BUILDER_LLM_CHAT_COMPLETIONS_URL ||
+    readLocalEnv("BUILDER_LLM_CHAT_COMPLETIONS_URL");
+  if (explicit) return explicit;
+
+  if (BUILDER_PROVIDER === "zai" || BUILDER_PROVIDER === "z.ai" || BUILDER_PROVIDER === "z_ai") {
+    return "https://api.z.ai/api/paas/v4/chat/completions";
+  }
+
+  const baseUrl = (
+    process.env.BUILDER_LLM_BASE_URL ||
+    process.env.BUILDER_DEEPSEEK_BASE_URL ||
+    process.env.DEEPSEEK_BASE_URL ||
+    readLocalEnv("BUILDER_LLM_BASE_URL") ||
+    readLocalEnv("BUILDER_DEEPSEEK_BASE_URL") ||
+    readLocalEnv("DEEPSEEK_BASE_URL") ||
+    "https://api.deepseek.com"
+  ).replace(/\/+$/, "");
+  return `${baseUrl}/chat/completions`;
+}
+
+function llmModel() {
+  return (
+    process.env.BUILDER_LLM_MODEL ||
+    process.env.BUILDER_DEEPSEEK_MODEL ||
+    process.env.DEEPSEEK_MODEL ||
+    readLocalEnv("BUILDER_LLM_MODEL") ||
+    readLocalEnv("BUILDER_DEEPSEEK_MODEL") ||
+    readLocalEnv("DEEPSEEK_MODEL") ||
+    (BUILDER_PROVIDER === "zai" || BUILDER_PROVIDER === "z.ai" || BUILDER_PROVIDER === "z_ai"
+      ? "glm-5.1"
+      : "deepseek-chat")
+  );
+}
+
 function sleep(ms) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
@@ -197,7 +270,10 @@ function isSafeRelativePath(value) {
 
 function safeRelativePath(value) {
   if (!isSafeRelativePath(value)) return null;
-  return normalizePath(value).replace(/^\.\/+/, "");
+  const cleaned = normalizePath(value).replace(/^\.\/+/, "");
+  if (!cleaned || shouldExcludeRelativePath(cleaned, SNAPSHOT_EXCLUDED_NAMES)) return null;
+  if (/^\.env(?:\.|$)/.test(cleaned)) return null;
+  return cleaned;
 }
 
 function toPlainFounderText(message, fallback = "A first review version is ready.") {
@@ -870,6 +946,197 @@ function buildCodexPrompt(taskSpec) {
   ].join("\n");
 }
 
+async function listWorkspaceFiles(rootDir, limit = 240) {
+  const root = resolve(rootDir);
+  const files = [];
+
+  async function walk(directory) {
+    if (files.length >= limit) return;
+    const entries = (await readdir(directory, { withFileTypes: true }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const entry of entries) {
+      if (files.length >= limit) return;
+      const absolutePath = join(directory, entry.name);
+      const relPath = normalizePath(relative(root, absolutePath));
+      if (shouldExcludeRelativePath(relPath, SNAPSHOT_EXCLUDED_NAMES)) continue;
+
+      if (entry.isDirectory()) {
+        await walk(absolutePath);
+        continue;
+      }
+      if (entry.isFile()) files.push(relPath);
+    }
+  }
+
+  await walk(root);
+  return files;
+}
+
+function contextPriority(filePath) {
+  if (filePath === "package.json") return 0;
+  if (filePath === "app/page.tsx") return 1;
+  if (filePath === "app/layout.tsx") return 2;
+  if (filePath === "app/globals.css") return 3;
+  if (/^app\/[^/]+\/page\.tsx$/.test(filePath)) return 4;
+  if (/^components\//.test(filePath)) return 5;
+  if (/\.(ts|tsx|mjs|js|css|json)$/.test(filePath)) return 6;
+  return 10;
+}
+
+async function collectLlmWorkspaceContext(workspaceDir) {
+  const files = await listWorkspaceFiles(workspaceDir);
+  const prioritized = [...files]
+    .filter((filePath) => /\.(ts|tsx|mjs|js|css|json|md)$/.test(filePath))
+    .sort((a, b) => contextPriority(a) - contextPriority(b) || a.localeCompare(b));
+  const included = [];
+  let remaining = MAX_LLM_CONTEXT_CHARS;
+
+  for (const filePath of prioritized) {
+    if (remaining <= 0) break;
+    const absolutePath = join(workspaceDir, filePath);
+    const fileStat = await stat(absolutePath);
+    if (!fileStat.isFile() || fileStat.size > MAX_LLM_FILE_CHARS) continue;
+
+    const content = await readFile(absolutePath, "utf8");
+    const clipped = content.slice(0, Math.min(content.length, remaining));
+    included.push({ path: filePath, content: clipped });
+    remaining -= clipped.length;
+  }
+
+  return {
+    files,
+    included,
+  };
+}
+
+function buildLlmPrompt(taskSpec, workspaceContext) {
+  return [
+    "You are the hidden build worker for FounderOS.",
+    "",
+    "Create the requested product or app changes in a Next.js workspace.",
+    "Return only strict JSON. Do not use markdown fences.",
+    "Use full file contents for every file you create or replace.",
+    "Prefer a complete, usable first version over a stub.",
+    "Do not publish, deploy, push, send messages, spend money, delete important data, or contact external people.",
+    "If asked for a live external action, build the review version and mark that action blocked until approval.",
+    "",
+    "JSON shape:",
+    JSON.stringify({
+      summary: "Plain-language summary.",
+      reviewNotes: ["Plain-language review note."],
+      externalActionRequested: false,
+      publishOrDeployBlocked: false,
+      files: [
+        {
+          path: "app/page.tsx",
+          content: "Full file content here.",
+        },
+      ],
+      deleteFiles: [],
+    }, null, 2),
+    "",
+    "Task spec JSON:",
+    JSON.stringify(taskSpec, null, 2),
+    "",
+    "Workspace file list:",
+    JSON.stringify(workspaceContext.files.slice(0, 240), null, 2),
+    "",
+    "Selected existing file contents:",
+    JSON.stringify(workspaceContext.included, null, 2),
+  ].join("\n");
+}
+
+function extractLlmJson(text) {
+  const trimmed = String(text ?? "").trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
+  const candidates = [trimmed];
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push(trimmed.slice(firstBrace, lastBrace + 1));
+  }
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  throw new Error("The configured builder model did not return valid build JSON.");
+}
+
+async function callLlmBuildModel(prompt) {
+  const apiKey = llmApiKey();
+  if (!apiKey) {
+    throw new Error("Set BUILDER_LLM_API_KEY, DEEPSEEK_API_KEY, or ZAI_API_KEY before running the LLM builder.");
+  }
+
+  const response = await fetch(llmChatCompletionsUrl(), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: llmModel(),
+      messages: [
+        {
+          role: "system",
+          content: "You are a senior product engineer. Return only valid JSON matching the requested schema.",
+        },
+        { role: "user", content: prompt },
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.2,
+    }),
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = payload?.error?.message ?? `Builder model request failed with status ${response.status}.`;
+    throw new Error(message);
+  }
+
+  return {
+    content: payload?.choices?.[0]?.message?.content ?? "",
+    usage: payload?.usage ?? null,
+    model: payload?.model ?? llmModel(),
+  };
+}
+
+async function applyLlmChanges(workspaceDir, result) {
+  const changedPaths = [];
+  const files = Array.isArray(result.files) ? result.files : [];
+  const deleteFiles = Array.isArray(result.deleteFiles) ? result.deleteFiles : [];
+
+  for (const entry of files) {
+    const relPath = safeRelativePath(entry?.path);
+    if (!relPath || typeof entry?.content !== "string") continue;
+    const targetPath = resolve(join(workspaceDir, relPath));
+    assertChildPath(workspaceDir, targetPath);
+    await mkdir(dirname(targetPath), { recursive: true });
+    await writeFile(targetPath, entry.content, "utf8");
+    changedPaths.push(relPath);
+  }
+
+  for (const filePath of deleteFiles) {
+    const relPath = safeRelativePath(filePath);
+    if (!relPath) continue;
+    const targetPath = resolve(join(workspaceDir, relPath));
+    assertChildPath(workspaceDir, targetPath);
+    await rm(targetPath, { force: true });
+    changedPaths.push(relPath);
+  }
+
+  if (changedPaths.length === 0) {
+    throw new Error("The configured builder model did not return any safe file changes.");
+  }
+
+  return changedPaths;
+}
+
 function eventProgress(event) {
   if (!event || typeof event !== "object") return null;
 
@@ -1353,6 +1620,104 @@ async function runCodex(client, run, directive) {
   }
 }
 
+async function runLlmBuilder(client, run, directive) {
+  if (!llmApiKey()) {
+    await append(client, run._id, "I'm preparing a local review version.");
+    await simulateRun(client, run);
+    return;
+  }
+
+  let workspace = null;
+  try {
+    workspace = await createBuildWorkspace(run);
+    const taskSpec = buildTaskSpec(run, directive, workspace);
+    const baselineSnapshot = await snapshotWorkspaceFiles(workspace.workingDirectory);
+    const externalAction = taskSpec.safety.requestedExternalAction;
+
+    await append(client, run._id, "I'm preparing the workspace.");
+    const workspaceContext = await collectLlmWorkspaceContext(workspace.workingDirectory);
+
+    await append(client, run._id, "I'm making the requested changes.");
+    const completion = await callLlmBuildModel(
+      buildLlmPrompt(taskSpec, workspaceContext),
+    );
+    const llmResult = extractLlmJson(completion.content);
+    const modelChangedPaths = await applyLlmChanges(workspace.workingDirectory, llmResult);
+
+    await append(client, run._id, "I'm checking the review version.");
+    const changedFiles = await captureChangedFiles(
+      workspace.workingDirectory,
+      baselineSnapshot,
+      modelChangedPaths,
+    );
+    const testResults = await runTestCommands(workspace.workingDirectory);
+    const previewStatus = await createReviewPreviewStatus(workspace.workingDirectory, run, directive);
+    const codexResult = {
+      summary: toPlainFounderText(llmResult.summary),
+      reviewNotes: Array.isArray(llmResult.reviewNotes)
+        ? llmResult.reviewNotes.map((note) => toPlainFounderText(note)).filter(Boolean).slice(0, 5)
+        : [],
+      externalActionRequested: Boolean(llmResult.externalActionRequested || externalAction),
+      publishOrDeployBlocked: Boolean(llmResult.publishOrDeployBlocked || externalAction),
+    };
+    const summary = buildFounderSummary(codexResult, previewStatus, testResults);
+    const metadata = buildResultMetadata({
+      mode: BUILDER_PROVIDER,
+      taskSpec,
+      source: await sourceMetadata(workspace.workingDirectory),
+      workspace,
+      previewStatus,
+      changedFiles,
+      testResults,
+      codex: {
+        provider: BUILDER_PROVIDER,
+        model: completion.model,
+        usage: completion.usage,
+        returnedFileCount: Array.isArray(llmResult.files) ? llmResult.files.length : 0,
+      },
+      externalAction,
+    });
+
+    await client.mutation(api.workRuns.markNeedsReviewWithResult, {
+      runId: run._id,
+      leaseId: run.leaseId,
+      summary,
+      content: buildLibraryContent({
+        title: run.title,
+        summary,
+        codexResult,
+        previewStatus,
+        testResults,
+      }),
+      previewUrl: previewStatus.url ?? undefined,
+      internalNotes: JSON.stringify(metadata),
+      metadata,
+      message: previewStatus.available
+        ? "Your preview is ready to review."
+        : "The work is ready for review, but I could not open the preview yet.",
+      workerToken: workerToken(),
+    });
+
+    try {
+      await createApprovalIfNeeded(client, run, externalAction, previewStatus);
+    } catch (error) {
+      console.error(
+        `Hidden builder could not queue approval: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      if (externalAction) {
+        await append(
+          client,
+          run._id,
+          "The review version is ready. Approval is still needed before anything goes live.",
+          "blocked",
+        );
+      }
+    }
+  } finally {
+    await workspace?.cleanup();
+  }
+}
+
 async function processRun(client, run) {
   console.log(`Starting hidden builder run: ${run._id}`);
   const approvedAction = await client.query(api.approvals.getApprovedActionForRun, {
@@ -1376,7 +1741,7 @@ async function processRun(client, run) {
     return;
   }
 
-  if (!USE_CODEX) {
+  if (BUILDER_PROVIDER === "simulated" || (!USE_CODEX && BUILDER_PROVIDER === "codex")) {
     await simulateRun(client, run);
     console.log(`Hidden builder run ready for review: ${run._id}`);
     return;
@@ -1388,7 +1753,13 @@ async function processRun(client, run) {
   });
   if (!directive) throw new Error("Task not found.");
 
-  await runCodex(client, run, directive);
+  if (["llm", "deepseek", "zai", "z.ai", "z_ai"].includes(BUILDER_PROVIDER)) {
+    await runLlmBuilder(client, run, directive);
+  } else if (BUILDER_PROVIDER === "codex") {
+    await runCodex(client, run, directive);
+  } else {
+    throw new Error("BUILDER_PROVIDER must be simulated, codex, llm, deepseek, or zai.");
+  }
   console.log(`Hidden builder run ready for review: ${run._id}`);
 }
 
@@ -1447,6 +1818,7 @@ if (isDirectRun) {
 
 export {
   buildCodexPrompt,
+  buildLlmPrompt,
   buildLibraryContent,
   buildResultMetadata,
   buildTaskSpec,
@@ -1457,6 +1829,7 @@ export {
   diffWorkspaceSnapshots,
   ensurePreviewStatus,
   extractCodexResult,
+  extractLlmJson,
   outputKindForRun,
   runTestCommands,
   snapshotWorkspaceFiles,

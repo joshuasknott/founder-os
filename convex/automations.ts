@@ -1,4 +1,4 @@
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
@@ -35,10 +35,16 @@ async function chooseAssignedAgent(
     .query("departments")
     .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
     .collect();
-  const departmentIds = new Set(departments.map((department) => department._id));
-  const agents = (await ctx.db.query("agents").collect()).filter((agent) =>
-    departmentIds.has(agent.departmentId),
-  );
+  const agents = (
+    await Promise.all(
+      departments.map((department) =>
+        ctx.db
+          .query("agents")
+          .withIndex("by_department", (q) => q.eq("departmentId", department._id))
+          .collect(),
+      ),
+    )
+  ).flat();
   if (agents.length === 0) return null;
 
   const preferredRouting: Record<TaskClassification["workerKind"], Array<Doc<"agents">["routingRequest"]>> = {
@@ -152,13 +158,33 @@ async function createScheduleRun(
   return runId;
 }
 
+async function runDueSchedulesWithLimit(
+  ctx: MutationCtx,
+  limit: number,
+) {
+  const now = Date.now();
+  const due = await ctx.db
+    .query("scheduleItems")
+    .withIndex("by_next_run", (q) => q.eq("status", "scheduled"))
+    .take(limit);
+  const runIds: Id<"workRuns">[] = [];
+
+  for (const item of due) {
+    if (!scheduleIsDue({ status: item.status, nextRunAt: item.nextRunAt, now })) continue;
+    runIds.push(await createScheduleRun(ctx, item, "schedule"));
+  }
+
+  return runIds;
+}
+
 export const list = query({
   args: {},
   handler: async (ctx) => {
     const { workspaceId } = await requireCurrentUser(ctx);
-    const items = (await ctx.db.query("scheduleItems").withIndex("by_start").collect()).filter(
-      (item) => item.workspaceId === workspaceId,
-    );
+    const items = await ctx.db
+      .query("scheduleItems")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .collect();
     const schedules = items
       .filter((item) => item.kind === "automation" && item.status !== "deleted")
       .sort((a, b) => (a.nextRunAt ?? a.startAt) - (b.nextRunAt ?? b.startAt));
@@ -432,21 +458,14 @@ export const runDueSchedules = mutation({
     if (!isAuthorizedWorkerToken(args.workerToken)) {
       throw new Error("Worker authorization required.");
     }
-    const now = Date.now();
-    const due = await ctx.db
-      .query("scheduleItems")
-      .withIndex("by_next_run", (q) => q.eq("status", "scheduled"))
-      .take(args.limit ?? 20);
-    const runIds: Id<"workRuns">[] = [];
+    return await runDueSchedulesWithLimit(ctx, args.limit ?? 20);
+  },
+});
 
-    for (const item of due) {
-      if (!scheduleIsDue({ status: item.status, nextRunAt: item.nextRunAt, now })) continue;
-      runIds.push(await createScheduleRun(ctx, item, "schedule"));
-    }
-
-    // TODO: call this from a Convex cron at a short interval once recurring
-    // execution is enabled for the hosted workspace.
-    return runIds;
+export const runDueSchedulesFromCron = internalMutation({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    return await runDueSchedulesWithLimit(ctx, args.limit ?? 20);
   },
 });
 

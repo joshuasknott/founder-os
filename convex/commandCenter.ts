@@ -20,10 +20,16 @@ export const getOverview = query({
       .query("departments")
       .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
       .collect();
-    const departmentIds = new Set(departments.map((department) => department._id));
-    const agents = (await ctx.db.query("agents").collect()).filter((agent) =>
-      departmentIds.has(agent.departmentId),
-    );
+    const agents = (
+      await Promise.all(
+        departments.map((department) =>
+          ctx.db
+            .query("agents")
+            .withIndex("by_department", (q) => q.eq("departmentId", department._id))
+            .collect(),
+        ),
+      )
+    ).flat();
     const allDirectives = await ctx.db
       .query("directives")
       .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
@@ -31,17 +37,26 @@ export const getOverview = query({
     const directives = [...allDirectives]
       .sort((a, b) => b._creationTime - a._creationTime)
       .slice(0, 8);
-    const tasks = (await ctx.db.query("tasks").collect()).filter((task) => task.workspaceId === workspaceId);
-    const approvals = await ctx.db
-      .query("approvalQueue")
-      .filter((q) =>
-        q.or(q.eq(q.field("status"), "pending"), q.eq(q.field("status"), "shadow_pending")),
-      )
+    const tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
       .collect();
-    const artifacts = (await ctx.db.query("documents").collect()).filter(
-      (artifact) => artifact.workspaceId === workspaceId && !isLegacySeedLibraryItem(artifact),
-    );
-    const projects = (await ctx.db.query("projects").collect()).filter((project) => project.workspaceId === workspaceId);
+    const pendingApprovals = await ctx.db
+      .query("approvalQueue")
+      .withIndex("by_workspace_status", (q) => q.eq("workspaceId", workspaceId).eq("status", "pending"))
+      .collect();
+    const shadowApprovals = await ctx.db
+      .query("approvalQueue")
+      .withIndex("by_workspace_status", (q) => q.eq("workspaceId", workspaceId).eq("status", "shadow_pending"))
+      .collect();
+    const artifacts = (await ctx.db
+      .query("documents")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .collect()).filter((artifact) => !isLegacySeedLibraryItem(artifact));
+    const projects = await ctx.db
+      .query("projects")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .collect();
     const schedule = (await ctx.db
       .query("scheduleItems")
       .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
@@ -53,9 +68,7 @@ export const getOverview = query({
       .withIndex("by_workspace_created", (q) => q.eq("workspaceId", workspaceId))
       .order("desc")
       .take(5);
-    const workspaceApprovals = approvals.filter((approval) =>
-      allDirectives.some((directive) => directive._id === approval.directiveId),
-    );
+    const workspaceApprovals = [...pendingApprovals, ...shadowApprovals];
 
     const tasksByDirective = new Map<string, typeof tasks>();
     for (const task of tasks) {

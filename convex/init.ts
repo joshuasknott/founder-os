@@ -1,7 +1,86 @@
 import { mutation, query } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { DataModel, Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
 import { actorFromIdentity, ensureUserWorkspace, findUserForIdentity, requireIdentity } from "./authz";
 import { recordAuditEvent } from "./audit";
+
+async function backfillLegacyWorkspaceData(
+  ctx: MutationCtx,
+  workspaceId: Id<"workspaces">,
+) {
+  const [
+    departments,
+    directives,
+    tasks,
+    chatSessions,
+    items,
+    itemRelations,
+    entities,
+    facts,
+    savedViews,
+    workflows,
+    documents,
+    projects,
+    scheduleItems,
+    buildActivities,
+    workRuns,
+    observabilityLogs,
+  ] = await Promise.all([
+    ctx.db.query("departments").collect(),
+    ctx.db.query("directives").collect(),
+    ctx.db.query("tasks").collect(),
+    ctx.db.query("chatSessions").collect(),
+    ctx.db.query("items").collect(),
+    ctx.db.query("itemRelations").collect(),
+    ctx.db.query("entities").collect(),
+    ctx.db.query("facts").collect(),
+    ctx.db.query("savedViews").collect(),
+    ctx.db.query("workflows").collect(),
+    ctx.db.query("documents").collect(),
+    ctx.db.query("projects").collect(),
+    ctx.db.query("scheduleItems").collect(),
+    ctx.db.query("buildActivities").collect(),
+    ctx.db.query("workRuns").collect(),
+    ctx.db.query("observabilityLogs").collect(),
+  ]);
+
+  const patchMissingWorkspace = async <T extends { _id: Id<keyof DataModel>; workspaceId?: Id<"workspaces"> }>(
+    docs: T[],
+  ) => {
+    for (const doc of docs) {
+      if (!doc.workspaceId) {
+        await ctx.db.patch(doc._id, { workspaceId });
+      }
+    }
+  };
+
+  await patchMissingWorkspace(departments);
+  await patchMissingWorkspace(directives);
+  await patchMissingWorkspace(tasks);
+  await patchMissingWorkspace(chatSessions);
+  await patchMissingWorkspace(items);
+  await patchMissingWorkspace(itemRelations);
+  await patchMissingWorkspace(entities);
+  await patchMissingWorkspace(facts);
+  await patchMissingWorkspace(savedViews);
+  await patchMissingWorkspace(workflows);
+  await patchMissingWorkspace(documents);
+  await patchMissingWorkspace(projects);
+  await patchMissingWorkspace(scheduleItems);
+  await patchMissingWorkspace(buildActivities);
+  await patchMissingWorkspace(workRuns);
+  await patchMissingWorkspace(observabilityLogs);
+
+  const approvals = await ctx.db.query("approvalQueue").collect();
+  const directiveWorkspace = new Map(directives.map((directive) => [directive._id, directive.workspaceId ?? workspaceId]));
+  for (const approval of approvals) {
+    if (!approval.workspaceId) {
+      await ctx.db.patch(approval._id, {
+        workspaceId: directiveWorkspace.get(approval.directiveId) ?? workspaceId,
+      });
+    }
+  }
+}
 
 export const isSeeded = query({
   args: {},
@@ -35,6 +114,8 @@ export const seedSwarm = mutation({
   args: {},
   handler: async (ctx) => {
     const { identity, user, workspaceId } = await ensureUserWorkspace(ctx);
+
+    await backfillLegacyWorkspaceData(ctx, workspaceId);
 
     const workspace = await ctx.db.get(workspaceId);
 

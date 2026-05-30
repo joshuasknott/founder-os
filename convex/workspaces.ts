@@ -56,6 +56,36 @@ export const updateDetails = mutation({
   },
 });
 
+export const completeOnboarding = mutation({
+  args: {
+    workspaceId: v.id("workspaces"),
+    name: v.string(),
+    connectorIds: v.optional(v.array(v.string())),
+    reviewExternalActions: v.boolean(),
+  },
+  handler: async (ctx, { workspaceId, name, connectorIds, reviewExternalActions }) => {
+    const current = await requireOwnedWorkspace(ctx, workspaceId);
+    const cleanName = name.trim();
+    if (!cleanName) throw new Error("Business name is required.");
+    await ctx.db.patch(workspaceId, {
+      name: cleanName,
+      onboardingConnectorIds: connectorIds ?? [],
+      onboardingCompletedAt: Date.now(),
+      reviewExternalActions,
+    });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId,
+      action: "workspace.onboarding_completed",
+      resourceType: "workspace",
+      resourceId: String(workspaceId),
+      summary: "Onboarding completed.",
+      metadata: { connectorIds: connectorIds ?? [], reviewExternalActions },
+    });
+    return workspaceId;
+  },
+});
+
 export const updateBillingLimits = mutation({
   args: {
     workspaceId: v.id("workspaces"),

@@ -10,7 +10,6 @@ import { authClient } from "@/lib/auth-client";
 import {
   CalendarClock,
   BriefcaseBusiness,
-  Bookmark,
   Home,
   Library,
   ListTodo,
@@ -184,7 +183,6 @@ export function Leftnav() {
         <NavItem href="/" icon={Home} label="Home" pathname={pathname} />
         <NavItem href="/work" icon={BriefcaseBusiness} label="Work" pathname={pathname} />
         <NavItem href="/library" icon={Library} label="Library" pathname={pathname} />
-        <NavItem href="/workflows" icon={Bookmark} label="Workflows" pathname={pathname} />
         <NavItem href="/schedules" icon={CalendarClock} label="Schedules" pathname={pathname} />
         <div className="lg:hidden">
           <NavItem href="/settings" icon={Settings} label="Settings" pathname={pathname} />

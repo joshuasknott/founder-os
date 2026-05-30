@@ -1,4 +1,4 @@
-import { cronJobs } from "convex/server";
+import { anyApi, cronJobs } from "convex/server";
 import { internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 
@@ -63,12 +63,21 @@ export const getUnindexedVersions = internalQuery({
 // =========================================================================
 
 const crons = cronJobs();
+const internalApi = anyApi as unknown as typeof internal;
 
 // Nightly vector indexing of un-embedded documents (every 24h)
 crons.interval(
   "batch-index-unvectorized-documents",
   { hours: 24 },
   internal.crons.batchIndexDocuments,
+);
+
+// Poll due founder-created schedules and queue the corresponding work.
+crons.interval(
+  "queue-due-schedules",
+  { minutes: 5 },
+  internalApi.automations.runDueSchedulesFromCron,
+  { limit: 20 },
 );
 
 export default crons;

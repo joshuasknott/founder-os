@@ -4,14 +4,17 @@ import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 import {
+  Bookmark,
   CalendarClock,
   CheckCircle2,
+  Edit3,
   Loader2,
   PauseCircle,
   PlayCircle,
   RotateCcw,
+  Save,
   Trash2,
 } from "lucide-react";
 
@@ -38,6 +41,12 @@ type ScheduleItem = {
   lastRunAt?: number;
   runCount?: number;
   history: ScheduleHistoryItem[];
+};
+
+type WorkflowRow = Doc<"workflows"> & {
+  isPinned: boolean;
+  schedules: Doc<"scheduleItems">[];
+  recentRuns: Doc<"workRuns">[];
 };
 
 function formatScheduleTime(item: ScheduleItem) {
@@ -98,16 +107,22 @@ export default function SchedulesPage() {
 
 function SchedulesPageContent() {
   const schedules = useQuery(api.automations.list) as ScheduleItem[] | undefined;
+  const workflows = useQuery(api.workflows.list, {}) as WorkflowRow[] | undefined;
   const createSchedule = useMutation(api.automations.create);
   const pauseSchedule = useMutation(api.automations.pause);
   const resumeSchedule = useMutation(api.automations.resume);
   const deleteSchedule = useMutation(api.automations.remove);
   const runScheduleNow = useMutation(api.automations.runNow);
+  const saveWorkflow = useMutation(api.workflows.save);
+  const runWorkflow = useMutation(api.workflows.run);
+  const scheduleWorkflow = useMutation(api.workflows.schedule);
 
   const [title, setTitle] = useState("Send me priorities");
   const [prompt, setPrompt] = useState("Send me my priorities for the day.");
   const [time, setTime] = useState("06:00");
   const [cadence, setCadence] = useState<"daily" | "weekdays" | "weekly">("daily");
+  const [requestTitle, setRequestTitle] = useState("");
+  const [requestPrompt, setRequestPrompt] = useState("");
   const [status, setStatus] = useState<string | null>(null);
 
   const saveSchedule = async () => {
@@ -142,15 +157,75 @@ function SchedulesPageContent() {
     setStatus("Schedule deleted.");
   };
 
-  if (!schedules) return <PageLoader />;
+  const saveReusableRequest = async () => {
+    if (!requestTitle.trim() || !requestPrompt.trim()) return;
+    await saveWorkflow({
+      title: requestTitle.trim(),
+      description: requestPrompt.trim(),
+      kind: "process",
+      status: "active",
+      inputs: [
+        {
+          key: "brief",
+          label: "Brief",
+          type: "text",
+          required: false,
+          defaultValue: requestPrompt.trim(),
+        },
+      ],
+      steps: [
+        {
+          key: "run_request",
+          title: requestTitle.trim(),
+          kind: "prompt",
+          config: { prompt: requestPrompt.trim() },
+          outputItemKind: "task_output",
+        },
+      ],
+      outputs: [
+        {
+          key: "result",
+          label: "Saved output",
+          kind: "task_output",
+          description: "The output created when this saved request runs.",
+        },
+      ],
+      approvalRules: [],
+    });
+    setRequestTitle("");
+    setRequestPrompt("");
+    setStatus("Saved request added.");
+  };
+
+  const runSavedRequest = async (workflowId: Id<"workflows">) => {
+    await runWorkflow({ workflowId, inputs: {} });
+    setStatus("Saved request queued.");
+  };
+
+  const scheduleSavedRequest = async (workflowId: Id<"workflows">) => {
+    await scheduleWorkflow({
+      workflowId,
+      startAt: startAtFromTime(time),
+      cadence,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
+    setStatus("Saved request scheduled.");
+  };
+
+  if (!schedules || !workflows) return <PageLoader />;
 
   return (
     <div className="min-h-full px-4 py-6 sm:px-8">
       <div className="mx-auto max-w-5xl space-y-5">
         <header className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
-            Schedules
-          </h1>
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
+              Schedules
+            </h1>
+            <p className="mt-1 text-sm text-text-secondary">
+              Recurring work and saved requests FounderOS can run again.
+            </p>
+          </div>
           {status && <p className="text-xs font-medium text-text-secondary">{status}</p>}
         </header>
 
@@ -198,6 +273,98 @@ function SchedulesPageContent() {
             <CalendarClock size={15} />
             Save schedule
           </button>
+        </section>
+
+        <section className="rounded-lg border border-black/[0.06] bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center gap-2">
+            <Bookmark size={16} />
+            <h2 className="text-sm font-semibold text-text-primary">Saved Requests</h2>
+          </div>
+          <div className="grid gap-2 md:grid-cols-[1fr_1.4fr_auto]">
+            <input
+              value={requestTitle}
+              onChange={(event) => setRequestTitle(event.target.value)}
+              placeholder="Request name"
+              className="h-10 rounded-lg border border-black/[0.07] bg-surface px-3 text-sm outline-none focus:border-black/20 focus:bg-white"
+            />
+            <input
+              value={requestPrompt}
+              onChange={(event) => setRequestPrompt(event.target.value)}
+              placeholder="What should FounderOS do when this runs?"
+              className="h-10 rounded-lg border border-black/[0.07] bg-surface px-3 text-sm outline-none focus:border-black/20 focus:bg-white"
+            />
+            <button
+              type="button"
+              onClick={() => void saveReusableRequest()}
+              disabled={!requestTitle.trim() || !requestPrompt.trim()}
+              className="flex h-10 items-center justify-center gap-2 rounded-lg bg-black px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-30"
+            >
+              <Save size={15} />
+              Save
+            </button>
+          </div>
+        </section>
+
+        <section className="overflow-hidden rounded-lg border border-black/[0.06] bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-black/[0.05] px-4 py-3">
+            <h2 className="text-sm font-semibold text-text-primary">Reusable Work</h2>
+            <span className="text-xs text-text-muted">{workflows.length}</span>
+          </div>
+          {workflows.length === 0 ? (
+            <div className="p-8 text-center">
+              <Edit3 size={18} className="mx-auto text-text-muted" />
+              <p className="mt-3 text-sm font-semibold text-text-primary">No saved requests yet</p>
+              <p className="mt-1 text-xs leading-5 text-text-secondary">
+                Save a repeatable request when a pattern is worth reusing.
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y divide-black/[0.05]">
+              {workflows.map((workflow) => (
+                <div key={workflow._id} className="flex items-start gap-3 px-4 py-4 hover:bg-surface/70">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-black/[0.06] bg-surface">
+                    <Bookmark size={15} className="text-text-muted" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate text-sm font-semibold text-text-primary">{workflow.title}</p>
+                      <span className="rounded-full bg-black/[0.04] px-2 py-0.5 text-[11px] font-medium text-text-secondary">
+                        {workflow.status === "paused" ? "Paused" : workflow.status === "draft" ? "Draft" : "Active"}
+                      </span>
+                    </div>
+                    {workflow.description && (
+                      <p className="mt-1 line-clamp-2 text-xs leading-5 text-text-secondary">{workflow.description}</p>
+                    )}
+                    <p className="mt-2 text-[11px] text-text-muted">
+                      {workflow.steps.length} step{workflow.steps.length === 1 ? "" : "s"} - {workflow.schedules.length} schedule{workflow.schedules.length === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => void runSavedRequest(workflow._id)}
+                      disabled={workflow.status === "paused" || workflow.status === "archived"}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-black/[0.04] hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-30"
+                      aria-label="Run saved request"
+                      title="Run"
+                    >
+                      <PlayCircle size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void scheduleSavedRequest(workflow._id)}
+                      disabled={workflow.status === "paused" || workflow.status === "archived"}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-black/[0.04] hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-30"
+                      aria-label="Schedule saved request"
+                      title="Schedule"
+                    >
+                      <CalendarClock size={15} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="overflow-hidden rounded-lg border border-black/[0.06] bg-white shadow-sm">

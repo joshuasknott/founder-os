@@ -28,17 +28,15 @@ const sensitiveActionKind = v.union(
 export const getPendingApprovals = query({
   handler: async (ctx) => {
     const { workspaceId } = await requireCurrentUser(ctx);
-    const directives = await ctx.db
-      .query("directives")
-      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
-      .collect();
-    const directiveIds = new Set(directives.map((directive) => directive._id));
-    return (await ctx.db
+    const pending = await ctx.db
       .query("approvalQueue")
-      .filter((q) =>
-        q.or(q.eq(q.field("status"), "pending"), q.eq(q.field("status"), "shadow_pending")),
-      )
-      .collect()).filter((approval) => directiveIds.has(approval.directiveId));
+      .withIndex("by_workspace_status", (q) => q.eq("workspaceId", workspaceId).eq("status", "pending"))
+      .collect();
+    const shadowPending = await ctx.db
+      .query("approvalQueue")
+      .withIndex("by_workspace_status", (q) => q.eq("workspaceId", workspaceId).eq("status", "shadow_pending"))
+      .collect();
+    return [...pending, ...shadowPending];
   },
 });
 
@@ -96,6 +94,7 @@ export const createForRun = mutation({
     });
 
     const approvalId = await ctx.db.insert("approvalQueue", {
+      workspaceId,
       type: "integration_gate",
       directiveId: args.directiveId,
       runId: args.runId,
@@ -142,12 +141,7 @@ export const getApprovedActionForRun = query({
     }
     const approvals = await ctx.db
       .query("approvalQueue")
-      .filter((q) =>
-        q.and(
-          q.eq(q.field("runId"), args.runId),
-          q.eq(q.field("status"), "approved"),
-        ),
-      )
+      .withIndex("by_run_status", (q) => q.eq("runId", args.runId).eq("status", "approved"))
       .collect();
 
     const openApproval = approvals

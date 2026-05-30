@@ -141,6 +141,9 @@ export default defineSchema({
     createdAt: v.number(),
     dailySpendLimit: v.optional(v.number()),
     alertThreshold: v.optional(v.number()),
+    onboardingCompletedAt: v.optional(v.number()),
+    onboardingConnectorIds: v.optional(v.array(v.string())),
+    reviewExternalActions: v.optional(v.boolean()),
   }),
 
   api_keys: defineTable({
@@ -337,7 +340,8 @@ export default defineSchema({
   })
     .index("by_status", ["status"])
     .index("by_workspace", ["workspaceId"])
-    .index("by_workspace_status", ["workspaceId", "status"]),
+    .index("by_workspace_status", ["workspaceId", "status"])
+    .index("by_workspace_archived", ["workspaceId", "archivedAt"]),
 
   tasks: defineTable({
     workspaceId: v.optional(v.id("workspaces")),
@@ -375,6 +379,7 @@ export default defineSchema({
   // ===========================================================================
 
   approvalQueue: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
     type: v.union(
       v.literal("spec_gate"),
       v.literal("integration_gate"),
@@ -401,7 +406,10 @@ export default defineSchema({
     handledAt: v.optional(v.number()),
     auditHistory: v.optional(v.array(approvalAuditEvent)),
     autonomyLevel: v.union(v.literal(1), v.literal(2), v.literal(3)),
-  }).index("by_directive", ["directiveId"]),
+  })
+    .index("by_directive", ["directiveId"])
+    .index("by_workspace_status", ["workspaceId", "status"])
+    .index("by_run_status", ["runId", "status"]),
 
   chatSessions: defineTable({
     workspaceId: v.optional(v.id("workspaces")),
@@ -698,7 +706,9 @@ export default defineSchema({
     dueAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
-  }).index("by_status", ["status"]),
+  })
+    .index("by_workspace", ["workspaceId"])
+    .index("by_status", ["status"]),
 
   scheduleItems: defineTable({
     workspaceId: v.optional(v.id("workspaces")),
@@ -741,6 +751,8 @@ export default defineSchema({
   })
     .index("by_start", ["startAt"])
     .index("by_workspace", ["workspaceId"])
+    .index("by_workspace_status", ["workspaceId", "status"])
+    .index("by_workspace_next_run", ["workspaceId", "status", "nextRunAt"])
     .index("by_next_run", ["status", "nextRunAt"])
     .index("by_workflow", ["workflowId"]),
 
