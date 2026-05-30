@@ -73,6 +73,14 @@ test("registry exposes safe connector metadata and action handlers", () => {
     ["import_content", "export_content", "update_external_record"],
   );
 
+  const stripe = runtime.getConnectorDefinition("stripe");
+  assert.equal(stripe.safeDisplayName, "Stripe");
+  assert.equal(stripe.authType, "api_key");
+  assert.deepEqual(stripe.requiredScopes, ["stripe.read"]);
+  assert.equal(stripe.approvalPolicy, "per_sensitive_action");
+  assert.equal(JSON.stringify(runtime.publicConnectorDefinition(stripe)).includes("stripe.read"), false);
+  assert.equal(stripe.actions.some((action) => action.approval === "blocked"), true);
+
   for (const connector of runtime.listConnectorDefinitions()) {
     for (const action of connector.actions) {
       assert.equal(typeof runtime.getConnectorActionHandler(action.handlerKey), "function");
@@ -146,6 +154,60 @@ test("content connectors import freely and gate external writes", () => {
   });
   assert.equal(notionUpdate.allowed, true);
   assert.equal(notionUpdate.approvalRequired, true);
+});
+
+test("stripe sync is read-only and write actions are blocked by policy", () => {
+  const connection = {
+    status: "connected",
+    credentialRef: "vault:stripe",
+    grantedScopes: ["stripe.read", "stripe.write"],
+  };
+
+  const sync = runtime.evaluateConnectorActionRequest({
+    connectorId: "stripe",
+    actionType: "sync_stripe_finance_context",
+    connection,
+  });
+  assert.equal(sync.allowed, true);
+  assert.equal(sync.approvalRequired, false);
+
+  const charge = runtime.evaluateConnectorActionRequest({
+    connectorId: "stripe",
+    actionType: "charge_payment",
+    connection,
+    approvalGranted: true,
+  });
+  assert.equal(charge.allowed, false);
+  assert.equal(charge.reason, "blocked_by_policy");
+  assert.equal(charge.approvalRequired, false);
+  assert.equal(charge.sensitiveActionKind, "spend_money");
+  assert.equal(charge.safeMessage.includes("blocked by policy"), true);
+
+  const refund = runtime.evaluateConnectorActionRequest({
+    connectorId: "stripe",
+    actionType: "refund_payment",
+    connection,
+    approvalGranted: true,
+  });
+  assert.equal(refund.reason, "blocked_by_policy");
+
+  const cancel = runtime.evaluateConnectorActionRequest({
+    connectorId: "stripe",
+    actionType: "cancel_subscription",
+    connection,
+    approvalGranted: true,
+  });
+  assert.equal(cancel.reason, "blocked_by_policy");
+  assert.equal(cancel.sensitiveActionKind, "change_live_asset");
+
+  const deletion = runtime.evaluateConnectorActionRequest({
+    connectorId: "stripe",
+    actionType: "delete_external_record",
+    connection,
+    approvalGranted: true,
+  });
+  assert.equal(deletion.reason, "blocked_by_policy");
+  assert.equal(deletion.sensitiveActionKind, "delete_data");
 });
 
 test("google workspace connectors draft/import freely and gate external actions", () => {

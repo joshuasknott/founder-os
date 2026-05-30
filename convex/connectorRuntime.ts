@@ -27,7 +27,7 @@ export type ConnectorConnectionStatus =
   | "connected"
   | "disabled";
 export type ConnectorApprovalPolicy = "never" | "per_sensitive_action" | "always";
-export type ConnectorActionApproval = "never" | "always";
+export type ConnectorActionApproval = "never" | "always" | "blocked";
 
 export type ConnectorActionType =
   | "read_email"
@@ -38,7 +38,17 @@ export type ConnectorActionType =
   | "create_calendar_event"
   | "schedule_meeting"
   | "read_payments"
+  | "sync_stripe_customers"
+  | "sync_stripe_products"
+  | "sync_stripe_prices"
+  | "sync_stripe_invoices"
+  | "sync_stripe_subscriptions"
+  | "sync_stripe_revenue"
+  | "sync_stripe_finance_context"
   | "charge_payment"
+  | "refund_payment"
+  | "cancel_subscription"
+  | "delete_external_record"
   | "publish_post"
   | "update_live_asset"
   | "read_records"
@@ -67,6 +77,7 @@ export type ConnectorActionDefinition = {
     | "publish_preview"
     | "generic";
   handlerKey: string;
+  blockedSafeMessage?: string;
 };
 
 export type ConnectorDefinition = {
@@ -108,6 +119,7 @@ export type ConnectorActionEvaluation = {
     | "disabled"
     | "missing_permission"
     | "approval_required"
+    | "blocked_by_policy"
     | "unknown_connector"
     | "unknown_action";
   safeMessage: string;
@@ -452,6 +464,129 @@ export const connectorRegistry: Record<string, ConnectorDefinition> = {
         approval: "always",
         sensitiveActionKind: "spend_money",
         handlerKey: "payments.charge",
+      },
+    ],
+  },
+  stripe: {
+    id: "stripe",
+    safeDisplayName: "Stripe",
+    description: "Sync read-only customers, products, prices, invoices, subscriptions, and revenue summaries.",
+    authType: "api_key",
+    capabilities: ["read_payments", "read_business_records", "import_content"],
+    requiredScopes: ["stripe.read"],
+    scopeLabels: [
+      "Sync customer and subscription context",
+      "Sync product and pricing context",
+      "Sync invoice and revenue summaries",
+    ],
+    connectionStatus: "not_connected",
+    approvalPolicy: "per_sensitive_action",
+    actions: [
+      {
+        type: "sync_stripe_customers",
+        safeLabel: "Sync customers",
+        requiredCapabilities: ["read_payments", "read_business_records", "import_content"],
+        requiredScopes: ["stripe.read"],
+        approval: "never",
+        handlerKey: "stripe.sync_customers",
+      },
+      {
+        type: "sync_stripe_products",
+        safeLabel: "Sync products",
+        requiredCapabilities: ["read_payments", "read_business_records", "import_content"],
+        requiredScopes: ["stripe.read"],
+        approval: "never",
+        handlerKey: "stripe.sync_products",
+      },
+      {
+        type: "sync_stripe_prices",
+        safeLabel: "Sync prices",
+        requiredCapabilities: ["read_payments", "read_business_records", "import_content"],
+        requiredScopes: ["stripe.read"],
+        approval: "never",
+        handlerKey: "stripe.sync_prices",
+      },
+      {
+        type: "sync_stripe_invoices",
+        safeLabel: "Sync invoices",
+        requiredCapabilities: ["read_payments", "read_business_records", "import_content"],
+        requiredScopes: ["stripe.read"],
+        approval: "never",
+        handlerKey: "stripe.sync_invoices",
+      },
+      {
+        type: "sync_stripe_subscriptions",
+        safeLabel: "Sync subscriptions",
+        requiredCapabilities: ["read_payments", "read_business_records", "import_content"],
+        requiredScopes: ["stripe.read"],
+        approval: "never",
+        handlerKey: "stripe.sync_subscriptions",
+      },
+      {
+        type: "sync_stripe_revenue",
+        safeLabel: "Sync revenue summaries",
+        requiredCapabilities: ["read_payments", "read_business_records", "import_content"],
+        requiredScopes: ["stripe.read"],
+        approval: "never",
+        handlerKey: "stripe.sync_revenue",
+      },
+      {
+        type: "sync_stripe_finance_context",
+        safeLabel: "Sync finance context",
+        requiredCapabilities: ["read_payments", "read_business_records", "import_content"],
+        requiredScopes: ["stripe.read"],
+        approval: "never",
+        handlerKey: "stripe.sync_finance_context",
+      },
+      {
+        type: "charge_payment",
+        safeLabel: "Create charges",
+        requiredCapabilities: ["spend_money"],
+        requiredScopes: ["stripe.write"],
+        approval: "blocked",
+        sensitiveActionKind: "spend_money",
+        handlerKey: "stripe.blocked",
+        blockedSafeMessage: "Stripe money movement is blocked by policy. FounderOS can only sync read-only finance context for this connection.",
+      },
+      {
+        type: "refund_payment",
+        safeLabel: "Issue refunds",
+        requiredCapabilities: ["spend_money"],
+        requiredScopes: ["stripe.write"],
+        approval: "blocked",
+        sensitiveActionKind: "spend_money",
+        handlerKey: "stripe.blocked",
+        blockedSafeMessage: "Stripe refunds are blocked by policy. FounderOS can only sync read-only finance context for this connection.",
+      },
+      {
+        type: "cancel_subscription",
+        safeLabel: "Cancel subscriptions",
+        requiredCapabilities: ["change_live_asset"],
+        requiredScopes: ["stripe.write"],
+        approval: "blocked",
+        sensitiveActionKind: "change_live_asset",
+        handlerKey: "stripe.blocked",
+        blockedSafeMessage: "Stripe subscription changes are blocked by policy. FounderOS can only sync read-only finance context for this connection.",
+      },
+      {
+        type: "update_external_record",
+        safeLabel: "Update Stripe records",
+        requiredCapabilities: ["change_live_asset"],
+        requiredScopes: ["stripe.write"],
+        approval: "blocked",
+        sensitiveActionKind: "change_live_asset",
+        handlerKey: "stripe.blocked",
+        blockedSafeMessage: "Stripe record changes are blocked by policy. FounderOS can only sync read-only finance context for this connection.",
+      },
+      {
+        type: "delete_external_record",
+        safeLabel: "Delete Stripe records",
+        requiredCapabilities: ["change_live_asset"],
+        requiredScopes: ["stripe.write"],
+        approval: "blocked",
+        sensitiveActionKind: "delete_data",
+        handlerKey: "stripe.blocked",
+        blockedSafeMessage: "Stripe deletion is blocked by policy. FounderOS can only sync read-only finance context for this connection.",
       },
     ],
   },
@@ -859,6 +994,16 @@ export function evaluateConnectorActionRequest(args: {
     };
   }
 
+  if (action.approval === "blocked") {
+    return {
+      allowed: false,
+      approvalRequired: false,
+      reason: "blocked_by_policy",
+      safeMessage: action.blockedSafeMessage ?? "That action is blocked by policy.",
+      sensitiveActionKind: action.sensitiveActionKind,
+    };
+  }
+
   const status = testBaseConnectorConnection(args.connection);
   if (status.status === "disabled") {
     return {
@@ -993,6 +1138,11 @@ const safeNoopHandler: ConnectorActionHandler = async ({ actionType }) => ({
   safeSummary: safeActionSummary(actionType),
 });
 
+const blockedActionHandler: ConnectorActionHandler = async () => ({
+  status: "needs_attention",
+  safeSummary: "That action is blocked by policy.",
+});
+
 export const connectorActionHandlers: Record<string, ConnectorActionHandler> = {
   "email.read": safeNoopHandler,
   "email.send": safeNoopHandler,
@@ -1015,6 +1165,14 @@ export const connectorActionHandlers: Record<string, ConnectorActionHandler> = {
   "notion.update": safeNoopHandler,
   "payments.read": safeNoopHandler,
   "payments.charge": safeNoopHandler,
+  "stripe.sync_customers": safeNoopHandler,
+  "stripe.sync_products": safeNoopHandler,
+  "stripe.sync_prices": safeNoopHandler,
+  "stripe.sync_invoices": safeNoopHandler,
+  "stripe.sync_subscriptions": safeNoopHandler,
+  "stripe.sync_revenue": safeNoopHandler,
+  "stripe.sync_finance_context": safeNoopHandler,
+  "stripe.blocked": blockedActionHandler,
   "publishing.post": safeNoopHandler,
   "publishing.update": safeNoopHandler,
   "knowledge.read": safeNoopHandler,
@@ -1039,7 +1197,17 @@ export function safeActionSummary(actionType: string) {
     create_calendar_event: "The approved calendar event step is ready.",
     schedule_meeting: "The approved meeting step is ready.",
     read_payments: "Payment status access is ready.",
+    sync_stripe_customers: "Stripe customers are ready in Library.",
+    sync_stripe_products: "Stripe products are ready in Library.",
+    sync_stripe_prices: "Stripe prices are ready in Library.",
+    sync_stripe_invoices: "Stripe invoices are ready in Library.",
+    sync_stripe_subscriptions: "Stripe subscriptions are ready in Library.",
+    sync_stripe_revenue: "Stripe revenue summaries are ready in Library.",
+    sync_stripe_finance_context: "Stripe finance context is ready in Library.",
     charge_payment: "The approved payment step is ready.",
+    refund_payment: "The approved refund step is ready.",
+    cancel_subscription: "The approved subscription change is ready.",
+    delete_external_record: "The approved deletion is ready.",
     publish_post: "The approved publishing step is ready.",
     update_live_asset: "The approved live update is ready.",
     read_records: "Business records access is ready.",
