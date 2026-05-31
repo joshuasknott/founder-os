@@ -1,8 +1,9 @@
 import { query, mutation, action, internalMutation, internalQuery } from "./_generated/server";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import { v } from "convex/values";
 import { actorFromIdentity, ensureDocWorkspace, requireCurrentUser } from "./authz";
 import { recordAuditEvent } from "./audit";
+import { tierForModelProfile } from "./modelProfiles";
 
 export const createSession = mutation({
   args: {
@@ -63,6 +64,7 @@ export const sendMessage = action({
     sessionId: v.id("chatSessions"),
     agentId: v.id("agents"),
     content: v.string(),
+    modelProfile: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const authorization = await ctx.runQuery(internal.chat.authorizeSessionForAction, {
@@ -109,13 +111,27 @@ export const sendMessage = action({
     } catch {
       libraryContext = "Workspace context is unavailable right now.";
     }
+    let connectorContext = "";
+    try {
+      const context = await ctx.runAction(api.connectors.readGoogleWorkspaceContext, {
+        workspaceId: authorization.workspaceId,
+        queryText: args.content,
+        requestedBy: `chat:${agent.name}`,
+      });
+      connectorContext = context.text && !context.text.startsWith("No matching")
+        ? `\n\n${context.text}`
+        : "";
+    } catch {
+      connectorContext = "";
+    }
 
     const capabilityToTier: Record<string, number> = {
       triage: 1, coding: 3, reasoning: 4, "long-context": 3, creative: 2,
     };
-    const tier = capabilityToTier[agent.routingRequest] ?? 1;
+    const autoTier = capabilityToTier[agent.routingRequest] ?? 1;
+    const tier = tierForModelProfile(args.modelProfile, autoTier);
 
-    const systemPrompt = `${agent.systemPrompt}\n\nYou are in CHAT MODE. This is a read-only conversation with the founder. Help them understand, plan, and think through problems. You cannot execute tasks, create outputs, schedule work, publish, send messages, or make changes in this mode. If the founder wants work performed, help them shape a clear task instead.\n\nRelevant workspace context:\n${libraryContext}\n\nConversation so far:\n${historyContext}`;
+    const systemPrompt = `${agent.systemPrompt}\n\nYou are in CHAT MODE. This is a read-only conversation with the founder. Help them understand, plan, and think through problems. You may use read-only connected service context when it is provided, but you cannot execute tasks, create outputs, schedule work, publish, send messages, or make changes in this mode. If the founder wants work performed, help them shape a clear task instead.\n\nRelevant workspace context:\n${libraryContext}${connectorContext}\n\nConversation so far:\n${historyContext}`;
 
     const { executeChat, safeAIErrorMessage } = await import("./ai");
     let response: string;
@@ -133,6 +149,7 @@ export const sendMessage = action({
               useCase: usage.useCase,
               mode: "chat",
               readOnly: true,
+              modelProfile: args.modelProfile ?? "auto",
             },
             metrics: {
               latencyMs: usage.latencyMs,

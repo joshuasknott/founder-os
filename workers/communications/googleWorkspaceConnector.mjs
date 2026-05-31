@@ -152,6 +152,48 @@ export function prepareGmailDraft(run, directive, context = importGmailContext()
   };
 }
 
+export function isGmailContextReportRequest(run, directive) {
+  const text = compactText(`${run?.title ?? ""} ${directive?.title ?? ""} ${directive?.objective ?? ""}`, 2000)
+    .toLowerCase();
+  const asksForContext = /\b(list|show|give|summari[sz]e|review|prioriti[sz]e|important|recent|inbox|gmails?|emails?)\b/.test(text);
+  const asksForDraft = /\b(draft|write|compose|send|reply|respond|forward|outreach|follow up with|follow-up with)\b/.test(text);
+  return asksForContext && !asksForDraft;
+}
+
+export function prepareGmailContextReport(run, directive, context = importGmailContext()) {
+  const objective = compactText(directive?.objective, 1200);
+  const rows = context.messages.length
+    ? context.messages.map((message, index) => [
+        `${index + 1}. ${message.subject}`,
+        `   From: ${message.from}`,
+        `   Why it matters: ${message.snippet || "Review this message for priority."}`,
+      ].join("\n"))
+    : ["No matching Gmail messages were available from the connected account."];
+  const content = [
+    `# ${run?.title ?? "Gmail priority list"}`,
+    "",
+    "## Request",
+    objective || "Review recent Gmail context.",
+    "",
+    "## Priority List",
+    ...rows,
+    "",
+    "## Source",
+    context.safeSummary,
+    "",
+    "FounderOS only read connected Gmail context for this result. No email was sent or changed.",
+  ].join("\n");
+
+  return {
+    kind: "email_context_report",
+    summary: context.messages.length
+      ? "A Gmail priority list is ready."
+      : "No matching Gmail messages were available yet.",
+    content,
+    context,
+  };
+}
+
 export function prepareCalendarSuggestion(run, directive, context = importGoogleCalendarContext()) {
   const objective = compactText(directive?.objective, 1200);
   const attendee = firstEmail(objective) ?? "attendee to confirm";

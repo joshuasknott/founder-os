@@ -4,6 +4,7 @@ import {
   buildOpenCodeArgs,
   builderProviderHelp,
   isLlmBuilderProvider,
+  opencodeModelForProfile,
   selectBuilderAgent,
 } from "../workers/builder/agentAdapters.mjs";
 
@@ -64,4 +65,17 @@ test("opencode args run in the isolated workspace and never auto-approve permiss
   assert.equal(args.includes("--dangerously-skip-permissions"), false);
   assert.equal(args.includes("--model"), true);
   assert.equal(args.at(-1), "Build the preview");
+});
+
+test("opencode auto leaves model choice to OpenCode and manual tiers can pin models", () => {
+  const settings = {
+    model: "fallback/model",
+    modelLow: "fast/model",
+    modelHigh: "reasoning/model",
+  };
+
+  assert.equal(opencodeModelForProfile(settings, "auto"), undefined);
+  assert.equal(opencodeModelForProfile(settings, "low"), "fast/model");
+  assert.equal(opencodeModelForProfile(settings, "medium"), "fallback/model");
+  assert.equal(opencodeModelForProfile(settings, "high"), "reasoning/model");
 });

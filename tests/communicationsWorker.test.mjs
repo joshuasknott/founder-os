@@ -52,6 +52,28 @@ test("draft-only email requests do not create send approvals", () => {
   assert.equal(prepared.approvalPayload, undefined);
 });
 
+test("gmail read requests produce a priority report instead of a draft", () => {
+  const prepared = prepareCommunicationResult(
+    { _id: "run_gmail_report", kind: "email", title: "Important gmails", directiveId: "directive_gmail_report" },
+    { title: "Important gmails", objective: "Give me my most important gmails in the last 7 days as a priority list." },
+    importGmailContext({
+      messages: [
+        {
+          from: "Customer",
+          subject: "Renewal question",
+          snippet: "Asked for pricing before Friday.",
+        },
+      ],
+    }),
+  );
+
+  assert.equal(prepared.kind, "email_context_report");
+  assert.equal(prepared.externalAction, null);
+  assert.equal(prepared.content.includes("Priority List"), true);
+  assert.equal(prepared.content.includes("Renewal question"), true);
+  assert.equal(prepared.content.includes("No email was sent"), true);
+});
+
 test("communications worker prepares calendar suggestions before approval-gated event creation", () => {
   const run = {
     _id: "run_calendar",

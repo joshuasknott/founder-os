@@ -156,6 +156,18 @@ export function selectBuilderAgent(env = process.env) {
   };
 }
 
+export function opencodeModelForProfile(settings = {}, profile = "auto") {
+  const normalizedProfile = ["low", "medium", "high"].includes(profile) ? profile : "auto";
+  if (normalizedProfile === "auto") return undefined;
+
+  const profileModel =
+    normalizedProfile === "low" ? cleanString(settings.modelLow) :
+    normalizedProfile === "medium" ? cleanString(settings.modelMedium) :
+    cleanString(settings.modelHigh);
+
+  return profileModel ?? cleanString(settings.model);
+}
+
 export function buildOpenCodeArgs(agent, prompt, workspaceDir, title = "FounderOS build") {
   const args = ["run", "--dir", workspaceDir, "--title", title];
   if (agent.model) args.push("--model", agent.model);

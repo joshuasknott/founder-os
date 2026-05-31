@@ -1,5 +1,5 @@
 import { action, internalMutation, internalQuery, mutation, query } from "./_generated/server";
-import type { MutationCtx } from "./_generated/server";
+import type { ActionCtx, MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { anyApi, type FunctionReference } from "convex/server";
@@ -44,6 +44,14 @@ import {
   type PreparedStripeFact,
   type PreparedStripeItem,
 } from "./stripeConnector";
+import {
+  connectorsForGoogleContext,
+  fetchCalendarContext,
+  fetchDriveContext,
+  fetchGmailContext,
+  summarizeGoogleWorkspaceContext,
+  type GoogleWorkspaceContext,
+} from "./googleWorkspaceRuntime";
 
 function storedStatus(status: ConnectorConnectionStatus): Exclude<ConnectorConnectionStatus, "not_connected"> {
   return status === "not_connected" ? "needs_attention" : status;
@@ -142,6 +150,9 @@ const internalConnectors = anyApi.connectors as unknown as {
     workspaceId: string;
     connectorId: string;
   }, unknown>;
+  getConnectedConnectorIds: FunctionReference<"query", "internal", {
+    workspaceId: string;
+  }, string[]>;
   getConnectorSetupSessionByState: FunctionReference<"query", "internal", {
     state: string;
   }, unknown>;
@@ -444,6 +455,19 @@ export const getConnectorConnectionForSync = internalQuery({
         q.eq("workspaceId", args.workspaceId).eq("connectorId", args.connectorId),
       )
       .first();
+  },
+});
+
+export const getConnectedConnectorIds = internalQuery({
+  args: { workspaceId: v.id("workspaces") },
+  handler: async (ctx, args) => {
+    const connections = await ctx.db
+      .query("connectorConnections")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", args.workspaceId))
+      .collect();
+    return connections
+      .filter((connection) => connection.status === "connected" && !connection.disabledAt)
+      .map((connection) => connection.connectorId);
   },
 });
 
@@ -952,6 +976,224 @@ export const syncStripeFinance = action({
         safeMessage: safeError,
       };
     }
+  },
+});
+
+type OAuthCredentialBundle = {
+  connection?: {
+    _id?: Id<"connectorConnections">;
+    connectorId?: string;
+    status?: string;
+    disabledAt?: number;
+    settings?: unknown;
+  } | null;
+  credential?: {
+    encryptedSecret?: string;
+    encryptionNonce?: string;
+    tokenExpiresAt?: number;
+  } | null;
+  refreshCredential?: {
+    encryptedSecret?: string;
+    encryptionNonce?: string;
+  } | null;
+};
+
+async function unsealOAuthAccessToken(ctx: ActionCtx, args: {
+  workspaceId: Id<"workspaces">;
+  connectorId: string;
+  bundle: OAuthCredentialBundle;
+}) {
+  const credential = args.bundle.credential;
+  if (!credential?.encryptedSecret || !credential.encryptionNonce) {
+    throw new Error("Reconnect this service from Settings.");
+  }
+
+  const shouldRefresh =
+    typeof credential.tokenExpiresAt === "number" &&
+    credential.tokenExpiresAt <= Date.now() + 90 * 1000 &&
+    Boolean(args.bundle.refreshCredential?.encryptedSecret && args.bundle.refreshCredential.encryptionNonce);
+
+  if (!shouldRefresh) {
+    return await connectorCredentialStorage.unseal({
+      encryptedSecret: credential.encryptedSecret,
+      encryptionNonce: credential.encryptionNonce,
+    });
+  }
+
+  const providerId = oauthProviderForConnector(args.connectorId);
+  const client = providerId ? oauthClientCredentials(providerId) : null;
+  const refreshCredential = args.bundle.refreshCredential;
+  if (!providerId || !client?.clientId || !client.clientSecret || !refreshCredential?.encryptedSecret || !refreshCredential.encryptionNonce) {
+    return await connectorCredentialStorage.unseal({
+      encryptedSecret: credential.encryptedSecret,
+      encryptionNonce: credential.encryptionNonce,
+    });
+  }
+
+  const refreshSecret = await connectorCredentialStorage.unseal({
+    encryptedSecret: refreshCredential.encryptedSecret,
+    encryptionNonce: refreshCredential.encryptionNonce,
+  });
+  const tokenPayload = await refreshOAuthToken({
+    connectorId: providerId,
+    clientId: client.clientId,
+    clientSecret: client.clientSecret,
+    refreshToken: refreshSecret,
+    request: connectorRequest,
+  });
+  const token = parseOAuthTokenResult({
+    connectorId: providerId,
+    payload: tokenPayload,
+    now: Date.now(),
+  });
+
+  await ctx.runMutation(internalConnectors.completeManagedConnection, {
+    workspaceId: args.workspaceId,
+    connectorId: args.connectorId,
+    credentialHandle: token.accessToken,
+    refreshCredentialHandle: token.refreshToken ?? refreshSecret,
+    tokenExpiresAt: token.expiresAt,
+    grantedScopes: token.grantedScopes,
+    settings: args.bundle.connection?.settings,
+    connectedBy: "settings",
+    metadata: { credentialKind: "oauth_access_token", providerId },
+  });
+
+  return token.accessToken;
+}
+
+async function googleContextForConnector(args: {
+  connectorId: string;
+  accessToken: string;
+  queryText: string;
+}): Promise<GoogleWorkspaceContext | null> {
+  if (args.connectorId === "gmail") {
+    return await fetchGmailContext({
+      accessToken: args.accessToken,
+      queryText: args.queryText,
+      request: connectorRequest,
+    });
+  }
+  if (args.connectorId === "google_calendar") {
+    return await fetchCalendarContext({
+      accessToken: args.accessToken,
+      queryText: args.queryText,
+      request: connectorRequest,
+    });
+  }
+  if (
+    args.connectorId === "google_drive" ||
+    args.connectorId === "google_docs" ||
+    args.connectorId === "google_sheets"
+  ) {
+    return await fetchDriveContext({
+      accessToken: args.accessToken,
+      queryText: args.queryText,
+      connectorId: args.connectorId,
+      request: connectorRequest,
+    });
+  }
+  return null;
+}
+
+export const readGoogleWorkspaceContext = action({
+  args: {
+    workspaceId: v.id("workspaces"),
+    queryText: v.string(),
+    connectorIds: v.optional(v.array(v.string())),
+    requestedBy: v.optional(v.string()),
+    workerToken: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (!isAuthorizedWorkerToken(args.workerToken)) {
+      await ctx.runQuery(internalConnectors.authorizeWorkspaceForAction, {
+        workspaceId: args.workspaceId,
+      });
+    }
+
+    const connectedIds = await ctx.runQuery(internalConnectors.getConnectedConnectorIds, {
+      workspaceId: args.workspaceId,
+    });
+    const requestedIds = args.connectorIds?.length
+      ? args.connectorIds.filter((id) => connectedIds.includes(id))
+      : connectorsForGoogleContext(args.queryText, connectedIds);
+    const googleIds = requestedIds.filter((id) =>
+      id === "gmail" ||
+      id === "google_calendar" ||
+      id === "google_drive" ||
+      id === "google_docs" ||
+      id === "google_sheets",
+    );
+
+    if (googleIds.length === 0) {
+      return summarizeGoogleWorkspaceContext([]);
+    }
+
+    const contexts: GoogleWorkspaceContext[] = [];
+    for (const connectorId of googleIds) {
+      try {
+        const bundle = await ctx.runQuery(internalConnectors.getConnectorCredentialBundle, {
+          workspaceId: args.workspaceId,
+          connectorId,
+        }) as OAuthCredentialBundle;
+        const credential = bundle.credential;
+        if (!credential?.encryptedSecret || !credential.encryptionNonce || bundle.connection?.status !== "connected") {
+          contexts.push({
+            connectorId,
+            source: getConnectorDefinition(connectorId)?.safeDisplayName ?? "Google Workspace",
+            status: "needs_attention",
+            safeSummary: "Reconnect this service from Settings.",
+            items: [],
+          });
+          continue;
+        }
+
+        const accessToken = await unsealOAuthAccessToken(ctx, {
+          workspaceId: args.workspaceId,
+          connectorId,
+          bundle,
+        });
+        const context = await googleContextForConnector({
+          connectorId,
+          accessToken,
+          queryText: args.queryText,
+        });
+        if (context) contexts.push(context);
+
+        await ctx.runMutation(internalConnectors.logConnectorAction, {
+          workspaceId: args.workspaceId,
+          connectionId: bundle.connection?._id,
+          connectorId,
+          actionType: "read_context",
+          requestedBy: args.requestedBy,
+          status: "completed",
+          approvalRequired: false,
+          safeSummary: context?.safeSummary ?? "Connected context checked.",
+        });
+      } catch (error) {
+        const safeError = safeConnectorError(error);
+        contexts.push({
+          connectorId,
+          source: getConnectorDefinition(connectorId)?.safeDisplayName ?? "Google Workspace",
+          status: "needs_attention",
+          safeSummary: safeError,
+          items: [],
+        });
+        await ctx.runMutation(internalConnectors.logConnectorAction, {
+          workspaceId: args.workspaceId,
+          connectorId,
+          actionType: "read_context",
+          requestedBy: args.requestedBy,
+          status: "failed",
+          approvalRequired: false,
+          safeSummary: "Connected context could not be read.",
+          safeError,
+          internalErrorCode: "GOOGLE_CONTEXT_READ_FAILED",
+        });
+      }
+    }
+
+    return summarizeGoogleWorkspaceContext(contexts);
   },
 });
 

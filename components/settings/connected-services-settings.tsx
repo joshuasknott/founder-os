@@ -31,6 +31,15 @@ type ServiceCard = {
   status: ServiceStatus;
   statusMessage: string;
   healthy: boolean;
+  safeSettings?: {
+    command?: string;
+    model?: string;
+    modelLow?: string;
+    modelMedium?: string;
+    modelHigh?: string;
+    agent?: string;
+    attachUrl?: string;
+  };
   connectionId?: Id<"connectorConnections">;
   lastTestedAt?: number;
 };
@@ -47,11 +56,11 @@ type ActivityLog = {
   completedAt?: number;
 };
 
-function statusCopy(status: ServiceStatus) {
+function statusCopy(status: ServiceStatus, serviceId?: string) {
   const labels: Record<ServiceStatus, string> = {
     not_connected: "Not connected",
     needs_attention: "Needs sign-in",
-    connected: "Connected",
+    connected: serviceId === "opencode" ? "Configured" : "Connected",
     disabled: "Off",
   };
   return labels[status];
@@ -96,6 +105,15 @@ function formatActivityTime(value: number) {
     hour: "numeric",
     minute: "2-digit",
   }).format(value);
+}
+
+async function checkOpenCodeLocal(service?: ServiceCard) {
+  const response = await fetch("/api/local/opencode/check", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ command: service?.safeSettings?.command ?? "opencode" }),
+  });
+  return await response.json() as unknown;
 }
 
 function isApiKeyService(id: string) {
@@ -406,7 +424,7 @@ export function ConnectedServicesSettings() {
                               </span>
                               <span className={`inline-flex items-center gap-1.5 rounded-full border border-black/[0.04] bg-black/[0.01] px-2 py-0.5 text-[11px] font-medium ${statusTextColor(service.status)}`}>
                                 <span className={`h-1.5 w-1.5 rounded-full ${statusDot(service.status)} ring-2`} />
-                                {statusCopy(service.status)}
+                                {statusCopy(service.status, service.id)}
                               </span>
                             </span>
                             <span className="mt-4 block text-sm font-semibold tracking-tight text-text-primary">
@@ -468,7 +486,7 @@ export function ConnectedServicesSettings() {
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <span className={`inline-flex items-center gap-1.5 rounded-full border border-black/[0.04] bg-black/[0.01] px-2.5 py-0.5 text-[11px] font-medium ${statusTextColor(setupService.status)}`}>
                   <span className={`h-1.5 w-1.5 rounded-full ${statusDot(setupService.status)} ring-2`} />
-                  {statusCopy(setupService.status)}
+                  {statusCopy(setupService.status, setupService.id)}
                 </span>
                 {setupService.statusMessage && (
                   <span className="text-[11px] text-text-muted">{serviceMessages[setupService.id] ?? setupService.statusMessage}</span>
@@ -481,7 +499,9 @@ export function ConnectedServicesSettings() {
                     disabled={Boolean(busyKey)}
                     onClick={() =>
                       void runServiceAction(`${setupService.id}:check`, () =>
-                        testConnection({ connectionId: setupService.connectionId! }),
+                        setupService.id === "opencode"
+                          ? checkOpenCodeLocal(setupService)
+                          : testConnection({ connectionId: setupService.connectionId! }),
                       )
                     }
                     className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
@@ -593,23 +613,35 @@ export function ConnectedServicesSettings() {
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
                     Command
-                    <input name="command" placeholder="opencode" defaultValue="opencode" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                    <input name="command" placeholder="opencode" defaultValue={setupService.safeSettings?.command ?? "opencode"} className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
                   </label>
                   <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
-                    Model
-                    <input name="model" placeholder="Use OpenCode default" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                    Fallback model
+                    <input name="model" placeholder="Optional for manual tiers" defaultValue={setupService.safeSettings?.model ?? ""} className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
                   </label>
                   <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
                     Agent
-                    <input name="agent" placeholder="Optional" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                    <input name="agent" placeholder="Optional" defaultValue={setupService.safeSettings?.agent ?? ""} className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
                   </label>
                   <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
                     Attach URL
-                    <input name="attachUrl" placeholder="Optional" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                    <input name="attachUrl" placeholder="Optional" defaultValue={setupService.safeSettings?.attachUrl ?? ""} className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                  </label>
+                  <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                    Low model
+                    <input name="modelLow" placeholder="Fast/simple model" defaultValue={setupService.safeSettings?.modelLow ?? ""} className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                  </label>
+                  <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                    Medium model
+                    <input name="modelMedium" placeholder="Balanced model" defaultValue={setupService.safeSettings?.modelMedium ?? ""} className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                  </label>
+                  <label className="space-y-1.5 text-xs font-semibold text-text-secondary sm:col-span-2">
+                    High model
+                    <input name="modelHigh" placeholder="Reasoning/build model" defaultValue={setupService.safeSettings?.modelHigh ?? ""} className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
                   </label>
                 </div>
                 <p className="text-xs leading-5 text-text-secondary">
-                  OpenCode authentication stays inside your OpenCode setup. FounderOS stores only how to call it.
+                  Auto leaves the model to OpenCode. Low, Medium, and High use the matching model above when one is set.
                 </p>
                 <div className="flex justify-end gap-2 pt-1">
                   <button type="button" onClick={() => setSetupServiceId(null)} className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50">

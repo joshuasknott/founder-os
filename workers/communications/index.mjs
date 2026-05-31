@@ -10,7 +10,9 @@ import {
   historyForApprovedCommunication,
   importGmailContext,
   importGoogleCalendarContext,
+  isGmailContextReportRequest,
   prepareCalendarSuggestion,
+  prepareGmailContextReport,
   prepareGmailDraft,
   safeGoogleWorkspaceError,
 } from "./googleWorkspaceConnector.mjs";
@@ -90,57 +92,76 @@ async function requestConnectorAction(client, workspaceId, args) {
 
 async function importContextForRun(client, run, directive, workspaceId) {
   if (run.kind === "email") {
-    const result = await requestConnectorAction(client, workspaceId, {
-      connectorId: "gmail",
-      actionType: "read_email",
-      directiveId: run.directiveId,
-      runId: run._id,
-    });
-
-    if (!result.allowed) {
-      await append(client, run._id, "I could not use connected email context yet, so I will draft from the task details.", "info");
-      return importGmailContext();
+    const reportRequest = isGmailContextReportRequest(run, directive);
+    try {
+      const context = await client.action(api.connectors.readGoogleWorkspaceContext, {
+        workspaceId,
+        queryText: `${run.title}\n${directive.objective}`,
+        connectorIds: ["gmail"],
+        requestedBy: WORKER_ID,
+        workerToken: workerToken(),
+      });
+      const messages = context?.contexts?.gmail?.items?.map((item) => ({
+        from: "Gmail",
+        subject: item.title,
+        snippet: item.detail,
+        receivedAt: item.receivedAt,
+      })) ?? [];
+      if (messages.length > 0) {
+        await append(
+          client,
+          run._id,
+          reportRequest
+            ? "I checked recent Gmail context for this list."
+            : "I checked recent Gmail context for this draft.",
+        );
+        return importGmailContext({ messages });
+      }
+    } catch {
+      // Fall through to a safe draft based on the task details.
     }
 
-    await append(client, run._id, "I checked recent email context for this draft.");
-    return importGmailContext({
-      messages: [
-        {
-          from: "Connected email context",
-          subject: run.title,
-          snippet: directive.objective,
-        },
-      ],
+    await append(
+      client,
+      run._id,
+      reportRequest
+        ? "I could not use connected email context yet, so I will prepare the list from the task details."
+        : "I could not use connected email context yet, so I will draft from the task details.",
+      "info",
+    );
+    return importGmailContext();
+  }
+
+  try {
+    const context = await client.action(api.connectors.readGoogleWorkspaceContext, {
+      workspaceId,
+      queryText: `${run.title}\n${directive.objective}`,
+      connectorIds: ["google_calendar"],
+      requestedBy: WORKER_ID,
+      workerToken: workerToken(),
     });
+    const availability = context?.contexts?.google_calendar?.items?.map((item) => ({
+      label: item.title,
+      start: item.detail,
+      note: item.href ? `Calendar link: ${item.href}` : undefined,
+    })) ?? [];
+    if (availability.length > 0) {
+      await append(client, run._id, "I checked calendar availability for this suggestion.");
+      return importGoogleCalendarContext({ availability });
+    }
+  } catch {
+    // Fall through to a safe suggestion based on the task details.
   }
 
-  const result = await requestConnectorAction(client, workspaceId, {
-    connectorId: "google_calendar",
-    actionType: "check_availability",
-    directiveId: run.directiveId,
-    runId: run._id,
-  });
-
-  if (!result.allowed) {
-    await append(client, run._id, "I could not use connected availability yet, so I will prepare the suggestion from the task details.", "info");
-    return importGoogleCalendarContext();
-  }
-
-  await append(client, run._id, "I checked calendar availability for this suggestion.");
-  return importGoogleCalendarContext({
-    availability: [
-      {
-        label: "Availability checked",
-        start: "Confirm final time in review",
-        note: directive.objective,
-      },
-    ],
-  });
+  await append(client, run._id, "I could not use connected availability yet, so I will prepare the suggestion from the task details.", "info");
+  return importGoogleCalendarContext();
 }
 
 export function prepareCommunicationResult(run, directive, context) {
   const prepared = run.kind === "email"
-    ? prepareGmailDraft(run, directive, context)
+    ? isGmailContextReportRequest(run, directive)
+      ? prepareGmailContextReport(run, directive, context)
+      : prepareGmailDraft(run, directive, context)
     : prepareCalendarSuggestion(run, directive, context);
   const externalAction = detectCommunicationExternalAction(run, directive);
 

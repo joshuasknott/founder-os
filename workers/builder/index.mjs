@@ -35,6 +35,7 @@ import {
 import {
   buildOpenCodeArgs,
   builderProviderHelp,
+  opencodeModelForProfile,
   selectBuilderAgent,
 } from "./agentAdapters.mjs";
 
@@ -1306,14 +1307,14 @@ async function runOpenCodeCommand(prompt, workspaceDir, title, builderAgent = BU
   return result.stdout || result.stderr;
 }
 
-function opencodeAgentFromConnection(connection) {
+function opencodeAgentFromConnection(connection, modelProfile) {
   if (!connection || connection.status !== "connected") return null;
   const settings = connection.settings && typeof connection.settings === "object" ? connection.settings : {};
   return selectBuilderAgent({
     ...BUILDER_AGENT_ENV,
     BUILDER_PROVIDER: "opencode",
     BUILDER_OPENCODE_COMMAND: settings.command || "opencode",
-    BUILDER_OPENCODE_MODEL: settings.model || "",
+    BUILDER_OPENCODE_MODEL: opencodeModelForProfile(settings, modelProfile),
     BUILDER_OPENCODE_AGENT: settings.agent || "",
     BUILDER_OPENCODE_ATTACH_URL: settings.attachUrl || "",
   });
@@ -1327,7 +1328,7 @@ async function builderAgentForRun(client, run) {
       connectorId: "opencode",
       workerToken: workerToken(),
     });
-    return opencodeAgentFromConnection(connection) ?? BUILDER_AGENT;
+    return opencodeAgentFromConnection(connection, run.modelProfile) ?? BUILDER_AGENT;
   } catch {
     return BUILDER_AGENT;
   }

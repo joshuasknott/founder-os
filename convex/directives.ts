@@ -11,6 +11,7 @@ import {
   normalizePlainWorkerMessage,
   type TaskClassification,
 } from "./taskRuntime";
+import { normalizeModelProfile } from "./modelProfiles";
 
 function autonomyForClassification(classification: TaskClassification): 1 | 2 | 3 {
   if (classification.workerKind === "builder") return 3;
@@ -61,6 +62,7 @@ export const createDirective = mutation({
     title: v.string(),
     objective: v.string(),
     sessionId: v.optional(v.id("chatSessions")),
+    modelProfile: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const current = await requireCurrentUser(ctx);
@@ -72,6 +74,7 @@ export const createDirective = mutation({
       title: args.title,
       objective: args.objective,
     });
+    const modelProfile = normalizeModelProfile(args.modelProfile);
     const assignedAgent = await chooseAssignedAgent(ctx, classification, current.workspaceId);
     const directiveId = await ctx.db.insert("directives", {
       workspaceId: current.workspaceId,
@@ -93,6 +96,7 @@ export const createDirective = mutation({
       dependencies: [],
       classification,
       workerKind: classification.workerKind,
+      modelProfile,
       retryCount: 0,
       updatedAt: now,
     });
@@ -104,6 +108,7 @@ export const createDirective = mutation({
       kind: classification.runKind,
       workerKind: classification.workerKind,
       classification,
+      modelProfile,
       status: "queued",
       title: args.title,
       attemptCount: 0,
@@ -181,6 +186,16 @@ export const addClarification = mutation({
       title: directive.title,
       objective: `${directive.objective}\n\nFounder requested changes: ${args.content}`,
     });
+    const existingTasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_directive", (q) => q.eq("directiveId", args.directiveId))
+      .collect();
+    const modelProfile = normalizeModelProfile(
+      existingTasks
+        .slice()
+        .sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0))
+        .find((task) => task.modelProfile)?.modelProfile,
+    );
     const refinement = buildRefinementRunModel({
       title: directive.title,
       objective: directive.objective,
@@ -207,6 +222,7 @@ export const addClarification = mutation({
       dependencies: [],
       classification,
       workerKind: classification.workerKind,
+      modelProfile,
       retryCount: 0,
       updatedAt: now,
     });
@@ -218,6 +234,7 @@ export const addClarification = mutation({
       kind: refinement.runKind,
       workerKind: refinement.workerKind,
       classification,
+      modelProfile,
       status: "queued",
       title: refinement.title,
       trigger: "chat",

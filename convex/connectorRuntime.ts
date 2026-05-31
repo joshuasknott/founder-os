@@ -210,6 +210,9 @@ export type CanvaConnectionSettings = {
 export type OpenCodeConnectionSettings = {
   command?: string;
   model?: string;
+  modelLow?: string;
+  modelMedium?: string;
+  modelHigh?: string;
   agent?: string;
   attachUrl?: string;
 };
@@ -1077,6 +1080,9 @@ export function publicConnectionCard(
   connection?: ConnectorConnectionLike & { _id?: unknown },
 ) {
   const status = testConnectorConnection(definition, connection);
+  const safeSettings = definition.id === "opencode"
+    ? definedSettings(sanitizeOpenCodeConnectionSettings(connection?.settings))
+    : undefined;
   return {
     ...publicConnectorDefinition(definition),
     connectionId: connection?._id,
@@ -1085,6 +1091,7 @@ export function publicConnectionCard(
     healthy: status.healthy,
     connectedAt: connection?.connectedAt,
     lastTestedAt: connection?.lastTestedAt,
+    safeSettings,
   };
 }
 
@@ -1243,6 +1250,9 @@ export function sanitizeOpenCodeConnectionSettings(settings?: unknown): OpenCode
   return {
     command: cleanSettingString(source.command, 80),
     model: cleanSettingString(source.model, 120),
+    modelLow: cleanSettingString(source.modelLow, 120),
+    modelMedium: cleanSettingString(source.modelMedium, 120),
+    modelHigh: cleanSettingString(source.modelHigh, 120),
     agent: cleanSettingString(source.agent, 120),
     attachUrl: cleanHostSetting(source.attachUrl),
   };
@@ -1392,7 +1402,15 @@ function hasResendSenderSettings(settings?: unknown) {
 
 function hasOpenCodeSettings(settings?: unknown) {
   const sanitized = sanitizeOpenCodeConnectionSettings(settings);
-  return Boolean(sanitized.command || sanitized.model || sanitized.agent || sanitized.attachUrl);
+  return Boolean(
+    sanitized.command ||
+    sanitized.model ||
+    sanitized.modelLow ||
+    sanitized.modelMedium ||
+    sanitized.modelHigh ||
+    sanitized.agent ||
+    sanitized.attachUrl,
+  );
 }
 
 export function testConnectorConnection(

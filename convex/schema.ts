@@ -412,6 +412,7 @@ export default defineSchema({
     dependencies: v.array(v.id("tasks")),
     classification: v.optional(taskClassification),
     workerKind: v.optional(workerKind),
+    modelProfile: v.optional(v.string()),
     outputItemId: v.optional(v.id("items")),
     outputDocumentId: v.optional(v.id("documents")),
     failureReason: v.optional(v.string()),
@@ -848,6 +849,7 @@ export default defineSchema({
     kind: workRunKind,
     workerKind: v.optional(workerKind),
     classification: v.optional(taskClassification),
+    modelProfile: v.optional(v.string()),
     status: v.union(
       v.literal("queued"),
       v.literal("working"),

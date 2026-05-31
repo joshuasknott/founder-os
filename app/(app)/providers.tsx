@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { ConvexReactClient } from "convex/react";
 import { ConvexBetterAuthProvider } from "@convex-dev/better-auth/react";
 import { useMutation, useQuery } from "convex/react";
@@ -23,16 +23,30 @@ export default function ConvexClientProvider({ children }: { children: ReactNode
 }
 
 function AuthGate({ children }: { children: ReactNode }) {
-  const { data: session, isPending } = authClient.useSession();
+  const { data: liveSession, isPending } = authClient.useSession();
+  const [stableSession, setStableSession] = useState<typeof liveSession | null>(null);
   const seedWorkspace = useMutation(api.init.seedSwarm);
   const [seededSessionId, setSeededSessionId] = useState<string | null>(null);
   const [seedError, setSeedError] = useState<{ sessionId: string; message: string } | null>(null);
   const [authTimedOut, setAuthTimedOut] = useState(false);
+  const seedingSessionRef = useRef<string | null>(null);
+  const session = liveSession?.session ? liveSession : stableSession;
   const sessionId = session?.session.id;
   const shouldLoadWorkspace = Boolean(sessionId && seededSessionId === sessionId);
   const currentUser = useQuery(api.users.current, shouldLoadWorkspace ? {} : "skip");
   const workspaces = useQuery(api.workspaces.get, shouldLoadWorkspace ? {} : "skip");
   const workspace = workspaces?.[0];
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      if (liveSession?.session) {
+        setStableSession(liveSession);
+        return;
+      }
+      if (!isPending) setStableSession(null);
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [isPending, liveSession]);
 
   useEffect(() => {
     if (!isPending) {
@@ -44,9 +58,20 @@ function AuthGate({ children }: { children: ReactNode }) {
   }, [isPending]);
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId) {
+      seedingSessionRef.current = null;
+      return;
+    }
+    if (
+      seededSessionId === sessionId ||
+      seedingSessionRef.current === sessionId ||
+      seedError?.sessionId === sessionId
+    ) {
+      return;
+    }
 
     let cancelled = false;
+    seedingSessionRef.current = sessionId;
     seedWorkspace()
       .then(() => {
         if (!cancelled) setSeededSessionId(sessionId);
@@ -63,13 +88,13 @@ function AuthGate({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [seedWorkspace, sessionId]);
+  }, [seedError?.sessionId, seededSessionId, seedWorkspace, sessionId]);
 
-  if (isPending && authTimedOut) {
+  if (isPending && !session?.session && authTimedOut) {
     return <AuthUnavailable />;
   }
 
-  if (isPending) {
+  if (isPending && !session?.session) {
     return <PreparingWorkspace label="Checking your account" />;
   }
 

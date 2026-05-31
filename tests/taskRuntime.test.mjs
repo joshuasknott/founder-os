@@ -63,6 +63,13 @@ test("classifies task objectives into structured worker categories", () => {
   });
   assert.equal(generic.runKind, "generic");
   assert.equal(generic.workerKind, "generic");
+
+  const gmail = runtime.classifyTaskObjective({
+    objective: "Give me my most important gmails in the last 7 days as a priority list",
+  });
+  assert.equal(gmail.runKind, "email");
+  assert.equal(gmail.workerKind, "communications");
+  assert.equal(gmail.category, "communication");
 });
 
 test("leases only queued or expired work and increments attempts", () => {
