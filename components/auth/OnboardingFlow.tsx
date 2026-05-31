@@ -5,21 +5,13 @@ import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Doc } from "@/convex/_generated/dataModel";
 import { Building, Check, Loader2, ShieldCheck, User } from "lucide-react";
+import { ConnectorBrandIcon } from "@/components/settings/connector-brand-icon";
+import { copyForConnector, onboardingConnectorIds } from "@/components/settings/connector-copy";
 
 type OnboardingFlowProps = {
   user: Doc<"users"> | null;
   workspace: Doc<"workspaces">;
 };
-
-const connectionOptions = [
-  { id: "gmail", label: "Gmail", group: "Google Workspace" },
-  { id: "google_calendar", label: "Google Calendar", group: "Google Workspace" },
-  { id: "google_drive", label: "Google Drive", group: "Google Workspace" },
-  { id: "slack", label: "Slack", group: "Communication" },
-  { id: "notion", label: "Notion", group: "Knowledge" },
-  { id: "stripe", label: "Stripe", group: "Payments" },
-  { id: "vercel", label: "Vercel", group: "Hosting" },
-];
 
 export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
   const updateProfile = useMutation(api.users.updateProfile);
@@ -27,10 +19,13 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
   const [name, setName] = useState(user?.name ?? "");
   const [businessName, setBusinessName] = useState(workspace.name);
   const [avatarUrl, setAvatarUrl] = useState(user?.avatarUrl ?? "");
-  const [connectorIds, setConnectorIds] = useState<string[]>(["gmail", "google_calendar", "google_drive"]);
+  const [connectorIds, setConnectorIds] = useState<string[]>([]);
   const [reviewExternalActions, setReviewExternalActions] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
+  const [focusedConnectorId, setFocusedConnectorId] = useState(onboardingConnectorIds[0]);
+  const selectedConnectorCount = connectorIds.length;
+  const focusedConnector = copyForConnector(focusedConnectorId);
 
   useEffect(() => {
     setName(user?.name ?? "");
@@ -77,6 +72,9 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
         connectorIds,
         reviewExternalActions,
       });
+      if (connectorIds.length > 0) {
+        window.location.assign("/settings?onboarding_connections=1");
+      }
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "FounderOS could not finish setup.");
     } finally {
@@ -91,7 +89,7 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
           <p className="text-[11px] font-bold uppercase tracking-widest text-text-muted">FounderOS setup</p>
           <h1 className="mt-3 text-3xl font-semibold tracking-tight text-text-primary">Set up your workspace.</h1>
           <p className="mt-3 text-sm leading-6 text-text-secondary">
-            Confirm the basics so FounderOS knows who you are, what business it is helping with, and which services it can prepare to use.
+            Confirm the basics, then choose any services you want to connect first. You can skip this now and adjust everything later in Settings.
           </p>
           <div className="mt-6 space-y-3 text-sm text-text-secondary">
             <div className="flex items-center gap-2">
@@ -104,7 +102,7 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
             </div>
             <div className="flex items-center gap-2">
               <ShieldCheck size={16} className="text-text-muted" />
-              <span>Connection and review rules</span>
+              <span>Optional connections and review rules</span>
             </div>
           </div>
         </div>
@@ -154,29 +152,87 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
           </div>
 
           <div className="mt-6">
-            <p className="text-xs font-semibold uppercase tracking-wider text-text-muted">Connections to prepare</p>
-            <div className="mt-2 grid gap-2 sm:grid-cols-2">
-              {connectionOptions.map((connection) => {
-                const active = connectorIds.includes(connection.id);
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-text-muted">Optional starting connections</p>
+                <p className="mt-1 text-xs leading-5 text-text-secondary">
+                  Choose the tools you want to connect first. You can skip any of them and change this later in Settings.
+                </p>
+              </div>
+              <span className="text-xs font-semibold text-text-muted">
+                {selectedConnectorCount === 0 ? "None selected" : `${selectedConnectorCount} selected`}
+              </span>
+            </div>
+            <div className="mt-3 grid gap-4 lg:grid-cols-[1fr_260px]">
+              <div className="grid gap-3 sm:grid-cols-2">
+                {onboardingConnectorIds.map((connectorId) => {
+                const connection = copyForConnector(connectorId);
+                const active = connectorIds.includes(connectorId);
+                const focused = focusedConnectorId === connectorId;
                 return (
                   <button
-                    key={connection.id}
+                    key={connectorId}
                     type="button"
-                    onClick={() => toggleConnector(connection.id)}
-                    className={`flex items-center justify-between rounded-lg border px-3 py-2 text-left ${
-                      active
-                        ? "border-black/15 bg-black/[0.03] text-text-primary"
-                        : "border-black/[0.06] text-text-secondary hover:bg-surface"
+                    onClick={() => setFocusedConnectorId(connectorId)}
+                    className={`min-h-[132px] rounded-lg border p-3 text-left transition ${
+                      focused
+                        ? "border-black/20 bg-white shadow-sm"
+                        : "border-black/[0.06] bg-white hover:border-black/15 hover:bg-surface"
                     }`}
                   >
-                    <span>
-                      <span className="block text-sm font-semibold">{connection.label}</span>
-                      <span className="text-xs text-text-muted">{connection.group}</span>
+                    <span className="flex items-start justify-between gap-3">
+                      <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-black/[0.06] bg-surface">
+                        <ConnectorBrandIcon id={connectorId} className="h-6 w-6 text-zinc-900" />
+                      </span>
+                      <span
+                        role="checkbox"
+                        aria-checked={active}
+                        tabIndex={0}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          toggleConnector(connectorId);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          toggleConnector(connectorId);
+                        }}
+                        className={`inline-flex h-6 w-6 items-center justify-center rounded-md border ${
+                          active ? "border-black bg-black text-white" : "border-black/[0.12] text-transparent"
+                        }`}
+                      >
+                        <Check size={14} />
+                      </span>
                     </span>
-                    {active && <Check size={15} />}
+                    <span className="mt-3 block text-sm font-semibold text-text-primary">{connection.label}</span>
+                    <span className="mt-1 block text-xs leading-5 text-text-secondary">{connection.useCase}</span>
+                    <span className="mt-3 inline-flex rounded-full bg-black/[0.035] px-2 py-0.5 text-[11px] font-medium text-text-muted">
+                      {connection.setup}
+                    </span>
                   </button>
                 );
               })}
+              </div>
+              <aside className="rounded-lg border border-black/[0.06] bg-surface p-4">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-black/[0.06] bg-white">
+                    <ConnectorBrandIcon id={focusedConnectorId} className="h-6 w-6 text-zinc-900" />
+                  </span>
+                  <div>
+                    <p className="text-sm font-semibold text-text-primary">{focusedConnector.label}</p>
+                    <p className="text-xs text-text-muted">{focusedConnector.group}</p>
+                  </div>
+                </div>
+                <p className="mt-4 text-xs leading-5 text-text-secondary">{focusedConnector.detail}</p>
+                <button
+                  type="button"
+                  onClick={() => toggleConnector(focusedConnectorId)}
+                  className="mt-4 inline-flex h-9 w-full items-center justify-center rounded-lg bg-black px-3 text-xs font-semibold text-white"
+                >
+                  {connectorIds.includes(focusedConnectorId) ? "Remove from setup" : "Add to setup"}
+                </button>
+              </aside>
             </div>
           </div>
 
@@ -205,7 +261,7 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
               className="inline-flex items-center gap-2 rounded-lg bg-black px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isSaving && <Loader2 size={15} className="animate-spin" />}
-              Open FounderOS
+              {selectedConnectorCount > 0 ? "Continue to connections" : "Open FounderOS"}
             </button>
           </div>
         </div>

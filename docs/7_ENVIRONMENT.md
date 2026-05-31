@@ -21,8 +21,11 @@ or AI calls can use them.
 - AI reasoning and generation: `DEEPSEEK_API_KEY`; optional `DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, `DEEPSEEK_REASONING_MODEL`.
 - Z.ai/GLM generation: `ZAI_API_KEY`.
 - Embeddings and Gemini fallback: `GEMINI_API_KEY`; optional `GEMINI_MODEL`, `GEMINI_EMBEDDING_MODEL`.
-- GitHub webhook ingestion: `GITHUB_WEBHOOK_SECRET`.
-- Stripe read-only finance sync: `STRIPE_READ_ONLY_KEY`.
+- Connector credential encryption: `CONNECTOR_SECRET_ENCRYPTION_KEY`; optional `CONNECTOR_OAUTH_STATE_SECRET`.
+- Google Workspace connector OAuth: `GOOGLE_CONNECTOR_CLIENT_ID`, `GOOGLE_CONNECTOR_CLIENT_SECRET`; falls back to the Google sign-in client when these are not set.
+- GitHub App install flow and webhook ingestion: `GITHUB_APP_NAME`, `GITHUB_WEBHOOK_SECRET`; optional app variables `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`.
+- Canva design connector OAuth: `CANVA_CLIENT_ID`, `CANVA_CLIENT_SECRET`.
+- Stripe, Vercel, PostHog, and Resend private keys are entered in Settings and stored through the encrypted connector credential path.
 - Preferred real product-building runs with OpenCode:
   - Install and authenticate OpenCode, then set `BUILDER_PROVIDER=opencode`.
   - Choose a model with `BUILDER_OPENCODE_MODEL`, for example an OpenRouter, DeepSeek, Z.ai, or local provider model in OpenCode's `provider/model` format.

@@ -82,6 +82,7 @@ const connectorAuthType = v.union(
   v.literal("oauth2"),
   v.literal("api_key"),
   v.literal("webhook"),
+  v.literal("github_app"),
   v.literal("managed")
 );
 
@@ -159,15 +160,65 @@ export default defineSchema({
     storageProvider: v.string(),
     vaultKey: v.string(),
     sealedReference: v.string(),
+    encryptedSecret: v.optional(v.string()),
+    encryptionAlgorithm: v.optional(v.string()),
+    encryptionNonce: v.optional(v.string()),
     fingerprint: v.string(),
     keyVersion: v.string(),
     secretPreview: v.string(),
+    tokenExpiresAt: v.optional(v.number()),
+    refreshCredentialRef: v.optional(v.string()),
+    metadata: v.optional(v.any()),
     createdAt: v.number(),
     rotatedAt: v.optional(v.number()),
   })
     .index("by_workspace", ["workspaceId"])
     .index("by_workspace_connector", ["workspaceId", "connectorId"])
     .index("by_vault_key", ["vaultKey"]),
+
+  connectorSyncStates: defineTable({
+    workspaceId: v.id("workspaces"),
+    connectorId: v.string(),
+    entityType: v.string(),
+    cursor: v.optional(v.string()),
+    lastSuccessfulSyncAt: v.optional(v.number()),
+    lastAttemptedSyncAt: v.optional(v.number()),
+    lastSafeMessage: v.optional(v.string()),
+    lastSafeError: v.optional(v.string()),
+    status: v.union(
+      v.literal("idle"),
+      v.literal("syncing"),
+      v.literal("needs_attention"),
+      v.literal("failed")
+    ),
+    metadata: v.optional(v.any()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_workspace", ["workspaceId"])
+    .index("by_workspace_connector", ["workspaceId", "connectorId"])
+    .index("by_workspace_connector_entity", ["workspaceId", "connectorId", "entityType"]),
+
+  connectorSetupSessions: defineTable({
+    workspaceId: v.id("workspaces"),
+    providerId: v.string(),
+    connectorIds: v.array(v.string()),
+    state: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("completed"),
+      v.literal("failed"),
+      v.literal("expired")
+    ),
+    codeVerifierCredentialRef: v.optional(v.string()),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    completedAt: v.optional(v.number()),
+    lastSafeMessage: v.optional(v.string()),
+  })
+    .index("by_workspace", ["workspaceId"])
+    .index("by_state", ["state"])
+    .index("by_workspace_provider", ["workspaceId", "providerId"]),
 
   connectorConnections: defineTable({
     workspaceId: v.id("workspaces"),

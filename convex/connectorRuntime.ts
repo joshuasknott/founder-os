@@ -16,11 +16,17 @@ export const connectorCapabilities = [
   "publish_preview",
   "import_content",
   "export_content",
+  "query_analytics",
+  "send_transactional_email",
+  "create_design",
+  "import_repository_context",
+  "write_code",
+  "run_code_builder",
 ] as const;
 
 export type ConnectorCapability = (typeof connectorCapabilities)[number];
 
-export type ConnectorAuthType = "oauth2" | "api_key" | "webhook" | "managed";
+export type ConnectorAuthType = "oauth2" | "api_key" | "webhook" | "github_app" | "managed";
 export type ConnectorConnectionStatus =
   | "not_connected"
   | "needs_attention"
@@ -59,7 +65,15 @@ export type ConnectorActionType =
   | "update_external_record"
   | "create_preview_deployment"
   | "publish_preview"
-  | "publish_live_deployment";
+  | "publish_live_deployment"
+  | "query_analytics"
+  | "send_transactional_email"
+  | "create_design"
+  | "export_design"
+  | "import_repository_context"
+  | "create_pull_request"
+  | "create_issue"
+  | "run_code_builder";
 
 export type ConnectorActionDefinition = {
   type: ConnectorActionType;
@@ -127,12 +141,18 @@ export type ConnectorActionEvaluation = {
 };
 
 export type ConnectorCredentialEnvelope = {
-  storageProvider: "founderos_managed_vault";
+  storageProvider: "founderos_encrypted_secret_store";
   vaultKey: string;
   sealedReference: string;
+  encryptedSecret: string;
+  encryptionAlgorithm: "AES-GCM";
+  encryptionNonce: string;
   fingerprint: string;
   keyVersion: string;
   secretPreview: string;
+  tokenExpiresAt?: number;
+  refreshCredentialRef?: string;
+  metadata?: Record<string, unknown>;
   createdAt: number;
 };
 
@@ -161,6 +181,50 @@ export type ContentConnectorConnectionSettings = {
   channelName?: string;
 };
 
+export type GitHubConnectionSettings = {
+  accountName?: string;
+  organizationName?: string;
+  repositoryOwner?: string;
+  repositoryName?: string;
+  installationId?: string;
+};
+
+export type PostHogConnectionSettings = {
+  host?: string;
+  projectId?: string;
+  projectName?: string;
+};
+
+export type ResendConnectionSettings = {
+  senderEmail?: string;
+  senderDomain?: string;
+};
+
+export type CanvaConnectionSettings = {
+  accountEmail?: string;
+  teamName?: string;
+  brandFolderName?: string;
+  defaultDesignType?: string;
+};
+
+export type OpenCodeConnectionSettings = {
+  command?: string;
+  model?: string;
+  agent?: string;
+  attachUrl?: string;
+};
+
+export type ApiKeyConnectorId = "stripe" | "vercel" | "posthog" | "resend";
+
+export type ApiKeyConnectorSetupValidation = {
+  ok: boolean;
+  connectorId?: ApiKeyConnectorId;
+  grantedScopes: string[];
+  settings?: Record<string, unknown>;
+  status: ConnectorConnectionStatus;
+  safeMessage: string;
+};
+
 type ConnectorActionHandlerResult = {
   status: "completed" | "needs_attention";
   safeSummary: string;
@@ -181,6 +245,8 @@ const sensitiveCapabilities = new Set<ConnectorCapability>([
   "change_live_asset",
   "publish_preview",
   "export_content",
+  "send_transactional_email",
+  "write_code",
 ]);
 
 export const connectorRegistry: Record<string, ConnectorDefinition> = {
@@ -356,6 +422,123 @@ export const connectorRegistry: Record<string, ConnectorDefinition> = {
         approval: "always",
         sensitiveActionKind: "change_live_asset",
         handlerKey: "google_drive.update",
+      },
+    ],
+  },
+  google_docs: {
+    id: "google_docs",
+    safeDisplayName: "Google Docs",
+    description: "Import documents and export or update approved Library drafts.",
+    authType: "oauth2",
+    capabilities: ["read_business_records", "write_business_records", "import_content", "export_content"],
+    requiredScopes: ["google.docs.read", "google.docs.file"],
+    scopeLabels: ["Import documents", "Export approved documents"],
+    connectionStatus: "not_connected",
+    approvalPolicy: "per_sensitive_action",
+    actions: [
+      {
+        type: "import_content",
+        safeLabel: "Import documents",
+        requiredCapabilities: ["read_business_records", "import_content"],
+        requiredScopes: ["google.docs.read"],
+        approval: "never",
+        handlerKey: "google_docs.import",
+      },
+      {
+        type: "export_content",
+        safeLabel: "Export approved documents",
+        requiredCapabilities: ["write_business_records", "export_content"],
+        requiredScopes: ["google.docs.file"],
+        approval: "always",
+        sensitiveActionKind: "change_live_asset",
+        handlerKey: "google_docs.export",
+      },
+      {
+        type: "update_external_record",
+        safeLabel: "Update approved documents",
+        requiredCapabilities: ["write_business_records", "change_live_asset"],
+        requiredScopes: ["google.docs.file"],
+        approval: "always",
+        sensitiveActionKind: "change_live_asset",
+        handlerKey: "google_docs.update",
+      },
+    ],
+  },
+  google_sheets: {
+    id: "google_sheets",
+    safeDisplayName: "Google Sheets",
+    description: "Import spreadsheet context and export or update approved Library tables.",
+    authType: "oauth2",
+    capabilities: ["read_business_records", "write_business_records", "import_content", "export_content"],
+    requiredScopes: ["google.sheets.read", "google.sheets.write"],
+    scopeLabels: ["Import spreadsheets", "Export approved spreadsheets"],
+    connectionStatus: "not_connected",
+    approvalPolicy: "per_sensitive_action",
+    actions: [
+      {
+        type: "import_content",
+        safeLabel: "Import spreadsheets",
+        requiredCapabilities: ["read_business_records", "import_content"],
+        requiredScopes: ["google.sheets.read"],
+        approval: "never",
+        handlerKey: "google_sheets.import",
+      },
+      {
+        type: "export_content",
+        safeLabel: "Export approved spreadsheets",
+        requiredCapabilities: ["write_business_records", "export_content"],
+        requiredScopes: ["google.sheets.write"],
+        approval: "always",
+        sensitiveActionKind: "change_live_asset",
+        handlerKey: "google_sheets.export",
+      },
+      {
+        type: "update_external_record",
+        safeLabel: "Update approved spreadsheets",
+        requiredCapabilities: ["write_business_records", "change_live_asset"],
+        requiredScopes: ["google.sheets.write"],
+        approval: "always",
+        sensitiveActionKind: "change_live_asset",
+        handlerKey: "google_sheets.update",
+      },
+    ],
+  },
+  github: {
+    id: "github",
+    safeDisplayName: "GitHub",
+    description: "Import repository context and prepare approved repository changes.",
+    authType: "github_app",
+    capabilities: ["import_repository_context", "read_business_records", "write_business_records", "write_code", "change_live_asset", "import_content"],
+    requiredScopes: ["github.metadata", "github.contents.read", "github.pull_requests.write", "github.issues.write"],
+    scopeLabels: ["Import repository context", "Prepare approved repository changes"],
+    connectionStatus: "not_connected",
+    approvalPolicy: "per_sensitive_action",
+    actions: [
+      {
+        type: "import_repository_context",
+        safeLabel: "Import repository context",
+        requiredCapabilities: ["import_repository_context", "read_business_records", "import_content"],
+        requiredScopes: ["github.metadata", "github.contents.read"],
+        approval: "never",
+        handlerKey: "github.import_repository_context",
+      },
+      {
+        type: "create_pull_request",
+        safeLabel: "Create approved pull requests",
+        requiredCapabilities: ["write_code", "change_live_asset"],
+        requiredScopes: ["github.pull_requests.write", "github.contents.read"],
+        approval: "always",
+        sensitiveActionKind: "change_live_asset",
+        handlerKey: "github.create_pull_request",
+      },
+      {
+        type: "create_issue",
+        safeLabel: "Create approved issues",
+        requiredCapabilities: ["write_business_records"],
+        requiredScopes: ["github.issues.write"],
+        approval: "always",
+        sensitiveActionKind: "change_live_asset",
+        handlerKey: "github.create_issue",
       },
     ],
   },
@@ -590,6 +773,121 @@ export const connectorRegistry: Record<string, ConnectorDefinition> = {
       },
     ],
   },
+  posthog: {
+    id: "posthog",
+    safeDisplayName: "PostHog",
+    description: "Import product analytics summaries and answer product usage questions.",
+    authType: "api_key",
+    capabilities: ["query_analytics", "read_business_records", "import_content"],
+    requiredScopes: ["posthog.read"],
+    scopeLabels: ["Read product analytics", "Import summarized insights"],
+    connectionStatus: "not_connected",
+    approvalPolicy: "per_sensitive_action",
+    actions: [
+      {
+        type: "query_analytics",
+        safeLabel: "Query analytics",
+        requiredCapabilities: ["query_analytics", "read_business_records"],
+        requiredScopes: ["posthog.read"],
+        approval: "never",
+        handlerKey: "posthog.query",
+      },
+      {
+        type: "import_content",
+        safeLabel: "Import product insights",
+        requiredCapabilities: ["query_analytics", "import_content"],
+        requiredScopes: ["posthog.read"],
+        approval: "never",
+        handlerKey: "posthog.import",
+      },
+      {
+        type: "update_external_record",
+        safeLabel: "Update analytics configuration",
+        requiredCapabilities: ["change_live_asset"],
+        requiredScopes: ["posthog.write"],
+        approval: "blocked",
+        sensitiveActionKind: "change_live_asset",
+        handlerKey: "posthog.blocked",
+        blockedSafeMessage: "PostHog changes are blocked in this version. FounderOS can only read analytics and import summaries.",
+      },
+    ],
+  },
+  resend: {
+    id: "resend",
+    safeDisplayName: "Resend",
+    description: "Prepare outbound emails and send them only after approval.",
+    authType: "api_key",
+    capabilities: ["draft_email", "send_transactional_email", "send_email"],
+    requiredScopes: ["resend.send"],
+    scopeLabels: ["Prepare emails", "Send approved emails"],
+    connectionStatus: "not_connected",
+    approvalPolicy: "per_sensitive_action",
+    actions: [
+      {
+        type: "draft_email",
+        safeLabel: "Prepare email drafts",
+        requiredCapabilities: ["draft_email"],
+        requiredScopes: ["resend.send"],
+        approval: "never",
+        handlerKey: "resend.draft",
+      },
+      {
+        type: "send_transactional_email",
+        safeLabel: "Send approved emails",
+        requiredCapabilities: ["send_transactional_email", "send_email"],
+        requiredScopes: ["resend.send"],
+        approval: "always",
+        sensitiveActionKind: "send_email",
+        handlerKey: "resend.send",
+      },
+    ],
+  },
+  canva: {
+    id: "canva",
+    safeDisplayName: "Canva",
+    description: "Create design drafts, import assets, and export reviewable design files.",
+    authType: "oauth2",
+    capabilities: ["create_design", "read_business_records", "write_business_records", "import_content", "export_content"],
+    requiredScopes: ["canva.design.read", "canva.design.write", "canva.asset.read"],
+    scopeLabels: ["Create design drafts", "Import design assets", "Export review files"],
+    connectionStatus: "not_connected",
+    approvalPolicy: "per_sensitive_action",
+    actions: [
+      {
+        type: "create_design",
+        safeLabel: "Create design drafts",
+        requiredCapabilities: ["create_design", "write_business_records"],
+        requiredScopes: ["canva.design.write"],
+        approval: "never",
+        handlerKey: "canva.create_design",
+      },
+      {
+        type: "import_content",
+        safeLabel: "Import design assets",
+        requiredCapabilities: ["read_business_records", "import_content"],
+        requiredScopes: ["canva.asset.read"],
+        approval: "never",
+        handlerKey: "canva.import",
+      },
+      {
+        type: "export_design",
+        safeLabel: "Export review files",
+        requiredCapabilities: ["export_content", "read_business_records"],
+        requiredScopes: ["canva.design.read"],
+        approval: "never",
+        handlerKey: "canva.export_design",
+      },
+      {
+        type: "update_external_record",
+        safeLabel: "Update approved designs",
+        requiredCapabilities: ["change_live_asset"],
+        requiredScopes: ["canva.design.write"],
+        approval: "always",
+        sensitiveActionKind: "change_live_asset",
+        handlerKey: "canva.update",
+      },
+    ],
+  },
   publishing: {
     id: "publishing",
     safeDisplayName: "Publishing",
@@ -678,6 +976,36 @@ export const connectorRegistry: Record<string, ConnectorDefinition> = {
         approval: "always",
         sensitiveActionKind: "change_live_asset",
         handlerKey: "code.update",
+      },
+    ],
+  },
+  opencode: {
+    id: "opencode",
+    safeDisplayName: "OpenCode",
+    description: "Run private product-building work and return review artifacts.",
+    authType: "managed",
+    capabilities: ["run_code_builder", "write_code", "create_preview_deployment"],
+    requiredScopes: ["opencode.run"],
+    scopeLabels: ["Run private builder work"],
+    connectionStatus: "not_connected",
+    approvalPolicy: "per_sensitive_action",
+    actions: [
+      {
+        type: "run_code_builder",
+        safeLabel: "Run builder work",
+        requiredCapabilities: ["run_code_builder", "write_code"],
+        requiredScopes: ["opencode.run"],
+        approval: "never",
+        handlerKey: "opencode.run",
+      },
+      {
+        type: "update_live_asset",
+        safeLabel: "Apply approved code changes",
+        requiredCapabilities: ["write_code", "change_live_asset"],
+        requiredScopes: ["opencode.run"],
+        approval: "always",
+        sensitiveActionKind: "change_live_asset",
+        handlerKey: "opencode.apply",
       },
     ],
   },
@@ -792,6 +1120,24 @@ function cleanEmailSetting(value: unknown) {
   return cleaned.toLowerCase();
 }
 
+function cleanHostSetting(value: unknown) {
+  const cleaned = cleanSettingString(value, 240);
+  if (!cleaned) return undefined;
+  try {
+    const url = new URL(/^https?:\/\//i.test(cleaned) ? cleaned : `https://${cleaned}`);
+    if (url.protocol !== "https:") return undefined;
+    return url.origin.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
+function cleanIdSetting(value: unknown, maxLength = 120) {
+  const cleaned = cleanSettingString(value, maxLength);
+  if (!cleaned) return undefined;
+  return cleaned.replace(/[^A-Za-z0-9._:-]/g, "");
+}
+
 export function sanitizeContentConnectorConnectionSettings(
   settings?: unknown,
 ): ContentConnectorConnectionSettings {
@@ -839,39 +1185,214 @@ export function sanitizeGoogleWorkspaceConnectionSettings(
   };
 }
 
+export function sanitizeGitHubConnectionSettings(settings?: unknown): GitHubConnectionSettings {
+  const source = settings && typeof settings === "object" && !Array.isArray(settings)
+    ? settings as Record<string, unknown>
+    : {};
+
+  return {
+    accountName: cleanIdSetting(source.accountName),
+    organizationName: cleanIdSetting(source.organizationName),
+    repositoryOwner: cleanIdSetting(source.repositoryOwner),
+    repositoryName: cleanIdSetting(source.repositoryName),
+    installationId: cleanIdSetting(source.installationId),
+  };
+}
+
+export function sanitizePostHogConnectionSettings(settings?: unknown): PostHogConnectionSettings {
+  const source = settings && typeof settings === "object" && !Array.isArray(settings)
+    ? settings as Record<string, unknown>
+    : {};
+
+  return {
+    host: cleanHostSetting(source.host),
+    projectId: cleanIdSetting(source.projectId),
+    projectName: cleanSettingString(source.projectName, 120),
+  };
+}
+
+export function sanitizeResendConnectionSettings(settings?: unknown): ResendConnectionSettings {
+  const source = settings && typeof settings === "object" && !Array.isArray(settings)
+    ? settings as Record<string, unknown>
+    : {};
+
+  return {
+    senderEmail: cleanEmailSetting(source.senderEmail),
+    senderDomain: cleanDomainSetting(source.senderDomain),
+  };
+}
+
+export function sanitizeCanvaConnectionSettings(settings?: unknown): CanvaConnectionSettings {
+  const source = settings && typeof settings === "object" && !Array.isArray(settings)
+    ? settings as Record<string, unknown>
+    : {};
+
+  return {
+    accountEmail: cleanEmailSetting(source.accountEmail),
+    teamName: cleanSettingString(source.teamName, 120),
+    brandFolderName: cleanSettingString(source.brandFolderName, 120),
+    defaultDesignType: cleanSettingString(source.defaultDesignType, 80),
+  };
+}
+
+export function sanitizeOpenCodeConnectionSettings(settings?: unknown): OpenCodeConnectionSettings {
+  const source = settings && typeof settings === "object" && !Array.isArray(settings)
+    ? settings as Record<string, unknown>
+    : {};
+
+  return {
+    command: cleanSettingString(source.command, 80),
+    model: cleanSettingString(source.model, 120),
+    agent: cleanSettingString(source.agent, 120),
+    attachUrl: cleanHostSetting(source.attachUrl),
+  };
+}
+
+function definedSettings<T extends Record<string, unknown>>(settings: T) {
+  const entries = Object.entries(settings).filter(([, value]) => typeof value === "string" && value.length > 0);
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
 export function sanitizeConnectorConnectionSettings(connectorId: string, settings?: unknown) {
   if (connectorId === "vercel") {
-    const sanitized = sanitizeVercelConnectionSettings(settings);
-    const entries = Object.entries(sanitized).filter(
-      ([, value]) => typeof value === "string" && value.length > 0,
-    );
-    return entries.length > 0 ? Object.fromEntries(
-      entries,
-    ) : undefined;
+    return definedSettings(sanitizeVercelConnectionSettings(settings));
   }
 
-  if (connectorId === "gmail" || connectorId === "google_calendar") {
-    const sanitized = sanitizeGoogleWorkspaceConnectionSettings(settings);
-    const entries = Object.entries(sanitized).filter(
-      ([, value]) => typeof value === "string" && value.length > 0,
-    );
-    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+  if (
+    connectorId === "gmail" ||
+    connectorId === "google_calendar" ||
+    connectorId === "google_drive" ||
+    connectorId === "google_docs" ||
+    connectorId === "google_sheets"
+  ) {
+    return definedSettings(sanitizeGoogleWorkspaceConnectionSettings(settings));
   }
 
-  if (connectorId === "google_drive" || connectorId === "slack" || connectorId === "notion") {
-    const sanitized = sanitizeContentConnectorConnectionSettings(settings);
-    const entries = Object.entries(sanitized).filter(
-      ([, value]) => typeof value === "string" && value.length > 0,
-    );
-    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+  if (connectorId === "github") {
+    return definedSettings(sanitizeGitHubConnectionSettings(settings));
+  }
+
+  if (connectorId === "posthog") {
+    return definedSettings(sanitizePostHogConnectionSettings(settings));
+  }
+
+  if (connectorId === "resend") {
+    return definedSettings(sanitizeResendConnectionSettings(settings));
+  }
+
+  if (connectorId === "canva") {
+    return definedSettings(sanitizeCanvaConnectionSettings(settings));
+  }
+
+  if (connectorId === "opencode") {
+    return definedSettings(sanitizeOpenCodeConnectionSettings(settings));
+  }
+
+  if (connectorId === "slack" || connectorId === "notion") {
+    return definedSettings(sanitizeContentConnectorConnectionSettings(settings));
   }
 
   return undefined;
 }
 
+const apiKeyConnectorScopes: Record<ApiKeyConnectorId, string[]> = {
+  stripe: ["stripe.read"],
+  vercel: ["web.preview", "web.publish"],
+  posthog: ["posthog.read"],
+  resend: ["resend.send"],
+};
+
+function isApiKeyConnectorId(connectorId: string): connectorId is ApiKeyConnectorId {
+  return connectorId === "stripe" || connectorId === "vercel" || connectorId === "posthog" || connectorId === "resend";
+}
+
+function cleanCredentialCandidate(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function isStripeRestrictedReadKey(value: string) {
+  return /^rk_(test|live)_[A-Za-z0-9_]+$/.test(value);
+}
+
+function hasReasonablePrivateTokenShape(connectorId: ApiKeyConnectorId, value: string) {
+  if (!value || value.length < 12 || /\s/.test(value)) return false;
+  if (connectorId === "stripe") return isStripeRestrictedReadKey(value);
+  if (connectorId === "resend") return /^re_[A-Za-z0-9_-]{8,}$/.test(value);
+  if (connectorId === "posthog") return /^(phx|phc)_[A-Za-z0-9_-]{8,}$/.test(value);
+  return value.length >= 16;
+}
+
+export function validateApiKeyConnectorSetup(args: {
+  connectorId: string;
+  credential: unknown;
+  settings?: unknown;
+}): ApiKeyConnectorSetupValidation {
+  const definition = getConnectorDefinition(args.connectorId);
+  if (!definition || !isApiKeyConnectorId(args.connectorId) || definition.authType !== "api_key") {
+    return {
+      ok: false,
+      grantedScopes: [],
+      status: "not_connected",
+      safeMessage: "That service is not available for private key setup.",
+    };
+  }
+
+  const credential = cleanCredentialCandidate(args.credential);
+  if (!hasReasonablePrivateTokenShape(args.connectorId, credential)) {
+    const message = args.connectorId === "stripe"
+      ? "Use a restricted read-only Stripe key."
+      : "Use a valid private key for this service.";
+    return {
+      ok: false,
+      connectorId: args.connectorId,
+      grantedScopes: [],
+      status: "needs_attention",
+      safeMessage: message,
+    };
+  }
+
+  const grantedScopes = apiKeyConnectorScopes[args.connectorId];
+  const settings = sanitizeConnectorConnectionSettings(args.connectorId, args.settings);
+  const status = testConnectorConnection(definition, {
+    status: "connected",
+    credentialRef: "pending",
+    grantedScopes,
+    settings,
+  });
+
+  return {
+    ok: true,
+    connectorId: args.connectorId,
+    grantedScopes,
+    settings,
+    status: status.status,
+    safeMessage: status.safeMessage,
+  };
+}
+
 function hasVercelProjectSettings(settings?: unknown) {
   const sanitized = sanitizeVercelConnectionSettings(settings);
   return Boolean(sanitized.projectId || sanitized.projectName);
+}
+
+function hasGitHubInstallSettings(settings?: unknown) {
+  const sanitized = sanitizeGitHubConnectionSettings(settings);
+  return Boolean(sanitized.installationId && (sanitized.repositoryName || sanitized.organizationName || sanitized.repositoryOwner));
+}
+
+function hasPostHogProjectSettings(settings?: unknown) {
+  const sanitized = sanitizePostHogConnectionSettings(settings);
+  return Boolean(sanitized.host && sanitized.projectId);
+}
+
+function hasResendSenderSettings(settings?: unknown) {
+  const sanitized = sanitizeResendConnectionSettings(settings);
+  return Boolean(sanitized.senderEmail || sanitized.senderDomain);
+}
+
+function hasOpenCodeSettings(settings?: unknown) {
+  const sanitized = sanitizeOpenCodeConnectionSettings(settings);
+  return Boolean(sanitized.command || sanitized.model || sanitized.agent || sanitized.attachUrl);
 }
 
 export function testConnectorConnection(
@@ -894,6 +1415,31 @@ export function testConnectorConnection(
     };
   }
 
+  if (definition.id === "opencode") {
+    if (!hasOpenCodeSettings(connection.settings)) {
+      return {
+        status: "needs_attention",
+        safeMessage: "Choose how FounderOS should call OpenCode before using it.",
+        healthy: false,
+      };
+    }
+
+    const missingScopes = missingRequiredScopes(definition.requiredScopes, connection.grantedScopes);
+    if (missingScopes.length > 0) {
+      return {
+        status: "needs_attention",
+        safeMessage: "This service needs updated access before FounderOS uses it.",
+        healthy: false,
+      };
+    }
+
+    return {
+      status: "connected",
+      safeMessage: "OpenCode is configured and ready.",
+      healthy: true,
+    };
+  }
+
   if (!connection.credentialRef) {
     return {
       status: "needs_attention",
@@ -906,6 +1452,30 @@ export function testConnectorConnection(
     return {
       status: "needs_attention",
       safeMessage: "Choose the site or tool before FounderOS uses this connection.",
+      healthy: false,
+    };
+  }
+
+  if (definition.id === "github" && !hasGitHubInstallSettings(connection.settings)) {
+    return {
+      status: "needs_attention",
+      safeMessage: "Choose the repository before FounderOS uses this connection.",
+      healthy: false,
+    };
+  }
+
+  if (definition.id === "posthog" && !hasPostHogProjectSettings(connection.settings)) {
+    return {
+      status: "needs_attention",
+      safeMessage: "Choose the analytics project before FounderOS uses this connection.",
+      healthy: false,
+    };
+  }
+
+  if (definition.id === "resend" && !hasResendSenderSettings(connection.settings)) {
+    return {
+      status: "needs_attention",
+      safeMessage: "Choose the sender before FounderOS uses this connection.",
       healthy: false,
     };
   }
@@ -926,42 +1496,11 @@ export function testConnectorConnection(
   };
 }
 
-function testBaseConnectorConnection(connection?: ConnectorConnectionLike | null): ConnectorStatusResult {
-  if (!connection) {
-    return {
-      status: "not_connected",
-      safeMessage: "Not connected yet.",
-      healthy: false,
-    };
-  }
-
-  if (connection.status === "disabled" || connection.disabledAt) {
-    return {
-      status: "disabled",
-      safeMessage: "Turned off.",
-      healthy: false,
-    };
-  }
-
-  if (!connection.credentialRef) {
-    return {
-      status: "needs_attention",
-      safeMessage: "Finish connecting this service before FounderOS uses it.",
-      healthy: false,
-    };
-  }
-
-  return {
-    status: "connected",
-    safeMessage: "Connected and ready.",
-    healthy: true,
-  };
-}
-
 export function connectorActionRequiresApproval(
   definition: ConnectorDefinition,
   action: ConnectorActionDefinition,
 ) {
+  if (action.approval === "never") return false;
   if (definition.approvalPolicy === "always") return true;
   if (action.approval === "always") return true;
   return action.requiredCapabilities.some((capability) => sensitiveCapabilities.has(capability));
@@ -1004,8 +1543,15 @@ export function evaluateConnectorActionRequest(args: {
     };
   }
 
-  const status = testBaseConnectorConnection(args.connection);
-  if (status.status === "disabled") {
+  if (!args.connection) {
+    return {
+      allowed: false,
+      approvalRequired: false,
+      reason: "not_connected",
+      safeMessage: "Not connected yet.",
+    };
+  }
+  if (args.connection.status === "disabled" || args.connection.disabledAt) {
     return {
       allowed: false,
       approvalRequired: false,
@@ -1013,12 +1559,12 @@ export function evaluateConnectorActionRequest(args: {
       safeMessage: "This service is turned off.",
     };
   }
-  if (status.status !== "connected") {
+  if (definition.id !== "opencode" && !args.connection.credentialRef) {
     return {
       allowed: false,
       approvalRequired: false,
       reason: "not_connected",
-      safeMessage: status.safeMessage,
+      safeMessage: "Finish connecting this service before FounderOS uses it.",
     };
   }
 
@@ -1032,6 +1578,16 @@ export function evaluateConnectorActionRequest(args: {
       approvalRequired: false,
       reason: "missing_permission",
       safeMessage: "This service needs updated access before FounderOS can do that.",
+    };
+  }
+
+  const status = testConnectorConnection(definition, args.connection);
+  if (status.status !== "connected") {
+    return {
+      allowed: false,
+      approvalRequired: false,
+      reason: "not_connected",
+      safeMessage: status.safeMessage,
     };
   }
 
@@ -1069,14 +1625,40 @@ function secretPreview(secret: string) {
   return visible ? `****${visible}` : "stored securely";
 }
 
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function base64ToBytes(value: string) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+async function connectorEncryptionKey(keyMaterial?: string) {
+  const encoder = new TextEncoder();
+  const material = keyMaterial ?? process.env.CONNECTOR_SECRET_ENCRYPTION_KEY ?? "founderos-local-dev-connector-key";
+  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(material));
+  return crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+
 export const connectorCredentialStorage = {
-  seal(args: {
+  async seal(args: {
     workspaceId: string;
     connectorId: string;
     secret: string;
     now: number;
     keyVersion?: string;
-  }): ConnectorCredentialEnvelope {
+    keyMaterial?: string;
+    tokenExpiresAt?: number;
+    refreshCredentialRef?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<ConnectorCredentialEnvelope> {
     const cleanSecret = args.secret.trim();
     if (!cleanSecret) {
       throw new Error("A credential is required.");
@@ -1089,16 +1671,44 @@ export const connectorCredentialStorage = {
       args.connectorId,
       fingerprint,
     ].join(":");
+    const nonce = crypto.getRandomValues(new Uint8Array(12));
+    const encoder = new TextEncoder();
+    const key = await connectorEncryptionKey(args.keyMaterial);
+    const encrypted = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: nonce },
+      key,
+      encoder.encode(cleanSecret),
+    );
 
     return {
-      storageProvider: "founderos_managed_vault",
+      storageProvider: "founderos_encrypted_secret_store",
       vaultKey,
       sealedReference: `sealed:${stableHash(`${vaultKey}:${args.now}`)}`,
+      encryptedSecret: bytesToBase64(new Uint8Array(encrypted)),
+      encryptionAlgorithm: "AES-GCM",
+      encryptionNonce: bytesToBase64(nonce),
       fingerprint,
       keyVersion: args.keyVersion ?? "managed-v1",
       secretPreview: secretPreview(cleanSecret),
+      tokenExpiresAt: args.tokenExpiresAt,
+      refreshCredentialRef: args.refreshCredentialRef,
+      metadata: args.metadata,
       createdAt: args.now,
     };
+  },
+
+  async unseal(args: {
+    encryptedSecret: string;
+    encryptionNonce: string;
+    keyMaterial?: string;
+  }) {
+    const key = await connectorEncryptionKey(args.keyMaterial);
+    const decrypted = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: base64ToBytes(args.encryptionNonce) },
+      key,
+      base64ToBytes(args.encryptedSecret),
+    );
+    return new TextDecoder().decode(decrypted);
   },
 
   publicMetadata(envelope: ConnectorCredentialEnvelope) {
@@ -1107,6 +1717,7 @@ export const connectorCredentialStorage = {
       fingerprint: envelope.fingerprint,
       keyVersion: envelope.keyVersion,
       secretPreview: envelope.secretPreview,
+      tokenExpiresAt: envelope.tokenExpiresAt,
       createdAt: envelope.createdAt,
     };
   },
@@ -1117,7 +1728,7 @@ export function safeConnectorError(error: unknown, fallback = "The connection co
   const scrubbed = raw
     .replace(/https?:\/\/\S+/gi, "the service")
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "private credential")
-    .replace(/\b(sk|pk|rk|ghp|xox[baprs]?|ya29)[-_A-Za-z0-9]{8,}\b/gi, "private credential")
+    .replace(/\b(sk|pk|rk|ghp|ghs|github_pat|xox[baprs]?|ya29|re|phx|phc)[-_A-Za-z0-9]{8,}\b/gi, "private credential")
     .replace(/\b[A-Za-z0-9+/]{32,}={0,2}\b/g, "private detail")
     .replace(/\{[\s\S]*\}/g, "details")
     .replace(/\s+/g, " ")
@@ -1157,6 +1768,15 @@ export const connectorActionHandlers: Record<string, ConnectorActionHandler> = {
   "google_drive.import": safeNoopHandler,
   "google_drive.export": safeNoopHandler,
   "google_drive.update": safeNoopHandler,
+  "google_docs.import": safeNoopHandler,
+  "google_docs.export": safeNoopHandler,
+  "google_docs.update": safeNoopHandler,
+  "google_sheets.import": safeNoopHandler,
+  "google_sheets.export": safeNoopHandler,
+  "google_sheets.update": safeNoopHandler,
+  "github.import_repository_context": safeNoopHandler,
+  "github.create_pull_request": safeNoopHandler,
+  "github.create_issue": safeNoopHandler,
   "slack.import": safeNoopHandler,
   "slack.post": safeNoopHandler,
   "slack.update": safeNoopHandler,
@@ -1173,12 +1793,23 @@ export const connectorActionHandlers: Record<string, ConnectorActionHandler> = {
   "stripe.sync_revenue": safeNoopHandler,
   "stripe.sync_finance_context": safeNoopHandler,
   "stripe.blocked": blockedActionHandler,
+  "posthog.query": safeNoopHandler,
+  "posthog.import": safeNoopHandler,
+  "posthog.blocked": blockedActionHandler,
+  "resend.draft": safeNoopHandler,
+  "resend.send": safeNoopHandler,
+  "canva.create_design": safeNoopHandler,
+  "canva.import": safeNoopHandler,
+  "canva.export_design": safeNoopHandler,
+  "canva.update": safeNoopHandler,
   "publishing.post": safeNoopHandler,
   "publishing.update": safeNoopHandler,
   "knowledge.read": safeNoopHandler,
   "knowledge.write": safeNoopHandler,
   "code.preview": safeNoopHandler,
   "code.update": safeNoopHandler,
+  "opencode.run": safeNoopHandler,
+  "opencode.apply": safeNoopHandler,
   "vercel.preview": safeNoopHandler,
   "vercel.publish": safeNoopHandler,
 };
@@ -1219,6 +1850,14 @@ export function safeActionSummary(actionType: string) {
     create_preview_deployment: "The review link is ready.",
     publish_preview: "The approved preview step is ready.",
     publish_live_deployment: "The approved live update is ready.",
+    query_analytics: "Analytics context is ready.",
+    send_transactional_email: "The approved email step is ready.",
+    create_design: "The design draft is ready.",
+    export_design: "The design export is ready for review.",
+    import_repository_context: "Repository context is ready in Library.",
+    create_pull_request: "The approved repository change is ready.",
+    create_issue: "The approved issue is ready.",
+    run_code_builder: "The private builder step is ready.",
   };
 
   return labels[actionType] ?? "The approved step is ready.";

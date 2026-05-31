@@ -33,7 +33,7 @@ export const add = mutation({
   handler: async (ctx, { workspaceId, name, value }) => {
     const current = await requireWorkspaceAccess(ctx, workspaceId, ["Owner"]);
     const now = Date.now();
-    const envelope = connectorCredentialStorage.seal({
+    const envelope = await connectorCredentialStorage.seal({
       workspaceId: String(workspaceId),
       connectorId: "legacy_api_key",
       secret: value,

@@ -40,17 +40,21 @@ test("connector display keeps generic services when no specific service replaces
   const visible = display.visibleConnectorServices([
     { id: "payments" },
     { id: "code_hosting" },
-    { id: "publishing" },
+    { id: "knowledge" },
   ]);
 
-  assert.deepEqual(visible.map((service) => service.id), ["payments", "code_hosting", "publishing"]);
+  assert.deepEqual(visible.map((service) => service.id), ["payments", "code_hosting", "knowledge"]);
 });
 
 test("connector display groups services by founder-facing area", () => {
   const groups = display.groupedConnectorServices([
     { id: "gmail" },
     { id: "google_drive" },
-    { id: "slack" },
+    { id: "google_docs" },
+    { id: "github" },
+    { id: "posthog" },
+    { id: "resend" },
+    { id: "canva" },
     { id: "stripe" },
     { id: "vercel" },
   ]);
@@ -58,8 +62,11 @@ test("connector display groups services by founder-facing area", () => {
   assert.deepEqual(
     groups.map((group) => [group.title, group.services.map((service) => service.id)]),
     [
-      ["Google Workspace", ["gmail", "google_drive"]],
-      ["Communication", ["slack"]],
+      ["Google Workspace", ["gmail", "google_drive", "google_docs"]],
+      ["Code", ["github"]],
+      ["Analytics", ["posthog"]],
+      ["Communication", ["resend"]],
+      ["Design", ["canva"]],
       ["Payments", ["stripe"]],
       ["Hosting", ["vercel"]],
     ],

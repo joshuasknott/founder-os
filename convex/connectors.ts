@@ -1,5 +1,6 @@
 import { action, internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { anyApi, type FunctionReference } from "convex/server";
 import { actorFromIdentity, isAuthorizedWorkerToken, requireCurrentUser, requireWorkspaceAccess, workerActor } from "./authz";
@@ -19,12 +20,26 @@ import {
   safeConnectorError,
   sanitizeConnectorConnectionSettings,
   testConnectorConnection,
+  validateApiKeyConnectorSetup,
   type ConnectorActionType,
   type ConnectorConnectionStatus,
 } from "./connectorRuntime";
 import {
+  buildGitHubAppInstallUrl,
+  buildOAuthAuthorizationUrl,
+  connectorIdsForOAuthSetup,
+  createConnectorSetupState,
+  createPkcePair,
+  exchangeOAuthCode,
+  oauthProviderForConnector,
+  parseOAuthTokenResult,
+  randomConnectorSecret,
+  refreshOAuthToken,
+  verifyConnectorSetupState,
+  type OAuthConnectorId,
+} from "./connectorAuthRuntime";
+import {
   fetchStripeReadOnlyDataset,
-  isStripeReadOnlyCredential,
   prepareStripeSync,
   type PreparedStripeFact,
   type PreparedStripeItem,
@@ -38,11 +53,114 @@ const STRIPE_CONNECTOR_ID = "stripe";
 const STRIPE_SYNC_ACTION = "sync_stripe_finance_context";
 const STRIPE_CONNECTION_SETUP_MESSAGE =
   "Finish the private read-only Stripe connection setup before syncing finance context.";
+const CONNECTOR_SETUP_SESSION_MS = 15 * 60 * 1000;
+const CONNECTION_SYNC_ENTITY = "connection";
+
+function connectorStateSecret() {
+  return process.env.CONNECTOR_OAUTH_STATE_SECRET
+    ?? process.env.BETTER_AUTH_SECRET
+    ?? process.env.CONNECTOR_SECRET_ENCRYPTION_KEY
+    ?? "founderos-local-dev-connector-state";
+}
+
+function connectorSiteUrl() {
+  return (
+    process.env.NEXT_PUBLIC_SITE_URL
+    ?? process.env.BETTER_AUTH_BASE_URL
+    ?? "http://localhost:3000"
+  ).replace(/\/+$/g, "");
+}
+
+function oauthRedirectUri(providerId: OAuthConnectorId) {
+  const url = new URL("/settings", connectorSiteUrl());
+  url.searchParams.set("connector_provider", providerId);
+  return url.toString();
+}
+
+function oauthClientCredentials(providerId: OAuthConnectorId) {
+  if (providerId === "google_workspace") {
+    return {
+      clientId: process.env.GOOGLE_CONNECTOR_CLIENT_ID ?? process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CONNECTOR_CLIENT_SECRET ?? process.env.GOOGLE_CLIENT_SECRET,
+    };
+  }
+
+  return {
+    clientId: process.env.CANVA_CLIENT_ID,
+    clientSecret: process.env.CANVA_CLIENT_SECRET,
+  };
+}
+
+function githubAppName() {
+  return process.env.GITHUB_APP_NAME ?? "founderos";
+}
+
+function connectorRequest(input: string, init?: Parameters<typeof fetch>[1]) {
+  return fetch(input, init).then((response) => ({
+    ok: response.ok,
+    status: response.status,
+    headers: response.headers,
+    json: () => response.json() as Promise<unknown>,
+  }));
+}
+
+function setupStatusFromConnection(status: ConnectorConnectionStatus) {
+  return status === "connected" ? "idle" as const : "needs_attention" as const;
+}
+
+type ConnectorSetupSessionForAction = {
+  _id: Id<"connectorSetupSessions">;
+  workspaceId: Id<"workspaces">;
+  providerId: string;
+  connectorIds: string[];
+  status: string;
+  expiresAt: number;
+  codeVerifierCredentialRef?: string;
+};
 const internalConnectors = anyApi.connectors as unknown as {
+  startConnection: FunctionReference<"mutation", "public", {
+    workspaceId: string;
+    connectorId: string;
+    settings?: unknown;
+  }, string>;
+  completeManagedConnection: FunctionReference<"mutation", "public", {
+    workspaceId: string;
+    connectorId: string;
+    credentialHandle: string;
+    grantedScopes: string[];
+    settings?: unknown;
+    connectedBy?: string;
+    tokenExpiresAt?: number;
+    refreshCredentialHandle?: string;
+    metadata?: unknown;
+  }, string>;
   getConnectorConnectionForSync: FunctionReference<"query", "internal", {
     workspaceId: string;
     connectorId: string;
   }>;
+  getConnectorCredentialBundle: FunctionReference<"query", "internal", {
+    workspaceId: string;
+    connectorId: string;
+  }, unknown>;
+  getConnectorSetupSessionByState: FunctionReference<"query", "internal", {
+    state: string;
+  }, unknown>;
+  getConnectorCredentialByVaultKey: FunctionReference<"query", "internal", {
+    vaultKey: string;
+  }, unknown>;
+  createConnectorSetupSession: FunctionReference<"mutation", "internal", {
+    workspaceId: string;
+    providerId: string;
+    connectorIds: string[];
+    state: string;
+    codeVerifier?: string;
+    expiresAt: number;
+  }, string>;
+  markConnectorSetupSession: FunctionReference<"mutation", "internal", {
+    sessionId: string;
+    status: "completed" | "failed" | "expired";
+    safeMessage: string;
+  }, string>;
   logConnectorAction: FunctionReference<"mutation", "internal", {
     workspaceId: string;
     connectionId?: string;
@@ -64,14 +182,19 @@ const internalConnectors = anyApi.connectors as unknown as {
   authorizeWorkspaceForAction: FunctionReference<"query", "internal", {
     workspaceId: string;
   }, unknown>;
+  upsertConnectorSyncState: FunctionReference<"mutation", "internal", {
+    workspaceId: string;
+    connectorId: string;
+    entityType: string;
+    cursor?: string;
+    status: "idle" | "syncing" | "needs_attention" | "failed";
+    lastSuccessfulSyncAt?: number;
+    lastAttemptedSyncAt?: number;
+    lastSafeMessage?: string;
+    lastSafeError?: string;
+    metadata?: unknown;
+  }, unknown>;
 };
-
-function stripeReadOnlyCredential() {
-  const credential = process.env.STRIPE_READ_ONLY_KEY;
-  return typeof credential === "string" && isStripeReadOnlyCredential(credential)
-    ? credential.trim()
-    : undefined;
-}
 
 function isStripeFactMetadata(metadata: unknown) {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false;
@@ -82,6 +205,54 @@ function isStripeFactMetadata(metadata: unknown) {
     return (connector as Record<string, unknown>).connectorId === STRIPE_CONNECTOR_ID;
   }
   return false;
+}
+
+async function upsertConnectionSyncStateDirect(
+  ctx: MutationCtx,
+  args: {
+    workspaceId: Id<"workspaces">;
+    connectorId: string;
+    status: "idle" | "syncing" | "needs_attention" | "failed";
+    safeMessage?: string;
+    safeError?: string;
+    cursor?: string;
+    successful?: boolean;
+    metadata?: unknown;
+    now: number;
+    entityType?: string;
+  },
+) {
+  const entityType = args.entityType ?? CONNECTION_SYNC_ENTITY;
+  const existing = await ctx.db
+    .query("connectorSyncStates")
+    .withIndex("by_workspace_connector_entity", (q) =>
+      q.eq("workspaceId", args.workspaceId).eq("connectorId", args.connectorId).eq("entityType", entityType),
+    )
+    .first();
+
+  const patch = {
+    cursor: args.cursor,
+    status: args.status,
+    lastSuccessfulSyncAt: args.successful ? args.now : existing?.lastSuccessfulSyncAt,
+    lastAttemptedSyncAt: args.now,
+    lastSafeMessage: args.safeMessage,
+    lastSafeError: args.safeError,
+    metadata: args.metadata,
+    updatedAt: args.now,
+  };
+
+  if (existing) {
+    await ctx.db.patch(existing._id, patch);
+    return existing._id;
+  }
+
+  return await ctx.db.insert("connectorSyncStates", {
+    workspaceId: args.workspaceId,
+    connectorId: args.connectorId,
+    entityType,
+    createdAt: args.now,
+    ...patch,
+  });
 }
 
 async function upsertStripePreparedItem(
@@ -284,6 +455,149 @@ export const authorizeWorkspaceForAction = internalQuery({
   },
 });
 
+export const getConnectorConnectionForWorker = query({
+  args: {
+    workspaceId: v.id("workspaces"),
+    connectorId: v.string(),
+    workerToken: v.string(),
+  },
+  handler: async (ctx, args) => {
+    if (!isAuthorizedWorkerToken(args.workerToken)) throw new Error("Worker authorization required.");
+    const connection = await ctx.db
+      .query("connectorConnections")
+      .withIndex("by_workspace_connector", (q) =>
+        q.eq("workspaceId", args.workspaceId).eq("connectorId", args.connectorId),
+      )
+      .first();
+    if (!connection) return null;
+    return {
+      connectorId: connection.connectorId,
+      status: connection.status,
+      grantedScopes: connection.grantedScopes,
+      settings: connection.settings,
+      lastSafeMessage: connection.lastSafeMessage,
+    };
+  },
+});
+
+export const getConnectorCredentialBundle = internalQuery({
+  args: {
+    workspaceId: v.id("workspaces"),
+    connectorId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const connection = await ctx.db
+      .query("connectorConnections")
+      .withIndex("by_workspace_connector", (q) =>
+        q.eq("workspaceId", args.workspaceId).eq("connectorId", args.connectorId),
+      )
+      .first();
+    const credential = connection?.credentialRef
+      ? await ctx.db
+          .query("connectorCredentials")
+          .withIndex("by_vault_key", (q) => q.eq("vaultKey", connection.credentialRef!))
+          .first()
+      : null;
+    const refreshCredential = credential?.refreshCredentialRef
+      ? await ctx.db
+          .query("connectorCredentials")
+          .withIndex("by_vault_key", (q) => q.eq("vaultKey", credential.refreshCredentialRef!))
+          .first()
+      : null;
+
+    return { connection, credential, refreshCredential };
+  },
+});
+
+export const getConnectorSetupSessionByState = internalQuery({
+  args: { state: v.string() },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("connectorSetupSessions")
+      .withIndex("by_state", (q) => q.eq("state", args.state))
+      .first();
+  },
+});
+
+export const getConnectorCredentialByVaultKey = internalQuery({
+  args: { vaultKey: v.string() },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("connectorCredentials")
+      .withIndex("by_vault_key", (q) => q.eq("vaultKey", args.vaultKey))
+      .first();
+  },
+});
+
+export const createConnectorSetupSession = internalMutation({
+  args: {
+    workspaceId: v.id("workspaces"),
+    providerId: v.string(),
+    connectorIds: v.array(v.string()),
+    state: v.string(),
+    codeVerifier: v.optional(v.string()),
+    expiresAt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const verifierEnvelope = args.codeVerifier
+      ? await connectorCredentialStorage.seal({
+          workspaceId: String(args.workspaceId),
+          connectorId: `${args.providerId}:oauth_pkce`,
+          secret: args.codeVerifier,
+          now,
+          metadata: { credentialKind: "oauth_pkce_verifier", providerId: args.providerId },
+        })
+      : undefined;
+
+    if (verifierEnvelope) {
+      await ctx.db.insert("connectorCredentials", {
+        workspaceId: args.workspaceId,
+        connectorId: `${args.providerId}:oauth_pkce`,
+        storageProvider: verifierEnvelope.storageProvider,
+        vaultKey: verifierEnvelope.vaultKey,
+        sealedReference: verifierEnvelope.sealedReference,
+        encryptedSecret: verifierEnvelope.encryptedSecret,
+        encryptionAlgorithm: verifierEnvelope.encryptionAlgorithm,
+        encryptionNonce: verifierEnvelope.encryptionNonce,
+        fingerprint: verifierEnvelope.fingerprint,
+        keyVersion: verifierEnvelope.keyVersion,
+        secretPreview: verifierEnvelope.secretPreview,
+        metadata: verifierEnvelope.metadata,
+        createdAt: now,
+      });
+    }
+
+    return await ctx.db.insert("connectorSetupSessions", {
+      workspaceId: args.workspaceId,
+      providerId: args.providerId,
+      connectorIds: args.connectorIds,
+      state: args.state,
+      status: "pending",
+      codeVerifierCredentialRef: verifierEnvelope?.vaultKey,
+      createdAt: now,
+      expiresAt: args.expiresAt,
+      lastSafeMessage: "Connection setup started.",
+    });
+  },
+});
+
+export const markConnectorSetupSession = internalMutation({
+  args: {
+    sessionId: v.id("connectorSetupSessions"),
+    status: v.union(v.literal("completed"), v.literal("failed"), v.literal("expired")),
+    safeMessage: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.sessionId, {
+      status: args.status,
+      completedAt: Date.now(),
+      lastSafeMessage: args.safeMessage,
+    });
+    return args.sessionId;
+  },
+});
+
 export const logConnectorAction = internalMutation({
   args: {
     workspaceId: v.id("workspaces"),
@@ -337,6 +651,88 @@ export const logConnectorAction = internalMutation({
   },
 });
 
+export const getConnectorSyncState = query({
+  args: {
+    workspaceId: v.id("workspaces"),
+    connectorId: v.string(),
+    entityType: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await requireWorkspaceAccess(ctx, args.workspaceId);
+    const state = await ctx.db
+      .query("connectorSyncStates")
+      .withIndex("by_workspace_connector_entity", (q) =>
+        q.eq("workspaceId", args.workspaceId).eq("connectorId", args.connectorId).eq("entityType", args.entityType),
+      )
+      .first();
+    if (!state) return null;
+    return {
+      connectorId: state.connectorId,
+      entityType: state.entityType,
+      status: state.status,
+      cursor: state.cursor,
+      lastSuccessfulSyncAt: state.lastSuccessfulSyncAt,
+      lastAttemptedSyncAt: state.lastAttemptedSyncAt,
+      lastSafeMessage: state.lastSafeMessage,
+      lastSafeError: state.lastSafeError,
+      updatedAt: state.updatedAt,
+    };
+  },
+});
+
+export const upsertConnectorSyncState = internalMutation({
+  args: {
+    workspaceId: v.id("workspaces"),
+    connectorId: v.string(),
+    entityType: v.string(),
+    cursor: v.optional(v.string()),
+    status: v.union(
+      v.literal("idle"),
+      v.literal("syncing"),
+      v.literal("needs_attention"),
+      v.literal("failed"),
+    ),
+    lastSuccessfulSyncAt: v.optional(v.number()),
+    lastAttemptedSyncAt: v.optional(v.number()),
+    lastSafeMessage: v.optional(v.string()),
+    lastSafeError: v.optional(v.string()),
+    metadata: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const existing = await ctx.db
+      .query("connectorSyncStates")
+      .withIndex("by_workspace_connector_entity", (q) =>
+        q.eq("workspaceId", args.workspaceId).eq("connectorId", args.connectorId).eq("entityType", args.entityType),
+      )
+      .first();
+
+    const patch = {
+      cursor: args.cursor,
+      status: args.status,
+      lastSuccessfulSyncAt: args.lastSuccessfulSyncAt,
+      lastAttemptedSyncAt: args.lastAttemptedSyncAt ?? now,
+      lastSafeMessage: args.lastSafeMessage,
+      lastSafeError: args.lastSafeError,
+      metadata: args.metadata,
+      updatedAt: now,
+    };
+
+    if (existing) {
+      await ctx.db.patch(existing._id, patch);
+      return existing._id;
+    }
+
+    return await ctx.db.insert("connectorSyncStates", {
+      workspaceId: args.workspaceId,
+      connectorId: args.connectorId,
+      entityType: args.entityType,
+      createdAt: now,
+      ...patch,
+    });
+  },
+});
+
 export const persistStripeSync = internalMutation({
   args: {
     workspaceId: v.id("workspaces"),
@@ -381,6 +777,17 @@ export const persistStripeSync = internalMutation({
         updatedAt: now,
       });
     }
+
+    await upsertConnectionSyncStateDirect(ctx, {
+      workspaceId: args.workspaceId,
+      connectorId: STRIPE_CONNECTOR_ID,
+      entityType: "finance_context",
+      status: "idle",
+      safeMessage: prepared.summary.safeSummary,
+      successful: true,
+      metadata: prepared.summary.counts,
+      now,
+    });
 
     await ctx.db.insert("connectorActionLogs", {
       workspaceId: args.workspaceId,
@@ -450,8 +857,17 @@ export const syncStripeFinance = action({
       return evaluation;
     }
 
-    const credential = stripeReadOnlyCredential();
-    if (!credential) {
+    const bundle = await ctx.runQuery(internalConnectors.getConnectorCredentialBundle, {
+      workspaceId: args.workspaceId,
+      connectorId: STRIPE_CONNECTOR_ID,
+    }) as {
+      credential?: {
+        encryptedSecret?: string;
+        encryptionNonce?: string;
+      } | null;
+    };
+    const credentialDoc = bundle.credential;
+    if (!credentialDoc?.encryptedSecret || !credentialDoc.encryptionNonce) {
       await ctx.runMutation(internalConnectors.logConnectorAction, {
         workspaceId: args.workspaceId,
         connectionId: connection?._id,
@@ -462,6 +878,13 @@ export const syncStripeFinance = action({
         approvalRequired: false,
         safeSummary: STRIPE_CONNECTION_SETUP_MESSAGE,
       });
+      await ctx.runMutation(internalConnectors.upsertConnectorSyncState, {
+        workspaceId: args.workspaceId,
+        connectorId: STRIPE_CONNECTOR_ID,
+        entityType: "finance_context",
+        status: "needs_attention",
+        lastSafeMessage: STRIPE_CONNECTION_SETUP_MESSAGE,
+      });
       return {
         allowed: false,
         approvalRequired: false,
@@ -471,6 +894,17 @@ export const syncStripeFinance = action({
     }
 
     try {
+      await ctx.runMutation(internalConnectors.upsertConnectorSyncState, {
+        workspaceId: args.workspaceId,
+        connectorId: STRIPE_CONNECTOR_ID,
+        entityType: "finance_context",
+        status: "syncing",
+        lastSafeMessage: "Stripe finance context is syncing.",
+      });
+      const credential = await connectorCredentialStorage.unseal({
+        encryptedSecret: credentialDoc.encryptedSecret,
+        encryptionNonce: credentialDoc.encryptionNonce,
+      });
       const dataset = await fetchStripeReadOnlyDataset({
         apiKey: credential,
         fetchFn: async (input, init) => {
@@ -503,12 +937,359 @@ export const syncStripeFinance = action({
         safeError,
         internalErrorCode: "STRIPE_SYNC_FAILED",
       });
+      await ctx.runMutation(internalConnectors.upsertConnectorSyncState, {
+        workspaceId: args.workspaceId,
+        connectorId: STRIPE_CONNECTOR_ID,
+        entityType: "finance_context",
+        status: "failed",
+        lastSafeMessage: "Stripe finance context could not sync.",
+        lastSafeError: safeError,
+      });
       return {
         allowed: false,
         approvalRequired: false,
         reason: "not_connected" as const,
         safeMessage: safeError,
       };
+    }
+  },
+});
+
+export const startOAuthConnection = action({
+  args: {
+    workspaceId: v.id("workspaces"),
+    connectorId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const providerId = oauthProviderForConnector(args.connectorId);
+    const connectorIds = connectorIdsForOAuthSetup(args.connectorId);
+    if (!providerId || connectorIds.length === 0) {
+      return { ok: false, safeMessage: "That service is not available for sign-in setup." };
+    }
+
+    const client = oauthClientCredentials(providerId);
+    if (!client.clientId || !client.clientSecret) {
+      return { ok: false, safeMessage: "Sign-in setup is not configured yet." };
+    }
+
+    for (const connectorId of connectorIds) {
+      await ctx.runMutation(internalConnectors.startConnection, {
+        workspaceId: args.workspaceId,
+        connectorId,
+      });
+    }
+
+    const now = Date.now();
+    const state = await createConnectorSetupState(
+      {
+        workspaceId: String(args.workspaceId),
+        providerId,
+        connectorIds,
+        nonce: randomConnectorSecret(18),
+        issuedAt: now,
+      },
+      connectorStateSecret(),
+    );
+    const pkce = providerId === "canva" ? await createPkcePair() : undefined;
+
+    await ctx.runMutation(internalConnectors.createConnectorSetupSession, {
+      workspaceId: args.workspaceId,
+      providerId,
+      connectorIds,
+      state,
+      codeVerifier: pkce?.verifier,
+      expiresAt: now + CONNECTOR_SETUP_SESSION_MS,
+    });
+
+    return {
+      ok: true,
+      authorizationUrl: buildOAuthAuthorizationUrl({
+        connectorId: providerId,
+        clientId: client.clientId,
+        redirectUri: oauthRedirectUri(providerId),
+        state,
+        prompt: providerId === "google_workspace" ? "consent" : undefined,
+        codeChallenge: pkce?.challenge,
+        codeChallengeMethod: pkce?.method,
+      }),
+      safeMessage: "Continue in the service window to finish connecting.",
+    };
+  },
+});
+
+export const completeOAuthConnection = action({
+  args: {
+    state: v.string(),
+    code: v.string(),
+  },
+  handler: async (ctx, args) => {
+    let session: ConnectorSetupSessionForAction | null = null;
+
+    try {
+      const payload = await verifyConnectorSetupState({
+        state: args.state,
+        secret: connectorStateSecret(),
+        now: Date.now(),
+        maxAgeMs: CONNECTOR_SETUP_SESSION_MS,
+      });
+      session = await ctx.runQuery(internalConnectors.getConnectorSetupSessionByState, {
+        state: args.state,
+      }) as ConnectorSetupSessionForAction | null;
+
+      if (!session || session.workspaceId !== payload.workspaceId || session.providerId !== payload.providerId) {
+        throw new Error("Connection setup expired. Start again from Settings.");
+      }
+      if (session.status !== "pending" || Date.now() > session.expiresAt) {
+        throw new Error("Connection setup expired. Start again from Settings.");
+      }
+
+      await ctx.runQuery(internalConnectors.authorizeWorkspaceForAction, {
+        workspaceId: session.workspaceId,
+      });
+
+      if (payload.providerId !== "google_workspace" && payload.providerId !== "canva") {
+        throw new Error("Connection setup expired. Start again from Settings.");
+      }
+      const providerId = payload.providerId;
+      const client = oauthClientCredentials(providerId);
+      if (!client.clientId || !client.clientSecret) {
+        throw new Error("Sign-in setup is not configured yet.");
+      }
+
+      let codeVerifier: string | undefined;
+      if (session.codeVerifierCredentialRef) {
+        const verifierCredential = await ctx.runQuery(internalConnectors.getConnectorCredentialByVaultKey, {
+          vaultKey: session.codeVerifierCredentialRef,
+        }) as { encryptedSecret?: string; encryptionNonce?: string } | null;
+        if (!verifierCredential?.encryptedSecret || !verifierCredential.encryptionNonce) {
+          throw new Error("Connection setup expired. Start again from Settings.");
+        }
+        codeVerifier = await connectorCredentialStorage.unseal({
+          encryptedSecret: verifierCredential.encryptedSecret,
+          encryptionNonce: verifierCredential.encryptionNonce,
+        });
+      }
+
+      const tokenPayload = await exchangeOAuthCode({
+        connectorId: providerId,
+        clientId: client.clientId,
+        clientSecret: client.clientSecret,
+        code: args.code,
+        redirectUri: oauthRedirectUri(providerId),
+        codeVerifier,
+        request: connectorRequest,
+      });
+      const token = parseOAuthTokenResult({
+        connectorId: providerId,
+        payload: tokenPayload,
+        now: Date.now(),
+      });
+
+      for (const connectorId of session.connectorIds) {
+        await ctx.runMutation(internalConnectors.completeManagedConnection, {
+          workspaceId: session.workspaceId,
+          connectorId,
+          credentialHandle: token.accessToken,
+          refreshCredentialHandle: token.refreshToken,
+          tokenExpiresAt: token.expiresAt,
+          grantedScopes: token.grantedScopes,
+          connectedBy: "settings",
+          metadata: { credentialKind: "oauth_access_token", providerId },
+        });
+      }
+
+      await ctx.runMutation(internalConnectors.markConnectorSetupSession, {
+        sessionId: session._id,
+        status: "completed",
+        safeMessage: "Connected and ready.",
+      });
+
+      return { ok: true, safeMessage: "Connected and ready." };
+    } catch (error) {
+      const safeMessage = safeConnectorError(error);
+      if (session) {
+        await ctx.runMutation(internalConnectors.markConnectorSetupSession, {
+          sessionId: session._id,
+          status: "failed",
+          safeMessage,
+        });
+      }
+      return { ok: false, safeMessage };
+    }
+  },
+});
+
+export const refreshOAuthConnection = action({
+  args: {
+    workspaceId: v.id("workspaces"),
+    connectorId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const providerId = oauthProviderForConnector(args.connectorId);
+    if (!providerId) {
+      return { ok: false, safeMessage: "That service is not available for refresh." };
+    }
+
+    try {
+      await ctx.runQuery(internalConnectors.authorizeWorkspaceForAction, {
+        workspaceId: args.workspaceId,
+      });
+      const bundle = await ctx.runQuery(internalConnectors.getConnectorCredentialBundle, {
+        workspaceId: args.workspaceId,
+        connectorId: args.connectorId,
+      }) as {
+        connection?: { settings?: unknown } | null;
+        refreshCredential?: { encryptedSecret?: string; encryptionNonce?: string } | null;
+      };
+      if (!bundle.refreshCredential?.encryptedSecret || !bundle.refreshCredential.encryptionNonce) {
+        return { ok: false, safeMessage: "Reconnect this service from Settings." };
+      }
+
+      const client = oauthClientCredentials(providerId);
+      if (!client.clientId || !client.clientSecret) {
+        return { ok: false, safeMessage: "Sign-in setup is not configured yet." };
+      }
+
+      const refreshSecret = await connectorCredentialStorage.unseal({
+        encryptedSecret: bundle.refreshCredential.encryptedSecret,
+        encryptionNonce: bundle.refreshCredential.encryptionNonce,
+      });
+      const tokenPayload = await refreshOAuthToken({
+        connectorId: providerId,
+        clientId: client.clientId,
+        clientSecret: client.clientSecret,
+        refreshToken: refreshSecret,
+        request: connectorRequest,
+      });
+      const token = parseOAuthTokenResult({
+        connectorId: providerId,
+        payload: tokenPayload,
+        now: Date.now(),
+      });
+
+      await ctx.runMutation(internalConnectors.completeManagedConnection, {
+        workspaceId: args.workspaceId,
+        connectorId: args.connectorId,
+        credentialHandle: token.accessToken,
+        refreshCredentialHandle: token.refreshToken ?? refreshSecret,
+        tokenExpiresAt: token.expiresAt,
+        grantedScopes: token.grantedScopes,
+        settings: bundle.connection?.settings,
+        connectedBy: "settings",
+        metadata: { credentialKind: "oauth_access_token", providerId },
+      });
+
+      return { ok: true, safeMessage: "Connected and ready." };
+    } catch (error) {
+      return { ok: false, safeMessage: safeConnectorError(error) };
+    }
+  },
+});
+
+export const startGitHubAppConnection = action({
+  args: {
+    workspaceId: v.id("workspaces"),
+  },
+  handler: async (ctx, args) => {
+    await ctx.runMutation(internalConnectors.startConnection, {
+      workspaceId: args.workspaceId,
+      connectorId: "github",
+    });
+
+    const now = Date.now();
+    const state = await createConnectorSetupState(
+      {
+        workspaceId: String(args.workspaceId),
+        providerId: "github_app",
+        connectorIds: ["github"],
+        nonce: randomConnectorSecret(18),
+        issuedAt: now,
+      },
+      connectorStateSecret(),
+    );
+    await ctx.runMutation(internalConnectors.createConnectorSetupSession, {
+      workspaceId: args.workspaceId,
+      providerId: "github_app",
+      connectorIds: ["github"],
+      state,
+      expiresAt: now + CONNECTOR_SETUP_SESSION_MS,
+    });
+
+    return {
+      ok: true,
+      installationUrl: buildGitHubAppInstallUrl({
+        appName: githubAppName(),
+        state,
+      }),
+      safeMessage: "Continue in GitHub to install the app.",
+    };
+  },
+});
+
+export const completeGitHubAppConnection = action({
+  args: {
+    state: v.string(),
+    installationId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    let session: ConnectorSetupSessionForAction | null = null;
+
+    try {
+      const payload = await verifyConnectorSetupState({
+        state: args.state,
+        secret: connectorStateSecret(),
+        now: Date.now(),
+        maxAgeMs: CONNECTOR_SETUP_SESSION_MS,
+      });
+      if (payload.providerId !== "github_app") {
+        throw new Error("Connection setup expired. Start again from Settings.");
+      }
+      session = await ctx.runQuery(internalConnectors.getConnectorSetupSessionByState, {
+        state: args.state,
+      }) as ConnectorSetupSessionForAction | null;
+      if (!session || session.workspaceId !== payload.workspaceId || session.status !== "pending" || Date.now() > session.expiresAt) {
+        throw new Error("Connection setup expired. Start again from Settings.");
+      }
+
+      await ctx.runQuery(internalConnectors.authorizeWorkspaceForAction, {
+        workspaceId: session.workspaceId,
+      });
+      const installationId = args.installationId.trim().replace(/[^A-Za-z0-9]/g, "");
+      if (!installationId) {
+        throw new Error("GitHub did not finish installing. Start again from Settings.");
+      }
+      const definition = getConnectorDefinition("github");
+      if (!definition) throw new Error("That service is not available yet.");
+
+      await ctx.runMutation(internalConnectors.completeManagedConnection, {
+        workspaceId: session.workspaceId,
+        connectorId: "github",
+        credentialHandle: installationId,
+        grantedScopes: definition.requiredScopes,
+        settings: { installationId },
+        connectedBy: "settings",
+        metadata: { credentialKind: "github_app_installation" },
+      });
+      await ctx.runMutation(internalConnectors.markConnectorSetupSession, {
+        sessionId: session._id,
+        status: "completed",
+        safeMessage: "Choose the repository before FounderOS uses this connection.",
+      });
+
+      return {
+        ok: true,
+        safeMessage: "GitHub is installed. Choose the repository before FounderOS uses it.",
+      };
+    } catch (error) {
+      const safeMessage = safeConnectorError(error);
+      if (session) {
+        await ctx.runMutation(internalConnectors.markConnectorSetupSession, {
+          sessionId: session._id,
+          status: "failed",
+          safeMessage,
+        });
+      }
+      return { ok: false, safeMessage };
     }
   },
 });
@@ -555,6 +1336,14 @@ export const startConnection = mutation({
           createdAt: now,
         });
 
+    await upsertConnectionSyncStateDirect(ctx, {
+      workspaceId: args.workspaceId,
+      connectorId: definition.id,
+      status: "needs_attention",
+      safeMessage: "Connection setup started.",
+      now,
+    });
+
     await ctx.db.insert("connectorActionLogs", {
       workspaceId: args.workspaceId,
       connectionId,
@@ -588,6 +1377,9 @@ export const completeManagedConnection = mutation({
     grantedScopes: v.array(v.string()),
     settings: v.optional(v.any()),
     connectedBy: v.optional(v.string()),
+    tokenExpiresAt: v.optional(v.number()),
+    refreshCredentialHandle: v.optional(v.string()),
+    metadata: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
     const current = await requireWorkspaceAccess(ctx, args.workspaceId, ["Owner"]);
@@ -595,11 +1387,44 @@ export const completeManagedConnection = mutation({
     if (!definition) throw new Error("That service is not available yet.");
 
     const now = Date.now();
-    const envelope = connectorCredentialStorage.seal({
+    const refreshEnvelope = args.refreshCredentialHandle
+      ? await connectorCredentialStorage.seal({
+          workspaceId: String(args.workspaceId),
+          connectorId: `${definition.id}:refresh`,
+          secret: args.refreshCredentialHandle,
+          now,
+          metadata: { credentialKind: "refresh_token", connectorId: definition.id },
+        })
+      : undefined;
+
+    if (refreshEnvelope) {
+      await ctx.db.insert("connectorCredentials", {
+        workspaceId: args.workspaceId,
+        connectorId: definition.id,
+        storageProvider: refreshEnvelope.storageProvider,
+        vaultKey: refreshEnvelope.vaultKey,
+        sealedReference: refreshEnvelope.sealedReference,
+        encryptedSecret: refreshEnvelope.encryptedSecret,
+        encryptionAlgorithm: refreshEnvelope.encryptionAlgorithm,
+        encryptionNonce: refreshEnvelope.encryptionNonce,
+        fingerprint: refreshEnvelope.fingerprint,
+        keyVersion: refreshEnvelope.keyVersion,
+        secretPreview: refreshEnvelope.secretPreview,
+        metadata: refreshEnvelope.metadata,
+        createdAt: now,
+      });
+    }
+
+    const envelope = await connectorCredentialStorage.seal({
       workspaceId: String(args.workspaceId),
       connectorId: definition.id,
       secret: args.credentialHandle,
       now,
+      tokenExpiresAt: args.tokenExpiresAt,
+      refreshCredentialRef: refreshEnvelope?.vaultKey,
+      metadata: args.metadata && typeof args.metadata === "object" && !Array.isArray(args.metadata)
+        ? args.metadata as Record<string, unknown>
+        : undefined,
     });
 
     await ctx.db.insert("connectorCredentials", {
@@ -608,9 +1433,15 @@ export const completeManagedConnection = mutation({
       storageProvider: envelope.storageProvider,
       vaultKey: envelope.vaultKey,
       sealedReference: envelope.sealedReference,
+      encryptedSecret: envelope.encryptedSecret,
+      encryptionAlgorithm: envelope.encryptionAlgorithm,
+      encryptionNonce: envelope.encryptionNonce,
       fingerprint: envelope.fingerprint,
       keyVersion: envelope.keyVersion,
       secretPreview: envelope.secretPreview,
+      tokenExpiresAt: envelope.tokenExpiresAt,
+      refreshCredentialRef: envelope.refreshCredentialRef,
+      metadata: envelope.metadata,
       createdAt: now,
     });
 
@@ -657,6 +1488,15 @@ export const completeManagedConnection = mutation({
           createdAt: now,
         });
 
+    await upsertConnectionSyncStateDirect(ctx, {
+      workspaceId: args.workspaceId,
+      connectorId: definition.id,
+      status: setupStatusFromConnection(result.status),
+      safeMessage: result.safeMessage,
+      successful: result.healthy,
+      now,
+    });
+
     await ctx.db.insert("connectorActionLogs", {
       workspaceId: args.workspaceId,
       connectionId,
@@ -679,6 +1519,238 @@ export const completeManagedConnection = mutation({
     });
 
     return connectionId;
+  },
+});
+
+export const setupApiKeyConnection = mutation({
+  args: {
+    workspaceId: v.id("workspaces"),
+    connectorId: v.string(),
+    apiKey: v.string(),
+    settings: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    const current = await requireWorkspaceAccess(ctx, args.workspaceId, ["Owner"]);
+    const definition = getConnectorDefinition(args.connectorId);
+    if (!definition) throw new Error("That service is not available yet.");
+
+    const validation = validateApiKeyConnectorSetup({
+      connectorId: args.connectorId,
+      credential: args.apiKey,
+      settings: args.settings,
+    });
+    if (!validation.ok) {
+      return validation;
+    }
+
+    const now = Date.now();
+    const envelope = await connectorCredentialStorage.seal({
+      workspaceId: String(args.workspaceId),
+      connectorId: definition.id,
+      secret: args.apiKey,
+      now,
+      metadata: { credentialKind: "api_key", connectorId: definition.id },
+    });
+
+    await ctx.db.insert("connectorCredentials", {
+      workspaceId: args.workspaceId,
+      connectorId: definition.id,
+      storageProvider: envelope.storageProvider,
+      vaultKey: envelope.vaultKey,
+      sealedReference: envelope.sealedReference,
+      encryptedSecret: envelope.encryptedSecret,
+      encryptionAlgorithm: envelope.encryptionAlgorithm,
+      encryptionNonce: envelope.encryptionNonce,
+      fingerprint: envelope.fingerprint,
+      keyVersion: envelope.keyVersion,
+      secretPreview: envelope.secretPreview,
+      tokenExpiresAt: envelope.tokenExpiresAt,
+      refreshCredentialRef: envelope.refreshCredentialRef,
+      metadata: envelope.metadata,
+      createdAt: now,
+    });
+
+    const existing = await ctx.db
+      .query("connectorConnections")
+      .withIndex("by_workspace_connector", (q) =>
+        q.eq("workspaceId", args.workspaceId).eq("connectorId", args.connectorId),
+      )
+      .first();
+    const settings = validation.settings ?? existing?.settings;
+    const result = testConnectorConnection(definition, {
+      credentialRef: envelope.vaultKey,
+      grantedScopes: validation.grantedScopes,
+      settings,
+    });
+
+    const patch = {
+      safeDisplayName: definition.safeDisplayName,
+      authType: definition.authType,
+      capabilities: definition.capabilities,
+      requiredScopes: definition.requiredScopes,
+      grantedScopes: validation.grantedScopes,
+      approvalPolicy: definition.approvalPolicy,
+      status: storedStatus(result.status),
+      credentialRef: envelope.vaultKey,
+      credentialFingerprint: envelope.fingerprint,
+      credentialPreview: envelope.secretPreview,
+      settings,
+      connectedBy: String(current.user._id),
+      connectedAt: now,
+      lastTestedAt: now,
+      lastHealthyAt: result.healthy ? now : undefined,
+      lastSafeMessage: result.safeMessage,
+      disabledAt: undefined,
+      updatedAt: now,
+    };
+
+    const connectionId = existing
+      ? (await ctx.db.patch(existing._id, patch), existing._id)
+      : await ctx.db.insert("connectorConnections", {
+          workspaceId: args.workspaceId,
+          connectorId: definition.id,
+          ...patch,
+          createdAt: now,
+        });
+
+    await upsertConnectionSyncStateDirect(ctx, {
+      workspaceId: args.workspaceId,
+      connectorId: definition.id,
+      status: setupStatusFromConnection(result.status),
+      safeMessage: result.safeMessage,
+      successful: result.healthy,
+      now,
+    });
+
+    await ctx.db.insert("connectorActionLogs", {
+      workspaceId: args.workspaceId,
+      connectionId,
+      connectorId: definition.id,
+      actionType: "connect",
+      status: result.healthy ? "completed" : "needs_attention",
+      approvalRequired: false,
+      safeSummary: result.safeMessage,
+      createdAt: now,
+      completedAt: now,
+    });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: args.workspaceId,
+      action: "connector.api_key_connected",
+      resourceType: "connectorConnection",
+      resourceId: String(connectionId),
+      summary: result.safeMessage,
+      metadata: { connectorId: definition.id, status: result.status },
+    });
+
+    return {
+      ...validation,
+      status: result.status,
+      safeMessage: result.safeMessage,
+      connectionId,
+    };
+  },
+});
+
+export const setupManagedConnection = mutation({
+  args: {
+    workspaceId: v.id("workspaces"),
+    connectorId: v.string(),
+    settings: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    const current = await requireWorkspaceAccess(ctx, args.workspaceId, ["Owner"]);
+    const definition = getConnectorDefinition(args.connectorId);
+    if (!definition || definition.authType !== "managed") {
+      throw new Error("That managed connection is not available yet.");
+    }
+
+    const now = Date.now();
+    const settings = sanitizeConnectorConnectionSettings(definition.id, {
+      ...(definition.id === "opencode" ? { command: "opencode" } : {}),
+      ...(args.settings && typeof args.settings === "object" && !Array.isArray(args.settings)
+        ? args.settings as Record<string, unknown>
+        : {}),
+    });
+    const result = testConnectorConnection(definition, {
+      status: "connected",
+      grantedScopes: definition.requiredScopes,
+      settings,
+    });
+
+    const existing = await ctx.db
+      .query("connectorConnections")
+      .withIndex("by_workspace_connector", (q) =>
+        q.eq("workspaceId", args.workspaceId).eq("connectorId", args.connectorId),
+      )
+      .first();
+
+    const patch = {
+      safeDisplayName: definition.safeDisplayName,
+      authType: definition.authType,
+      capabilities: definition.capabilities,
+      requiredScopes: definition.requiredScopes,
+      grantedScopes: definition.requiredScopes,
+      approvalPolicy: definition.approvalPolicy,
+      status: storedStatus(result.status),
+      settings,
+      connectedBy: String(current.user._id),
+      connectedAt: now,
+      lastTestedAt: now,
+      lastHealthyAt: result.healthy ? now : undefined,
+      lastSafeMessage: result.safeMessage,
+      disabledAt: undefined,
+      updatedAt: now,
+    };
+
+    const connectionId = existing
+      ? (await ctx.db.patch(existing._id, patch), existing._id)
+      : await ctx.db.insert("connectorConnections", {
+          workspaceId: args.workspaceId,
+          connectorId: definition.id,
+          ...patch,
+          createdAt: now,
+        });
+
+    await upsertConnectionSyncStateDirect(ctx, {
+      workspaceId: args.workspaceId,
+      connectorId: definition.id,
+      status: setupStatusFromConnection(result.status),
+      safeMessage: result.safeMessage,
+      successful: result.healthy,
+      now,
+    });
+
+    await ctx.db.insert("connectorActionLogs", {
+      workspaceId: args.workspaceId,
+      connectionId,
+      connectorId: definition.id,
+      actionType: "connect",
+      status: result.healthy ? "completed" : "needs_attention",
+      approvalRequired: false,
+      safeSummary: result.safeMessage,
+      createdAt: now,
+      completedAt: now,
+    });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: args.workspaceId,
+      action: "connector.managed_connected",
+      resourceType: "connectorConnection",
+      resourceId: String(connectionId),
+      summary: result.safeMessage,
+      metadata: { connectorId: definition.id, status: result.status },
+    });
+
+    return {
+      ok: result.healthy,
+      connectorId: definition.id,
+      grantedScopes: definition.requiredScopes,
+      settings,
+      status: result.status,
+      safeMessage: result.safeMessage,
+      connectionId,
+    };
   },
 });
 
@@ -711,6 +1783,15 @@ export const updateConnectionSettings = mutation({
       updatedAt: now,
     });
 
+    await upsertConnectionSyncStateDirect(ctx, {
+      workspaceId: connection.workspaceId,
+      connectorId: connection.connectorId,
+      status: setupStatusFromConnection(result.status),
+      safeMessage: result.safeMessage,
+      successful: result.healthy,
+      now,
+    });
+
     await ctx.db.insert("connectorActionLogs", {
       workspaceId: connection.workspaceId,
       connectionId: args.connectionId,
@@ -736,6 +1817,76 @@ export const updateConnectionSettings = mutation({
   },
 });
 
+export const selectGitHubRepository = mutation({
+  args: {
+    connectionId: v.id("connectorConnections"),
+    repositoryOwner: v.string(),
+    repositoryName: v.string(),
+    organizationName: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const connection = await ctx.db.get(args.connectionId);
+    if (!connection) throw new Error("Connection not found.");
+    if (connection.connectorId !== "github") throw new Error("That repository setup is not available.");
+    const current = await requireWorkspaceAccess(ctx, connection.workspaceId, ["Owner"]);
+    const definition = getConnectorDefinition("github");
+    if (!definition) throw new Error("That service is not available yet.");
+
+    const now = Date.now();
+    const settings = sanitizeConnectorConnectionSettings("github", {
+      ...(connection.settings && typeof connection.settings === "object" && !Array.isArray(connection.settings)
+        ? connection.settings as Record<string, unknown>
+        : {}),
+      repositoryOwner: args.repositoryOwner,
+      repositoryName: args.repositoryName,
+      organizationName: args.organizationName,
+    });
+    const result = testConnectorConnection(definition, {
+      ...connection,
+      settings,
+    });
+
+    await ctx.db.patch(args.connectionId, {
+      settings,
+      status: storedStatus(result.status),
+      lastTestedAt: now,
+      lastHealthyAt: result.healthy ? now : connection.lastHealthyAt,
+      lastSafeMessage: result.safeMessage,
+      updatedAt: now,
+    });
+    await upsertConnectionSyncStateDirect(ctx, {
+      workspaceId: connection.workspaceId,
+      connectorId: connection.connectorId,
+      status: setupStatusFromConnection(result.status),
+      safeMessage: result.safeMessage,
+      successful: result.healthy,
+      now,
+    });
+    await ctx.db.insert("connectorActionLogs", {
+      workspaceId: connection.workspaceId,
+      connectionId: args.connectionId,
+      connectorId: "github",
+      actionType: "select_repository",
+      status: result.healthy ? "completed" : "needs_attention",
+      approvalRequired: false,
+      safeSummary: result.safeMessage,
+      createdAt: now,
+      completedAt: now,
+    });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: connection.workspaceId,
+      action: "connector.github_repository_selected",
+      resourceType: "connectorConnection",
+      resourceId: String(args.connectionId),
+      summary: result.safeMessage,
+      metadata: { connectorId: "github", status: result.status },
+    });
+
+    return result;
+  },
+});
+
 export const testConnection = mutation({
   args: { connectionId: v.id("connectorConnections") },
   handler: async (ctx, args) => {
@@ -754,6 +1905,15 @@ export const testConnection = mutation({
       lastHealthyAt: result.healthy ? now : connection.lastHealthyAt,
       lastSafeMessage: result.safeMessage,
       updatedAt: now,
+    });
+
+    await upsertConnectionSyncStateDirect(ctx, {
+      workspaceId: connection.workspaceId,
+      connectorId: connection.connectorId,
+      status: setupStatusFromConnection(result.status),
+      safeMessage: result.safeMessage,
+      successful: result.healthy,
+      now,
     });
 
     await ctx.db.insert("connectorActionLogs", {
@@ -798,6 +1958,14 @@ export const disconnect = mutation({
       disabledAt: now,
       lastSafeMessage: "Turned off.",
       updatedAt: now,
+    });
+
+    await upsertConnectionSyncStateDirect(ctx, {
+      workspaceId: connection.workspaceId,
+      connectorId: connection.connectorId,
+      status: "needs_attention",
+      safeMessage: "Turned off.",
+      now,
     });
 
     await ctx.db.insert("connectorActionLogs", {

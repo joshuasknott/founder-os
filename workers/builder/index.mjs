@@ -1017,7 +1017,7 @@ function planProductBuild(run, directive, outputKind = outputKindForRun(run, dir
   };
 }
 
-function buildTaskSpec(run, directive, workspace) {
+function buildTaskSpec(run, directive, workspace, builderAgent = BUILDER_AGENT) {
   const externalAction = detectSensitiveExternalAction(directive.objective);
   const outputKind = outputKindForRun(run, directive);
   const productPlan = planProductBuild(run, directive, outputKind);
@@ -1031,7 +1031,7 @@ function buildTaskSpec(run, directive, workspace) {
     },
     productPlan,
     builder: {
-      adapter: BUILDER_ADAPTER,
+      adapter: builderAgent.adapter,
       hiddenFromFounder: true,
       preferredRealAdapter: "opencode",
     },
@@ -1291,11 +1291,11 @@ async function applyLlmChanges(workspaceDir, result) {
   return changedPaths;
 }
 
-async function runOpenCodeCommand(prompt, workspaceDir, title) {
-  const command = BUILDER_AGENT.command ?? "opencode";
-  const result = await execFileCapture(command, buildOpenCodeArgs(BUILDER_AGENT, prompt, workspaceDir, title), {
+async function runOpenCodeCommand(prompt, workspaceDir, title, builderAgent = BUILDER_AGENT) {
+  const command = builderAgent.command ?? "opencode";
+  const result = await execFileCapture(command, buildOpenCodeArgs(builderAgent, prompt, workspaceDir, title), {
     cwd: workspaceDir,
-    timeoutMs: BUILDER_AGENT.timeoutMs,
+    timeoutMs: builderAgent.timeoutMs,
     maxBuffer: 10 * 1024 * 1024,
     env: {
       ...process.env,
@@ -1304,6 +1304,33 @@ async function runOpenCodeCommand(prompt, workspaceDir, title) {
   });
 
   return result.stdout || result.stderr;
+}
+
+function opencodeAgentFromConnection(connection) {
+  if (!connection || connection.status !== "connected") return null;
+  const settings = connection.settings && typeof connection.settings === "object" ? connection.settings : {};
+  return selectBuilderAgent({
+    ...BUILDER_AGENT_ENV,
+    BUILDER_PROVIDER: "opencode",
+    BUILDER_OPENCODE_COMMAND: settings.command || "opencode",
+    BUILDER_OPENCODE_MODEL: settings.model || "",
+    BUILDER_OPENCODE_AGENT: settings.agent || "",
+    BUILDER_OPENCODE_ATTACH_URL: settings.attachUrl || "",
+  });
+}
+
+async function builderAgentForRun(client, run) {
+  if (!run.workspaceId) return BUILDER_AGENT;
+  try {
+    const connection = await client.query(api.connectors.getConnectorConnectionForWorker, {
+      workspaceId: run.workspaceId,
+      connectorId: "opencode",
+      workerToken: workerToken(),
+    });
+    return opencodeAgentFromConnection(connection) ?? BUILDER_AGENT;
+  } catch {
+    return BUILDER_AGENT;
+  }
 }
 
 function eventProgress(event) {
@@ -1943,11 +1970,11 @@ async function runLlmBuilder(client, run, directive) {
   }
 }
 
-async function runOpenCodeBuilder(client, run, directive) {
+async function runOpenCodeBuilder(client, run, directive, builderAgent = BUILDER_AGENT) {
   let workspace = null;
   try {
     workspace = await createBuildWorkspace(run);
-    const taskSpec = buildTaskSpec(run, directive, workspace);
+    const taskSpec = buildTaskSpec(run, directive, workspace, builderAgent);
     const baselineSnapshot = await snapshotWorkspaceFiles(workspace.workingDirectory);
     const externalAction = taskSpec.safety.requestedExternalAction;
 
@@ -1959,6 +1986,7 @@ async function runOpenCodeBuilder(client, run, directive) {
       buildOpenCodePrompt(taskSpec),
       workspace.workingDirectory,
       run.title,
+      builderAgent,
     );
     const opencodeResult = extractCodexResult(finalResponse);
 
@@ -1982,6 +2010,7 @@ async function runOpenCodeBuilder(client, run, directive) {
           buildRepairPrompt(taskSpec, testResults),
           workspace.workingDirectory,
           `${run.title} repair`,
+          builderAgent,
         );
         testResults = await runTestCommands(workspace.workingDirectory);
         repair.finalStatus = testResults.status;
@@ -2013,8 +2042,8 @@ async function runOpenCodeBuilder(client, run, directive) {
       repair,
       codex: {
         adapter: "opencode",
-        command: BUILDER_AGENT.command,
-        model: BUILDER_AGENT.model,
+        command: builderAgent.command,
+        model: builderAgent.model,
         changedFileCount: changedFiles.length,
       },
       externalAction,
@@ -2084,7 +2113,11 @@ async function processRun(client, run) {
     return;
   }
 
-  if (BUILDER_ADAPTER === "simulated") {
+  const builderAgent = await builderAgentForRun(client, run);
+  const builderAdapter = builderAgent.adapter;
+  const builderProvider = builderAgent.provider;
+
+  if (builderAdapter === "simulated") {
     await simulateRun(client, run);
     console.log(`Hidden builder run ready for review: ${run._id}`);
     return;
@@ -2096,14 +2129,14 @@ async function processRun(client, run) {
   });
   if (!directive) throw new Error("Task not found.");
 
-  if (BUILDER_ADAPTER === "opencode") {
-    await runOpenCodeBuilder(client, run, directive);
-  } else if (BUILDER_ADAPTER === "llm") {
+  if (builderAdapter === "opencode") {
+    await runOpenCodeBuilder(client, run, directive, builderAgent);
+  } else if (builderAdapter === "llm") {
     await runLlmBuilder(client, run, directive);
-  } else if (BUILDER_ADAPTER === "codex") {
+  } else if (builderAdapter === "codex") {
     await runCodex(client, run, directive);
   } else {
-    throw new Error(builderProviderHelp(BUILDER_PROVIDER));
+    throw new Error(builderProviderHelp(builderProvider));
   }
   console.log(`Hidden builder run ready for review: ${run._id}`);
 }

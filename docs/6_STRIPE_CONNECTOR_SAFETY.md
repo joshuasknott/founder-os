@@ -20,9 +20,9 @@ FounderOS treats Stripe as a read-only finance context source. The connector can
 
 ## Credential Boundary
 
-The runtime requires `STRIPE_READ_ONLY_KEY` to be a Stripe restricted key (`rk_test_...` or `rk_live_...`). Broad secret keys (`sk_test_...` or `sk_live_...`) are rejected by the sync runtime because they can carry write privileges.
+The Settings setup flow requires a Stripe restricted key (`rk_test_...` or `rk_live_...`). Broad secret keys (`sk_test_...` or `sk_live_...`) are rejected because they can carry write privileges.
 
-The key must come from the server environment or a managed vault. Do not store it in client state, connection settings, Library items, facts, logs, source code, or user-facing docs.
+The key is stored through the encrypted connector credential path only. Do not store it in React state, connection settings, Library items, facts, logs, source code, or founder-facing docs.
 
 ## Blocked Behavior
 

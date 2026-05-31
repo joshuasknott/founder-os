@@ -7,15 +7,17 @@ const genericServiceReplacements: Record<string, string[]> = {
   calendar: ["google_calendar"],
   payments: ["stripe"],
   code_hosting: ["vercel"],
-  knowledge: ["google_drive", "slack", "notion"],
+  knowledge: ["google_drive", "google_docs", "google_sheets", "posthog"],
 };
 
 export const serviceGroups = [
-  { id: "google", title: "Google Workspace", ids: ["gmail", "google_calendar", "google_drive", "email", "calendar"] },
-  { id: "communication", title: "Communication", ids: ["slack"] },
-  { id: "knowledge", title: "Knowledge", ids: ["notion", "knowledge"] },
+  { id: "google", title: "Google Workspace", ids: ["gmail", "google_calendar", "google_drive", "google_docs", "google_sheets", "email", "calendar"] },
+  { id: "code", title: "Code", ids: ["github", "opencode"] },
+  { id: "analytics", title: "Analytics", ids: ["posthog"] },
+  { id: "communication", title: "Communication", ids: ["resend"] },
+  { id: "design", title: "Design", ids: ["canva"] },
+  { id: "knowledge", title: "Knowledge", ids: ["knowledge"] },
   { id: "payments", title: "Payments", ids: ["stripe", "payments"] },
-  { id: "publishing", title: "Publishing", ids: ["publishing"] },
   { id: "hosting", title: "Hosting", ids: ["vercel", "code_hosting"] },
 ];
 

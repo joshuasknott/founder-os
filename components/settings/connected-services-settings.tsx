@@ -1,21 +1,24 @@
 "use client";
 
 import * as React from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import {
-  AlertCircle,
-  CheckCircle2,
   ChevronDown,
   ChevronRight,
   Plug,
   Power,
   RefreshCw,
   ShieldCheck,
+  Github,
+  KeyRound,
+  X,
 } from "lucide-react";
 import { groupedConnectorServices, visibleConnectorServices } from "@/lib/connector-display";
-import { GoogleIcon, NotionIcon, SlackIcon, StripeIcon, VercelIcon } from "./brand-icons";
+import { ConnectorBrandIcon } from "./connector-brand-icon";
+import { copyForConnector } from "./connector-copy";
 
 type ServiceStatus = "not_connected" | "needs_attention" | "connected" | "disabled";
 
@@ -23,6 +26,7 @@ type ServiceCard = {
   id: string;
   safeDisplayName: string;
   description: string;
+  authType: "oauth2" | "api_key" | "webhook" | "github_app" | "managed";
   requiredAccess: string[];
   status: ServiceStatus;
   statusMessage: string;
@@ -43,15 +47,6 @@ type ActivityLog = {
   completedAt?: number;
 };
 
-function ServiceBrandIcon({ id }: { id: string }) {
-  if (id === "gmail" || id === "google_calendar" || id === "google_drive") return <GoogleIcon />;
-  if (id === "slack") return <SlackIcon />;
-  if (id === "notion") return <NotionIcon />;
-  if (id === "stripe") return <StripeIcon />;
-  if (id === "vercel") return <VercelIcon />;
-  return <Plug size={19} className="text-text-muted" />;
-}
-
 function statusCopy(status: ServiceStatus) {
   const labels: Record<ServiceStatus, string> = {
     not_connected: "Not connected",
@@ -62,11 +57,18 @@ function statusCopy(status: ServiceStatus) {
   return labels[status];
 }
 
-function statusClasses(status: ServiceStatus) {
-  if (status === "connected") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (status === "needs_attention") return "border-amber-200 bg-amber-50 text-amber-700";
-  if (status === "disabled") return "border-zinc-200 bg-zinc-100 text-zinc-500";
-  return "border-zinc-200 bg-white text-zinc-500";
+function statusDot(status: ServiceStatus) {
+  if (status === "connected") return "bg-emerald-500 ring-emerald-500/20";
+  if (status === "needs_attention") return "bg-amber-500 ring-amber-500/20 animate-pulse";
+  if (status === "disabled") return "bg-zinc-400 ring-zinc-400/20";
+  return "bg-zinc-300 ring-zinc-300/10";
+}
+
+function statusTextColor(status: ServiceStatus) {
+  if (status === "connected") return "text-emerald-700 dark:text-emerald-400";
+  if (status === "needs_attention") return "text-amber-700 dark:text-amber-400";
+  if (status === "disabled") return "text-zinc-500 dark:text-zinc-400";
+  return "text-zinc-500 dark:text-zinc-400";
 }
 
 function actionCopy(actionType: string) {
@@ -96,6 +98,38 @@ function formatActivityTime(value: number) {
   }).format(value);
 }
 
+function isApiKeyService(id: string) {
+  return id === "stripe" || id === "vercel" || id === "posthog" || id === "resend";
+}
+
+function isManagedSetupService(id: string) {
+  return id === "opencode";
+}
+
+function isOAuthService(id: string) {
+  return id === "gmail"
+    || id === "google_calendar"
+    || id === "google_drive"
+    || id === "google_docs"
+    || id === "google_sheets"
+    || id === "canva";
+}
+
+function setupTitle(service?: ServiceCard) {
+  if (!service) return "Connect service";
+  if (service.id === "github") return "Choose repository";
+  if (service.id === "opencode") return "Configure OpenCode";
+  return `Connect ${service.safeDisplayName}`;
+}
+
+function keyPlaceholder(id: string) {
+  if (id === "stripe") return "Restricted read-only key";
+  if (id === "vercel") return "Vercel token";
+  if (id === "posthog") return "PostHog personal key";
+  if (id === "resend") return "Resend key";
+  return "Private key";
+}
+
 function ServiceSkeleton() {
   return (
     <div className="rounded-lg border border-black/[0.06] bg-white p-5">
@@ -109,8 +143,16 @@ function ServiceSkeleton() {
 }
 
 export function ConnectedServicesSettings() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const workspaces = useQuery(api.workspaces.get);
-  const workspaceId = workspaces?.[0]?._id as Id<"workspaces"> | undefined;
+  const workspace = workspaces?.[0];
+  const workspaceId = workspace?._id as Id<"workspaces"> | undefined;
+  const fromOnboarding = searchParams.get("onboarding_connections") === "1";
+  const onboardingConnectorIds = React.useMemo(
+    () => new Set(workspace?.onboardingConnectorIds ?? []),
+    [workspace?.onboardingConnectorIds],
+  );
   const services = useQuery(
     api.connectors.listForWorkspace,
     workspaceId ? { workspaceId } : "skip",
@@ -120,12 +162,22 @@ export function ConnectedServicesSettings() {
     workspaceId ? { workspaceId } : "skip",
   ) as ActivityLog[] | undefined;
   const syncStripeFinance = useAction(api.connectors.syncStripeFinance);
+  const startOAuthConnection = useAction(api.connectors.startOAuthConnection);
+  const completeOAuthConnection = useAction(api.connectors.completeOAuthConnection);
+  const refreshOAuthConnection = useAction(api.connectors.refreshOAuthConnection);
+  const startGitHubAppConnection = useAction(api.connectors.startGitHubAppConnection);
+  const completeGitHubAppConnection = useAction(api.connectors.completeGitHubAppConnection);
   const startConnection = useMutation(api.connectors.startConnection);
+  const setupApiKeyConnection = useMutation(api.connectors.setupApiKeyConnection);
+  const setupManagedConnection = useMutation(api.connectors.setupManagedConnection);
+  const selectGitHubRepository = useMutation(api.connectors.selectGitHubRepository);
   const testConnection = useMutation(api.connectors.testConnection);
   const disconnect = useMutation(api.connectors.disconnect);
   const [busyKey, setBusyKey] = React.useState<string | null>(null);
   const [serviceMessages, setServiceMessages] = React.useState<Record<string, string>>({});
   const [historyOpen, setHistoryOpen] = React.useState(false);
+  const [setupServiceId, setSetupServiceId] = React.useState<string | null>(null);
+  const callbackHandledRef = React.useRef<string | null>(null);
 
   const visibleServices = React.useMemo(() => {
     if (!services) return undefined;
@@ -136,6 +188,11 @@ export function ConnectedServicesSettings() {
     () => (visibleServices ? groupedConnectorServices(visibleServices) : undefined),
     [visibleServices],
   );
+  const setupService = React.useMemo(
+    () => services?.find((service) => service.id === setupServiceId),
+    [services, setupServiceId],
+  );
+  const setupServiceDetails = setupService ? copyForConnector(setupService.id) : undefined;
 
   const runServiceAction = async (
     key: string,
@@ -152,9 +209,137 @@ export function ConnectedServicesSettings() {
           [messageServiceId]: message,
         }));
       }
+      return result;
+    } catch {
+      setServiceMessages((messages) => ({
+        ...messages,
+        [messageServiceId]: "That connection step could not finish. Try again from Settings.",
+      }));
     } finally {
       setBusyKey(null);
     }
+  };
+
+  React.useEffect(() => {
+    const provider = searchParams.get("connector_provider");
+    const state = searchParams.get("state");
+    const code = searchParams.get("code");
+    const installationId = searchParams.get("installation_id");
+    const callbackKey = `${provider ?? ""}:${state ?? ""}:${code ?? ""}:${installationId ?? ""}`;
+
+    if (!provider || !state || callbackHandledRef.current === callbackKey) return;
+    if ((provider === "google_workspace" || provider === "canva") && !code) return;
+    if (provider === "github" && !installationId) return;
+
+    callbackHandledRef.current = callbackKey;
+    const serviceId = provider === "google_workspace" ? "gmail" : provider === "github" ? "github" : "canva";
+    void runServiceAction(`${serviceId}:callback`, async () => {
+      const result = provider === "github"
+        ? await completeGitHubAppConnection({ state, installationId: installationId! })
+        : await completeOAuthConnection({ state, code: code! });
+      router.replace("/settings", { scroll: false });
+      return result;
+    }, serviceId);
+  }, [completeGitHubAppConnection, completeOAuthConnection, router, searchParams]);
+
+  const beginConnection = (service: ServiceCard) => {
+    if (!workspaceId) return;
+    if (isApiKeyService(service.id) || isManagedSetupService(service.id)) {
+      setSetupServiceId(service.id);
+      return;
+    }
+
+    if (service.id === "github") {
+      void runServiceAction(service.id, async () => {
+        const result = await startGitHubAppConnection({ workspaceId });
+        const url = result && typeof result === "object"
+          ? (result as { installationUrl?: unknown }).installationUrl
+          : undefined;
+        if (typeof url === "string" && url) {
+          window.location.assign(url);
+        }
+        return result;
+      });
+      return;
+    }
+
+    if (isOAuthService(service.id)) {
+      void runServiceAction(service.id, async () => {
+        const result = await startOAuthConnection({ workspaceId, connectorId: service.id });
+        const url = result && typeof result === "object"
+          ? (result as { authorizationUrl?: unknown }).authorizationUrl
+          : undefined;
+        if (typeof url === "string" && url) {
+          window.location.assign(url);
+        }
+        return result;
+      });
+      return;
+    }
+
+    void runServiceAction(service.id, () =>
+      startConnection({ workspaceId, connectorId: service.id }),
+    );
+  };
+
+  const handlePrivateSetupSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!workspaceId || !setupService || !isApiKeyService(setupService.id)) return;
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const settings: Record<string, string> = {};
+    for (const [key, value] of formData.entries()) {
+      if (key === "apiKey" || typeof value !== "string") continue;
+      if (value.trim()) settings[key] = value.trim();
+    }
+
+    await runServiceAction(setupService.id, () =>
+      setupApiKeyConnection({
+        workspaceId,
+        connectorId: setupService.id,
+        apiKey: String(formData.get("apiKey") ?? ""),
+        settings,
+      }),
+    );
+    form.reset();
+    setSetupServiceId(null);
+  };
+
+  const handleGitHubRepositorySubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!setupService?.connectionId) return;
+    const formData = new FormData(event.currentTarget);
+    await runServiceAction("github:repository", () =>
+      selectGitHubRepository({
+        connectionId: setupService.connectionId!,
+        repositoryOwner: String(formData.get("repositoryOwner") ?? ""),
+        repositoryName: String(formData.get("repositoryName") ?? ""),
+        organizationName: String(formData.get("organizationName") ?? "") || undefined,
+      }),
+      "github",
+    );
+    setSetupServiceId(null);
+  };
+
+  const handleManagedSetupSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!workspaceId || !setupService || !isManagedSetupService(setupService.id)) return;
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const settings: Record<string, string> = {};
+    for (const [key, value] of formData.entries()) {
+      if (typeof value === "string" && value.trim()) settings[key] = value.trim();
+    }
+
+    await runServiceAction(setupService.id, () =>
+      setupManagedConnection({
+        workspaceId,
+        connectorId: setupService.id,
+        settings,
+      }),
+    );
+    form.reset();
+    setSetupServiceId(null);
   };
 
   return (
@@ -168,7 +353,7 @@ export function ConnectedServicesSettings() {
             Services FounderOS can use.
           </h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">
-            Connect the tools FounderOS should read from or prepare work for. External actions still wait for approval.
+            Connect the tools FounderOS should read from or prepare work for. You can add, remove, or reconnect services any time.
           </p>
         </div>
         <div className="inline-flex items-center gap-2 rounded-lg border border-black/[0.06] bg-white px-3 py-2 text-xs font-semibold text-text-secondary">
@@ -176,6 +361,12 @@ export function ConnectedServicesSettings() {
           Approval protected
         </div>
       </div>
+
+      {fromOnboarding && (
+        <div className="mt-5 rounded-lg border border-emerald-500/15 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-900">
+          Connect the services you picked during setup, or skip any of them for now.
+        </div>
+      )}
 
       <div className="mt-6">
         {visibleServices === undefined ? (
@@ -185,131 +376,348 @@ export function ConnectedServicesSettings() {
             FounderOS is preparing your workspace.
           </div>
         ) : (
-          <div className="space-y-4">
-            {groupedServices?.map((group) => {
-              return (
-                <section key={group.id} className="overflow-hidden rounded-lg border border-black/[0.06] bg-white shadow-sm">
-                  <div className="border-b border-black/[0.05] px-4 py-3">
-                    <h3 className="text-sm font-semibold text-text-primary">{group.title}</h3>
-                  </div>
-                  <div className="divide-y divide-black/[0.05]">
-                    {group.services.map((service) => {
-                      const isBusy = busyKey === service.id || Boolean(busyKey?.startsWith(`${service.id}:`));
-                      const canCheck = Boolean(service.connectionId);
-                      const canTurnOff = Boolean(service.connectionId && service.status !== "disabled");
-                      const canSyncStripe = service.id === "stripe" && service.status === "connected" && Boolean(workspaceId);
+          <div className="space-y-7">
+            {groupedServices?.map((group) => (
+              <section key={group.id} className="space-y-3">
+                <h3 className="px-1 text-xs font-semibold uppercase tracking-wider text-text-muted">
+                  {group.title}
+                </h3>
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  {group.services
+                    .slice()
+                    .sort((left, right) =>
+                      Number(onboardingConnectorIds.has(right.id)) - Number(onboardingConnectorIds.has(left.id)),
+                    )
+                    .map((service) => {
+                      const details = copyForConnector(service.id);
                       const statusMessage = serviceMessages[service.id] ?? service.statusMessage;
-                      const primaryLabel =
-                        service.status === "connected"
-                          ? "Check"
-                          : service.status === "disabled"
-                            ? "Connect"
-                            : service.status === "needs_attention"
-                              ? "Retry"
-                              : "Connect";
 
                       return (
-                        <article key={service.id} className="flex flex-col gap-4 px-4 py-4 md:flex-row md:items-center md:justify-between">
-                          <div className="flex min-w-0 items-start gap-3">
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-black/[0.06] bg-surface">
-                              <ServiceBrandIcon id={service.id} />
-                            </div>
-                            <div className="min-w-0">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <h4 className="text-sm font-semibold text-text-primary">{service.safeDisplayName}</h4>
-                                <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-[11px] font-semibold ${statusClasses(service.status)}`}>
-                                  {service.status === "connected" ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
-                                  {statusCopy(service.status)}
-                                </span>
-                              </div>
-                              <p className="mt-1 max-w-2xl text-xs leading-5 text-text-secondary">
-                                {service.description}
-                              </p>
-                              <p className="mt-1 text-[11px] leading-4 text-text-muted">{statusMessage}</p>
-                            </div>
-                          </div>
-                          <div className="flex shrink-0 items-center gap-2 md:justify-end">
-                            <button
-                              type="button"
-                              title={primaryLabel}
-                              disabled={isBusy || !workspaceId}
-                              onClick={() => {
-                                if (!workspaceId) return;
-                                if (service.status === "connected" && service.connectionId) {
-                                  void runServiceAction(service.id, () =>
-                                    testConnection({ connectionId: service.connectionId! }),
-                                  );
-                                  return;
-                                }
-                                void runServiceAction(service.id, () =>
-                                  startConnection({ workspaceId, connectorId: service.id }),
-                                );
-                              }}
-                              className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-black px-3 text-xs font-semibold text-white transition hover:bg-black/90 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {isBusy ? <RefreshCw size={14} className="animate-spin" /> : <Plug size={14} />}
-                              {primaryLabel}
-                            </button>
-                            {service.id === "stripe" && (
-                              <button
-                                type="button"
-                                title="Sync finance context"
-                                disabled={isBusy || !canSyncStripe}
-                                onClick={() => {
-                                  if (!workspaceId) return;
-                                  void runServiceAction(
-                                    `${service.id}:sync`,
-                                    () => syncStripeFinance({ workspaceId, requestedBy: "settings" }),
-                                    service.id,
-                                  );
-                                }}
-                                className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-black/[0.08] bg-white px-3 text-xs font-semibold text-text-secondary transition hover:bg-black/[0.035] hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                <RefreshCw size={14} className={busyKey === `${service.id}:sync` ? "animate-spin" : undefined} />
-                                Sync
-                              </button>
+                        <button
+                          key={service.id}
+                          type="button"
+                          onClick={() => setSetupServiceId(service.id)}
+                          className="group flex min-h-[172px] flex-col justify-between rounded-lg border border-black/[0.06] bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-black/15 hover:shadow-md"
+                        >
+                          <span>
+                            <span className="flex items-start justify-between gap-3">
+                              <span className="flex h-11 w-11 items-center justify-center rounded-lg border border-black/[0.06] bg-surface">
+                                <ConnectorBrandIcon id={service.id} className="h-7 w-7 text-zinc-900" />
+                              </span>
+                              <span className={`inline-flex items-center gap-1.5 rounded-full border border-black/[0.04] bg-black/[0.01] px-2 py-0.5 text-[11px] font-medium ${statusTextColor(service.status)}`}>
+                                <span className={`h-1.5 w-1.5 rounded-full ${statusDot(service.status)} ring-2`} />
+                                {statusCopy(service.status)}
+                              </span>
+                            </span>
+                            <span className="mt-4 block text-sm font-semibold tracking-tight text-text-primary">
+                              {details.label}
+                            </span>
+                            <span className="mt-1 block text-xs leading-5 text-text-secondary">
+                              {details.useCase}
+                            </span>
+                          </span>
+                          <span className="mt-4 flex flex-wrap items-center gap-2">
+                            <span className="rounded-full bg-black/[0.035] px-2 py-0.5 text-[11px] font-medium text-text-muted">
+                              {details.setup}
+                            </span>
+                            {onboardingConnectorIds.has(service.id) && (
+                              <span className="rounded-full border border-emerald-500/15 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                                Picked in setup
+                              </span>
                             )}
-                            {canCheck && service.status !== "connected" && (
-                              <button
-                                type="button"
-                                title="Check"
-                                disabled={isBusy}
-                                onClick={() =>
-                                  void runServiceAction(`${service.id}:check`, () =>
-                                    testConnection({ connectionId: service.connectionId! }),
-                                  )
-                                }
-                                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-black/[0.08] bg-white text-text-secondary transition hover:bg-black/[0.035] hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                <RefreshCw size={15} />
-                              </button>
-                            )}
-                            {canTurnOff && (
-                              <button
-                                type="button"
-                                title="Turn off"
-                                disabled={isBusy}
-                                onClick={() =>
-                                  void runServiceAction(`${service.id}:off`, () =>
-                                    disconnect({ connectionId: service.connectionId! }),
-                                  )
-                                }
-                                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-black/[0.08] bg-white text-text-secondary transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                <Power size={15} />
-                              </button>
-                            )}
-                          </div>
-                        </article>
+                          </span>
+                          {statusMessage && (
+                            <span className="mt-2 block text-[11px] leading-4 text-text-muted">{statusMessage}</span>
+                          )}
+                        </button>
                       );
                     })}
-                  </div>
-                </section>
-              );
-            })}
+                </div>
+              </section>
+            ))}
           </div>
         )}
       </div>
+
+      {setupService && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 py-6">
+          <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-lg border border-black/[0.08] bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-black/[0.06] px-5 py-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-black/[0.06] bg-surface">
+                  <ConnectorBrandIcon id={setupService.id} className="h-6 w-6 text-zinc-900" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-text-primary">{setupTitle(setupService)}</h3>
+                  <p className="mt-0.5 text-xs text-text-muted">{setupServiceDetails?.setup}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                title="Close"
+                onClick={() => setSetupServiceId(null)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition hover:bg-black/[0.04] hover:text-zinc-900"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="border-b border-black/[0.05] px-5 py-4">
+              <p className="text-sm font-semibold text-text-primary">{setupServiceDetails?.useCase}</p>
+              <p className="mt-2 text-xs leading-5 text-text-secondary">{setupServiceDetails?.detail}</p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className={`inline-flex items-center gap-1.5 rounded-full border border-black/[0.04] bg-black/[0.01] px-2.5 py-0.5 text-[11px] font-medium ${statusTextColor(setupService.status)}`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${statusDot(setupService.status)} ring-2`} />
+                  {statusCopy(setupService.status)}
+                </span>
+                {setupService.statusMessage && (
+                  <span className="text-[11px] text-text-muted">{serviceMessages[setupService.id] ?? setupService.statusMessage}</span>
+                )}
+              </div>
+              {setupService.connectionId && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={Boolean(busyKey)}
+                    onClick={() =>
+                      void runServiceAction(`${setupService.id}:check`, () =>
+                        testConnection({ connectionId: setupService.connectionId! }),
+                      )
+                    }
+                    className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <RefreshCw size={13} />
+                    Check
+                  </button>
+                  {isOAuthService(setupService.id) && setupService.status === "connected" && workspaceId && (
+                    <button
+                      type="button"
+                      disabled={Boolean(busyKey)}
+                      onClick={() =>
+                        void runServiceAction(`${setupService.id}:refresh`, () =>
+                          refreshOAuthConnection({ workspaceId, connectorId: setupService.id }),
+                        )
+                      }
+                      className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <RefreshCw size={13} />
+                      Refresh sign-in
+                    </button>
+                  )}
+                  {setupService.id === "stripe" && setupService.status === "connected" && workspaceId && (
+                    <button
+                      type="button"
+                      disabled={Boolean(busyKey)}
+                      onClick={() =>
+                        void runServiceAction(
+                          `${setupService.id}:sync`,
+                          () => syncStripeFinance({ workspaceId, requestedBy: "settings" }),
+                          setupService.id,
+                        )
+                      }
+                      className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <RefreshCw size={13} />
+                      Sync finance
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={Boolean(busyKey)}
+                    onClick={() =>
+                      void runServiceAction(`${setupService.id}:off`, () =>
+                        disconnect({ connectionId: setupService.connectionId! }),
+                      )
+                    }
+                    className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Power size={13} />
+                    Turn off
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {setupService.id === "github" ? (
+              <div className="space-y-4 px-5 py-5">
+                {!setupService.connectionId ? (
+                  <button
+                    type="button"
+                    disabled={Boolean(busyKey)}
+                    onClick={() => beginConnection(setupService)}
+                    className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-zinc-900 px-3.5 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Github size={14} />
+                    Install GitHub App
+                  </button>
+                ) : (
+                  <form onSubmit={handleGitHubRepositorySubmit} className="space-y-4">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                        Owner
+                        <input name="repositoryOwner" required placeholder="founderos" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                      </label>
+                      <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                        Repository
+                        <input name="repositoryName" required placeholder="founder-os" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                      </label>
+                    </div>
+                    <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                      Organization
+                      <input name="organizationName" placeholder="Optional" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                    </label>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button type="button" onClick={() => setSetupServiceId(null)} className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50">
+                        Cancel
+                      </button>
+                      <button type="submit" disabled={Boolean(busyKey)} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-zinc-900 px-3.5 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50">
+                        <Github size={14} />
+                        Save repository
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            ) : isOAuthService(setupService.id) ? (
+              <div className="flex justify-end gap-2 px-5 py-5">
+                <button type="button" onClick={() => setSetupServiceId(null)} className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50">
+                  Cancel
+                </button>
+                <button type="button" disabled={Boolean(busyKey)} onClick={() => beginConnection(setupService)} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-zinc-900 px-3.5 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50">
+                  <Plug size={14} />
+                  Continue to sign-in
+                </button>
+              </div>
+            ) : isManagedSetupService(setupService.id) ? (
+              <form onSubmit={handleManagedSetupSubmit} className="space-y-4 px-5 py-5">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                    Command
+                    <input name="command" placeholder="opencode" defaultValue="opencode" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                  </label>
+                  <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                    Model
+                    <input name="model" placeholder="Use OpenCode default" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                  </label>
+                  <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                    Agent
+                    <input name="agent" placeholder="Optional" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                  </label>
+                  <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                    Attach URL
+                    <input name="attachUrl" placeholder="Optional" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                  </label>
+                </div>
+                <p className="text-xs leading-5 text-text-secondary">
+                  OpenCode authentication stays inside your OpenCode setup. FounderOS stores only how to call it.
+                </p>
+                <div className="flex justify-end gap-2 pt-1">
+                  <button type="button" onClick={() => setSetupServiceId(null)} className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50">
+                    Cancel
+                  </button>
+                  <button type="submit" disabled={Boolean(busyKey)} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-zinc-900 px-3.5 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50">
+                    <KeyRound size={14} />
+                    Save OpenCode
+                  </button>
+                </div>
+              </form>
+            ) : isApiKeyService(setupService.id) ? (
+              <form onSubmit={handlePrivateSetupSubmit} className="space-y-4 px-5 py-5">
+                <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                  Private key
+                  <input
+                    name="apiKey"
+                    type="password"
+                    required
+                    autoComplete="off"
+                    placeholder={keyPlaceholder(setupService.id)}
+                    className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white"
+                  />
+                </label>
+
+                {setupService.id === "vercel" && (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                      Project ID
+                      <input name="projectId" placeholder="Required" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                    </label>
+                    <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                      Project name
+                      <input name="projectName" placeholder="Optional" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                    </label>
+                    <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                      Team ID
+                      <input name="teamId" placeholder="Optional" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                    </label>
+                    <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                      Production domain
+                      <input name="productionDomain" placeholder="Optional" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                    </label>
+                  </div>
+                )}
+
+                {setupService.id === "posthog" && (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                      Host
+                      <input name="host" required placeholder="https://us.posthog.com" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                    </label>
+                    <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                      Project ID
+                      <input name="projectId" required placeholder="Required" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                    </label>
+                    <label className="space-y-1.5 text-xs font-semibold text-text-secondary sm:col-span-2">
+                      Project name
+                      <input name="projectName" placeholder="Optional" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                    </label>
+                  </div>
+                )}
+
+                {setupService.id === "resend" && (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                      Sender email
+                      <input name="senderEmail" type="email" placeholder="founder@example.com" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                    </label>
+                    <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                      Sender domain
+                      <input name="senderDomain" placeholder="example.com" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                    </label>
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setSetupServiceId(null)}
+                    className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={Boolean(busyKey)}
+                    className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-zinc-900 px-3.5 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <KeyRound size={14} />
+                    Connect
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="flex justify-end gap-2 px-5 py-5">
+                <button type="button" onClick={() => setSetupServiceId(null)} className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50">
+                  Close
+                </button>
+                <button type="button" disabled={Boolean(busyKey)} onClick={() => beginConnection(setupService)} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-zinc-900 px-3.5 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50">
+                  <Plug size={14} />
+                  Connect
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {activityLogs !== undefined && activityLogs.length > 0 && (
         <section className="mt-6 overflow-hidden rounded-lg border border-black/[0.06] bg-white shadow-sm">

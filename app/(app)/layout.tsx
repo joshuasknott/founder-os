@@ -8,7 +8,7 @@ export const metadata: Metadata = {
   description: "AI business workspace for a founder and one business",
 };
 
-export default function RootLayout({
+export default function AppLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;

@@ -59,19 +59,36 @@ test("registry exposes safe connector metadata and action handlers", () => {
     ["import_content", "export_content", "update_external_record"],
   );
 
-  const slack = runtime.getConnectorDefinition("slack");
-  assert.equal(slack.safeDisplayName, "Slack");
+  const docs = runtime.getConnectorDefinition("google_docs");
+  assert.equal(docs.safeDisplayName, "Google Docs");
   assert.deepEqual(
-    slack.actions.map((action) => action.type),
-    ["import_content", "post_message", "update_external_record"],
-  );
-
-  const notion = runtime.getConnectorDefinition("notion");
-  assert.equal(notion.safeDisplayName, "Notion");
-  assert.deepEqual(
-    notion.actions.map((action) => action.type),
+    docs.actions.map((action) => action.type),
     ["import_content", "export_content", "update_external_record"],
   );
+
+  const sheets = runtime.getConnectorDefinition("google_sheets");
+  assert.equal(sheets.safeDisplayName, "Google Sheets");
+  assert.deepEqual(
+    sheets.actions.map((action) => action.type),
+    ["import_content", "export_content", "update_external_record"],
+  );
+
+  const github = runtime.getConnectorDefinition("github");
+  assert.equal(github.authType, "github_app");
+  assert.equal(JSON.stringify(runtime.publicConnectorDefinition(github)).includes("github.contents"), false);
+
+  const posthog = runtime.getConnectorDefinition("posthog");
+  assert.equal(posthog.safeDisplayName, "PostHog");
+  assert.equal(posthog.actions.some((action) => action.approval === "blocked"), true);
+
+  const resend = runtime.getConnectorDefinition("resend");
+  assert.equal(resend.safeDisplayName, "Resend");
+
+  const canva = runtime.getConnectorDefinition("canva");
+  assert.equal(canva.safeDisplayName, "Canva");
+
+  const opencode = runtime.getConnectorDefinition("opencode");
+  assert.equal(opencode.authType, "managed");
 
   const stripe = runtime.getConnectorDefinition("stripe");
   assert.equal(stripe.safeDisplayName, "Stripe");
@@ -111,49 +128,50 @@ test("content connectors import freely and gate external writes", () => {
   assert.equal(driveExport.reason, "approval_required");
   assert.equal(driveExport.sensitiveActionKind, "change_live_asset");
 
-  const slackConnection = {
+  const docsConnection = {
     status: "connected",
-    credentialRef: "vault:slack",
-    grantedScopes: ["slack.history", "slack.post", "slack.update"],
+    credentialRef: "vault:docs",
+    grantedScopes: ["google.docs.read", "google.docs.file"],
   };
-  const slackImport = runtime.evaluateConnectorActionRequest({
-    connectorId: "slack",
+  const docsImport = runtime.evaluateConnectorActionRequest({
+    connectorId: "google_docs",
     actionType: "import_content",
-    connection: slackConnection,
+    connection: docsConnection,
   });
-  assert.equal(slackImport.allowed, true);
-  assert.equal(slackImport.approvalRequired, false);
+  assert.equal(docsImport.allowed, true);
+  assert.equal(docsImport.approvalRequired, false);
 
-  const slackPost = runtime.evaluateConnectorActionRequest({
-    connectorId: "slack",
-    actionType: "post_message",
-    connection: slackConnection,
-  });
-  assert.equal(slackPost.allowed, false);
-  assert.equal(slackPost.reason, "approval_required");
-  assert.equal(slackPost.sensitiveActionKind, "post_externally");
-
-  const notionConnection = {
-    status: "connected",
-    credentialRef: "vault:notion",
-    grantedScopes: ["notion.read", "notion.write"],
-  };
-  const notionImport = runtime.evaluateConnectorActionRequest({
-    connectorId: "notion",
-    actionType: "import_content",
-    connection: notionConnection,
-  });
-  assert.equal(notionImport.allowed, true);
-  assert.equal(notionImport.approvalRequired, false);
-
-  const notionUpdate = runtime.evaluateConnectorActionRequest({
-    connectorId: "notion",
+  const docsUpdate = runtime.evaluateConnectorActionRequest({
+    connectorId: "google_docs",
     actionType: "update_external_record",
-    connection: notionConnection,
+    connection: docsConnection,
+  });
+  assert.equal(docsUpdate.allowed, false);
+  assert.equal(docsUpdate.reason, "approval_required");
+  assert.equal(docsUpdate.sensitiveActionKind, "change_live_asset");
+
+  const githubConnection = {
+    status: "connected",
+    credentialRef: "vault:github",
+    grantedScopes: ["github.metadata", "github.contents.read", "github.pull_requests.write", "github.issues.write"],
+    settings: { installationId: "123", repositoryOwner: "founder", repositoryName: "os" },
+  };
+  const githubImport = runtime.evaluateConnectorActionRequest({
+    connectorId: "github",
+    actionType: "import_repository_context",
+    connection: githubConnection,
+  });
+  assert.equal(githubImport.allowed, true);
+  assert.equal(githubImport.approvalRequired, false);
+
+  const pullRequest = runtime.evaluateConnectorActionRequest({
+    connectorId: "github",
+    actionType: "create_pull_request",
+    connection: githubConnection,
     approvalGranted: true,
   });
-  assert.equal(notionUpdate.allowed, true);
-  assert.equal(notionUpdate.approvalRequired, true);
+  assert.equal(pullRequest.allowed, true);
+  assert.equal(pullRequest.approvalRequired, true);
 });
 
 test("stripe sync is read-only and write actions are blocked by policy", () => {
@@ -387,6 +405,108 @@ test("vercel connector creates previews without approval and gates live publishi
   assert.equal(approved.approvalRequired, true);
 });
 
+test("opencode managed setup runs builder work without storing provider keys", () => {
+  const missingSetup = runtime.testConnectorConnection(
+    runtime.getConnectorDefinition("opencode"),
+    {
+      status: "connected",
+      grantedScopes: ["opencode.run"],
+    },
+  );
+  assert.equal(missingSetup.status, "needs_attention");
+
+  const connection = {
+    status: "connected",
+    grantedScopes: ["opencode.run"],
+    settings: { command: "opencode", model: "openrouter/deepseek/deepseek-chat" },
+  };
+  const status = runtime.testConnectorConnection(runtime.getConnectorDefinition("opencode"), connection);
+  assert.equal(status.status, "connected");
+  assert.equal(status.healthy, true);
+
+  const run = runtime.evaluateConnectorActionRequest({
+    connectorId: "opencode",
+    actionType: "run_code_builder",
+    connection,
+  });
+  assert.equal(run.allowed, true);
+  assert.equal(run.approvalRequired, false);
+
+  const apply = runtime.evaluateConnectorActionRequest({
+    connectorId: "opencode",
+    actionType: "update_live_asset",
+    connection,
+  });
+  assert.equal(apply.allowed, false);
+  assert.equal(apply.reason, "approval_required");
+});
+
+test("new connector actions follow v1 approval boundaries", () => {
+  const posthogConnection = {
+    status: "connected",
+    credentialRef: "vault:posthog",
+    grantedScopes: ["posthog.read", "posthog.write"],
+    settings: { host: "https://us.posthog.com", projectId: "12345" },
+  };
+  const analytics = runtime.evaluateConnectorActionRequest({
+    connectorId: "posthog",
+    actionType: "query_analytics",
+    connection: posthogConnection,
+  });
+  assert.equal(analytics.allowed, true);
+  assert.equal(analytics.approvalRequired, false);
+  const posthogWrite = runtime.evaluateConnectorActionRequest({
+    connectorId: "posthog",
+    actionType: "update_external_record",
+    connection: posthogConnection,
+    approvalGranted: true,
+  });
+  assert.equal(posthogWrite.allowed, false);
+  assert.equal(posthogWrite.reason, "blocked_by_policy");
+
+  const resendConnection = {
+    status: "connected",
+    credentialRef: "vault:resend",
+    grantedScopes: ["resend.send"],
+    settings: { senderEmail: "founder@example.com" },
+  };
+  const draft = runtime.evaluateConnectorActionRequest({
+    connectorId: "resend",
+    actionType: "draft_email",
+    connection: resendConnection,
+  });
+  assert.equal(draft.allowed, true);
+  assert.equal(draft.approvalRequired, false);
+  const send = runtime.evaluateConnectorActionRequest({
+    connectorId: "resend",
+    actionType: "send_transactional_email",
+    connection: resendConnection,
+  });
+  assert.equal(send.allowed, false);
+  assert.equal(send.reason, "approval_required");
+  assert.equal(send.sensitiveActionKind, "send_email");
+
+  const canvaConnection = {
+    status: "connected",
+    credentialRef: "vault:canva",
+    grantedScopes: ["canva.design.read", "canva.design.write", "canva.asset.read"],
+  };
+  const createDesign = runtime.evaluateConnectorActionRequest({
+    connectorId: "canva",
+    actionType: "create_design",
+    connection: canvaConnection,
+  });
+  assert.equal(createDesign.allowed, true);
+  assert.equal(createDesign.approvalRequired, false);
+  const updateDesign = runtime.evaluateConnectorActionRequest({
+    connectorId: "canva",
+    actionType: "update_external_record",
+    connection: canvaConnection,
+  });
+  assert.equal(updateDesign.allowed, false);
+  assert.equal(updateDesign.reason, "approval_required");
+});
+
 test("vercel connection settings are internal, sanitized, and required", () => {
   const vercel = runtime.getConnectorDefinition("vercel");
   const sanitized = runtime.sanitizeConnectorConnectionSettings("vercel", {
@@ -435,35 +555,157 @@ test("google workspace settings are sanitized and kept out of public cards", () 
 });
 
 test("content connector settings are sanitized and kept out of public cards", () => {
-  const slack = runtime.getConnectorDefinition("slack");
-  const sanitized = runtime.sanitizeConnectorConnectionSettings("slack", {
-    accountEmail: " Founder@Example.COM ",
-    workspaceName: " Founder OS ",
-    channelName: " leadership ",
-    botToken: "xoxb-private_token_should_not_store",
+  const github = runtime.getConnectorDefinition("github");
+  const githubSettings = runtime.sanitizeConnectorConnectionSettings("github", {
+    accountName: " founder ",
+    repositoryOwner: " founderos ",
+    repositoryName: " founder-os ",
+    installationId: " 12345 ",
+    privateKey: "-----BEGIN PRIVATE KEY-----secret",
   });
 
-  assert.equal(sanitized.accountEmail, "founder@example.com");
-  assert.equal(sanitized.workspaceName, "Founder OS");
-  assert.equal(sanitized.channelName, "leadership");
-  assert.equal(JSON.stringify(sanitized).includes("private_token"), false);
-  assert.equal(JSON.stringify(runtime.publicConnectionCard(slack, { settings: sanitized })).includes("founder@example.com"), false);
+  assert.equal(githubSettings.accountName, "founder");
+  assert.equal(githubSettings.installationId, "12345");
+  assert.equal(JSON.stringify(githubSettings).includes("PRIVATE KEY"), false);
+  assert.equal(JSON.stringify(runtime.publicConnectionCard(github, { settings: githubSettings })).includes("12345"), false);
+
+  const posthog = runtime.getConnectorDefinition("posthog");
+  const posthogSettings = runtime.sanitizeConnectorConnectionSettings("posthog", {
+    host: "https://US.posthog.com/project/123",
+    projectId: " 12345 ",
+    personalApiKey: "phx_private_token_should_not_store",
+  });
+  assert.equal(posthogSettings.host, "https://us.posthog.com");
+  assert.equal(posthogSettings.projectId, "12345");
+  assert.equal(JSON.stringify(posthogSettings).includes("private_token"), false);
+
+  const resend = runtime.getConnectorDefinition("resend");
+  const resendSettings = runtime.sanitizeConnectorConnectionSettings("resend", {
+    accountEmail: " Founder@Example.COM ",
+    senderEmail: " founder@example.com ",
+    senderDomain: "https://Example.com/path",
+    apiKey: "re_private_token_should_not_store",
+  });
+  assert.equal(resendSettings.senderEmail, "founder@example.com");
+  assert.equal(resendSettings.senderDomain, "example.com");
+  assert.equal(JSON.stringify(runtime.publicConnectionCard(resend, { settings: resendSettings })).includes("founder@example.com"), false);
+
+  const readyPosthog = runtime.testConnectorConnection(posthog, {
+    status: "connected",
+    credentialRef: "vault:posthog",
+    grantedScopes: ["posthog.read"],
+    settings: posthogSettings,
+  });
+  assert.equal(readyPosthog.status, "connected");
 });
 
-test("credential storage abstraction returns only safe metadata", () => {
+test("api-key setup validation stores only allowed connector access", () => {
+  const rejectedStripe = runtime.validateApiKeyConnectorSetup({
+    connectorId: "stripe",
+    credential: "sk_live_broad_secret_should_not_store",
+  });
+  assert.equal(rejectedStripe.ok, false);
+  assert.equal(rejectedStripe.safeMessage.includes("read-only"), true);
+  assert.equal(JSON.stringify(rejectedStripe).includes("sk_live"), false);
+
+  const stripe = runtime.validateApiKeyConnectorSetup({
+    connectorId: "stripe",
+    credential: "rk_test_readonly_1234567890",
+  });
+  assert.equal(stripe.ok, true);
+  assert.deepEqual(stripe.grantedScopes, ["stripe.read"]);
+  assert.equal(stripe.status, "connected");
+
+  const vercelNeedsProject = runtime.validateApiKeyConnectorSetup({
+    connectorId: "vercel",
+    credential: "vercel_private_token_1234567890",
+  });
+  assert.equal(vercelNeedsProject.ok, true);
+  assert.equal(vercelNeedsProject.status, "needs_attention");
+
+  const vercelReady = runtime.validateApiKeyConnectorSetup({
+    connectorId: "vercel",
+    credential: "vercel_private_token_1234567890",
+    settings: {
+      projectId: " prj_123 ",
+      token: "should_not_store",
+    },
+  });
+  assert.equal(vercelReady.status, "connected");
+  assert.deepEqual(vercelReady.grantedScopes, ["web.preview", "web.publish"]);
+  assert.equal(JSON.stringify(vercelReady.settings).includes("should_not_store"), false);
+
+  const posthog = runtime.validateApiKeyConnectorSetup({
+    connectorId: "posthog",
+    credential: "phx_private_1234567890",
+    settings: {
+      host: "https://US.posthog.com/project/123",
+      projectId: " 12345 ",
+      personalApiKey: "should_not_store",
+    },
+  });
+  assert.equal(posthog.status, "connected");
+  assert.deepEqual(posthog.grantedScopes, ["posthog.read"]);
+  assert.equal(JSON.stringify(posthog.settings).includes("should_not_store"), false);
+
+  const resend = runtime.validateApiKeyConnectorSetup({
+    connectorId: "resend",
+    credential: "re_private_1234567890",
+    settings: {
+      senderEmail: " founder@example.com ",
+      apiKey: "should_not_store",
+    },
+  });
+  assert.equal(resend.status, "connected");
+  assert.deepEqual(resend.grantedScopes, ["resend.send"]);
+});
+
+test("disconnect and reconnect status remains safe", () => {
+  const vercel = runtime.getConnectorDefinition("vercel");
+  const disabled = runtime.testConnectorConnection(vercel, {
+    status: "disabled",
+    disabledAt: 1000,
+    credentialRef: "vault:vercel",
+    grantedScopes: ["web.preview", "web.publish"],
+    settings: { projectId: "prj_123" },
+  });
+  assert.equal(disabled.status, "disabled");
+  assert.equal(disabled.safeMessage, "Turned off.");
+
+  const reconnect = runtime.validateApiKeyConnectorSetup({
+    connectorId: "vercel",
+    credential: "vercel_private_token_1234567890",
+    settings: { projectId: "prj_123" },
+  });
+  assert.equal(reconnect.ok, true);
+  assert.equal(reconnect.status, "connected");
+  assert.equal(JSON.stringify(reconnect).includes("vercel_private_token"), false);
+});
+
+test("credential storage abstraction encrypts secrets and returns only safe metadata", async () => {
   const rawSecret = "sk_live_super_secret_1234567890";
-  const envelope = runtime.connectorCredentialStorage.seal({
+  const envelope = await runtime.connectorCredentialStorage.seal({
     workspaceId: "workspace1",
     connectorId: "payments",
     secret: rawSecret,
     now: 1000,
+    keyMaterial: "unit-test-key",
   });
   const publicMetadata = runtime.connectorCredentialStorage.publicMetadata(envelope);
 
   assert.equal(envelope.sealedReference.includes(rawSecret), false);
   assert.equal(envelope.vaultKey.includes(rawSecret), false);
+  assert.equal(envelope.encryptedSecret.includes(rawSecret), false);
   assert.equal(JSON.stringify(publicMetadata).includes(rawSecret), false);
   assert.equal(publicMetadata.secretPreview, "****7890");
+  assert.equal(
+    await runtime.connectorCredentialStorage.unseal({
+      encryptedSecret: envelope.encryptedSecret,
+      encryptionNonce: envelope.encryptionNonce,
+      keyMaterial: "unit-test-key",
+    }),
+    rawSecret,
+  );
 });
 
 test("safe errors strip secrets, responses, URLs, and technical logs", () => {
