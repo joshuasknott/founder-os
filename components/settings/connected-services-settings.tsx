@@ -33,12 +33,6 @@ type ServiceCard = {
   healthy: boolean;
   safeSettings?: {
     command?: string;
-    model?: string;
-    modelLow?: string;
-    modelMedium?: string;
-    modelHigh?: string;
-    agent?: string;
-    attachUrl?: string;
   };
   connectionId?: Id<"connectorConnections">;
   lastTestedAt?: number;
@@ -86,7 +80,6 @@ function actionCopy(actionType: string) {
     disconnect: "Turned off",
     test_connection: "Connection check",
     update_settings: "Settings updated",
-    sync_stripe_finance_context: "Finance sync",
   };
   return labels[actionType] ?? actionType.replace(/_/g, " ");
 }
@@ -107,17 +100,17 @@ function formatActivityTime(value: number) {
   }).format(value);
 }
 
-async function checkOpenCodeLocal(service?: ServiceCard) {
+async function checkOpenCodeLocal(command?: string) {
   const response = await fetch("/api/local/opencode/check", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ command: service?.safeSettings?.command ?? "opencode" }),
+    body: JSON.stringify({ command: command ?? "opencode" }),
   });
   return await response.json() as unknown;
 }
 
 function isApiKeyService(id: string) {
-  return id === "stripe" || id === "vercel" || id === "posthog" || id === "resend";
+  return id === "vercel";
 }
 
 function isManagedSetupService(id: string) {
@@ -129,21 +122,18 @@ function isOAuthService(id: string) {
     || id === "google_calendar"
     || id === "google_drive"
     || id === "google_docs"
-    || id === "canva";
+    || id === "google_sheets";
 }
 
 function setupTitle(service?: ServiceCard) {
   if (!service) return "Connect service";
   if (service.id === "github") return "Choose repository";
-  if (service.id === "opencode") return "Configure OpenCode";
+  if (service.id === "opencode") return "Check OpenCode";
   return `Connect ${service.safeDisplayName}`;
 }
 
 function keyPlaceholder(id: string) {
-  if (id === "stripe") return "Restricted read-only key";
   if (id === "vercel") return "Vercel token";
-  if (id === "posthog") return "PostHog personal key";
-  if (id === "resend") return "Resend key";
   return "Private key";
 }
 
@@ -178,7 +168,6 @@ export function ConnectedServicesSettings() {
     api.connectors.getActionLogs,
     workspaceId ? { workspaceId } : "skip",
   ) as ActivityLog[] | undefined;
-  const syncStripeFinance = useAction(api.connectors.syncStripeFinance);
   const startOAuthConnection = useAction(api.connectors.startOAuthConnection);
   const completeOAuthConnection = useAction(api.connectors.completeOAuthConnection);
   const refreshOAuthConnection = useAction(api.connectors.refreshOAuthConnection);
@@ -245,11 +234,11 @@ export function ConnectedServicesSettings() {
     const callbackKey = `${provider ?? ""}:${state ?? ""}:${code ?? ""}:${installationId ?? ""}`;
 
     if (!provider || !state || callbackHandledRef.current === callbackKey) return;
-    if ((provider === "google_workspace" || provider === "canva") && !code) return;
+    if (provider === "google_workspace" && !code) return;
     if (provider === "github" && !installationId) return;
 
     callbackHandledRef.current = callbackKey;
-    const serviceId = provider === "google_workspace" ? "gmail" : provider === "github" ? "github" : "canva";
+    const serviceId = provider === "google_workspace" ? "gmail" : "github";
     void runServiceAction(`${serviceId}:callback`, async () => {
       const result = provider === "github"
         ? await completeGitHubAppConnection({ state, installationId: installationId! })
@@ -347,6 +336,11 @@ export function ConnectedServicesSettings() {
     for (const [key, value] of formData.entries()) {
       if (typeof value === "string" && value.trim()) settings[key] = value.trim();
     }
+
+    const check = await runServiceAction(`${setupService.id}:local-check`, () =>
+      checkOpenCodeLocal(settings.command),
+    );
+    if (!check || typeof check !== "object" || !(check as { ok?: unknown }).ok) return;
 
     await runServiceAction(setupService.id, () =>
       setupManagedConnection({
@@ -505,7 +499,7 @@ export function ConnectedServicesSettings() {
                     onClick={() =>
                       void runServiceAction(`${setupService.id}:check`, () =>
                         setupService.id === "opencode"
-                          ? checkOpenCodeLocal(setupService)
+                          ? checkOpenCodeLocal(setupService.safeSettings?.command)
                           : testConnection({ connectionId: setupService.connectionId! }),
                       )
                     }
@@ -527,23 +521,6 @@ export function ConnectedServicesSettings() {
                     >
                       <RefreshCw size={13} />
                       Refresh sign-in
-                    </button>
-                  )}
-                  {setupService.id === "stripe" && setupService.status === "connected" && workspaceId && (
-                    <button
-                      type="button"
-                      disabled={Boolean(busyKey)}
-                      onClick={() =>
-                        void runServiceAction(
-                          `${setupService.id}:sync`,
-                          () => syncStripeFinance({ workspaceId, requestedBy: "settings" }),
-                          setupService.id,
-                        )
-                      }
-                      className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <RefreshCw size={13} />
-                      Sync finance
                     </button>
                   )}
                   <button
@@ -615,46 +592,25 @@ export function ConnectedServicesSettings() {
               </div>
             ) : isManagedSetupService(setupService.id) ? (
               <form onSubmit={handleManagedSetupSubmit} className="space-y-4 px-5 py-5">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
-                    Command
-                    <input name="command" placeholder="opencode" defaultValue={setupService.safeSettings?.command ?? "opencode"} className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
-                  </label>
-                  <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
-                    Fallback model
-                    <input name="model" placeholder="Optional for manual tiers" defaultValue={setupService.safeSettings?.model ?? ""} className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
-                  </label>
-                  <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
-                    Agent
-                    <input name="agent" placeholder="Optional" defaultValue={setupService.safeSettings?.agent ?? ""} className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
-                  </label>
-                  <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
-                    Attach URL
-                    <input name="attachUrl" placeholder="Optional" defaultValue={setupService.safeSettings?.attachUrl ?? ""} className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
-                  </label>
-                  <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
-                    Low model
-                    <input name="modelLow" placeholder="Fast/simple model" defaultValue={setupService.safeSettings?.modelLow ?? ""} className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
-                  </label>
-                  <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
-                    Medium model
-                    <input name="modelMedium" placeholder="Balanced model" defaultValue={setupService.safeSettings?.modelMedium ?? ""} className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
-                  </label>
-                  <label className="space-y-1.5 text-xs font-semibold text-text-secondary sm:col-span-2">
-                    High model
-                    <input name="modelHigh" placeholder="Reasoning/build model" defaultValue={setupService.safeSettings?.modelHigh ?? ""} className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
-                  </label>
-                </div>
                 <p className="text-xs leading-5 text-text-secondary">
-                  Auto leaves the model to OpenCode. Low, Medium, and High use the matching model above when one is set.
+                  FounderOS will check this computer and confirm product-building work is ready before saving the connection.
                 </p>
+                <details className="rounded-lg border border-black/[0.06] bg-surface px-3 py-2">
+                  <summary className="cursor-pointer text-xs font-semibold text-text-secondary">
+                    Advanced
+                  </summary>
+                  <label className="mt-3 block space-y-1.5 text-xs font-semibold text-text-secondary">
+                    Custom OpenCode command
+                    <input name="command" placeholder="opencode" defaultValue={setupService.safeSettings?.command ?? "opencode"} className="h-10 w-full rounded-lg border border-black/[0.08] bg-white px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25" />
+                  </label>
+                </details>
                 <div className="flex justify-end gap-2 pt-1">
                   <button type="button" onClick={() => setSetupServiceId(null)} className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50">
                     Cancel
                   </button>
                   <button type="submit" disabled={Boolean(busyKey)} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-zinc-900 px-3.5 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50">
-                    <KeyRound size={14} />
-                    Save OpenCode
+                    <RefreshCw size={14} />
+                    Check local setup
                   </button>
                 </div>
               </form>
@@ -689,36 +645,6 @@ export function ConnectedServicesSettings() {
                     <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
                       Production domain
                       <input name="productionDomain" placeholder="Optional" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
-                    </label>
-                  </div>
-                )}
-
-                {setupService.id === "posthog" && (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
-                      Host
-                      <input name="host" required placeholder="https://us.posthog.com" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
-                    </label>
-                    <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
-                      Project ID
-                      <input name="projectId" required placeholder="Required" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
-                    </label>
-                    <label className="space-y-1.5 text-xs font-semibold text-text-secondary sm:col-span-2">
-                      Project name
-                      <input name="projectName" placeholder="Optional" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
-                    </label>
-                  </div>
-                )}
-
-                {setupService.id === "resend" && (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
-                      Sender email
-                      <input name="senderEmail" type="email" placeholder="founder@example.com" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
-                    </label>
-                    <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
-                      Sender domain
-                      <input name="senderDomain" placeholder="example.com" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
                     </label>
                   </div>
                 )}

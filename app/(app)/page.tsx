@@ -24,13 +24,8 @@ import {
 } from "lucide-react";
 
 type PromptMode = "chat" | "task";
-type ModelProfile = "auto" | "low" | "medium" | "high";
 type OpenCodeSafeSettings = {
   command?: string;
-  model?: string;
-  modelLow?: string;
-  modelMedium?: string;
-  modelHigh?: string;
   agent?: string;
   attachUrl?: string;
 };
@@ -39,22 +34,6 @@ type ConnectorService = {
   status: string;
   safeSettings?: OpenCodeSafeSettings;
 };
-
-const modelProfileOptions: Array<{ id: ModelProfile; label: string; helper: string }> = [
-  { id: "auto", label: "Auto", helper: "FounderOS routes this for you" },
-  { id: "low", label: "Low", helper: "Fast, simple everyday questions" },
-  { id: "medium", label: "Medium", helper: "Balanced planning and drafting" },
-  { id: "high", label: "High", helper: "Harder reasoning or build work" },
-];
-
-function openCodeModelForProfile(settings: OpenCodeSafeSettings | undefined, profile: ModelProfile) {
-  if (profile === "auto") return undefined;
-  const profileModel =
-    profile === "low" ? settings?.modelLow :
-    profile === "medium" ? settings?.modelMedium :
-    settings?.modelHigh;
-  return profileModel || settings?.model || undefined;
-}
 
 type ChatMessageCard = {
   type: "task_result" | "item_navigation";
@@ -182,6 +161,16 @@ function titleFromPrompt(prompt: string) {
   return normalized.length > 72 ? `${normalized.slice(0, 69)}...` : normalized;
 }
 
+function useStableDefined<T>(value: T | undefined) {
+  const [stableValue, setStableValue] = useState<T | undefined>(value);
+
+  useEffect(() => {
+    if (value !== undefined) queueMicrotask(() => setStableValue(value));
+  }, [value]);
+
+  return value ?? stableValue;
+}
+
 export default function HomePage() {
   return (
     <Suspense fallback={<HomeLoader />}>
@@ -196,14 +185,18 @@ function HomePageContent() {
   const sessionParam = searchParams.get("session") as Id<"chatSessions"> | null;
   const taskParam = searchParams.get("task") as Id<"directives"> | null;
 
-  const overview = useQuery(api.commandCenter.getOverview);
+  const liveOverview = useQuery(api.commandCenter.getOverview);
+  const overview = useStableDefined(liveOverview);
   const workspaceId = overview?.workspace?._id as Id<"workspaces"> | undefined;
-  const connectorServices = useQuery(
+  const liveConnectorServices = useQuery(
     api.connectors.listForWorkspace,
     workspaceId ? { workspaceId } : "skip",
   ) as ConnectorService[] | undefined;
-  const isSeeded = useQuery(api.init.isSeeded);
-  const agents = useQuery(api.swarm.getAllAgents);
+  const connectorServices = useStableDefined(liveConnectorServices) as ConnectorService[] | undefined;
+  const liveIsSeeded = useQuery(api.init.isSeeded);
+  const isSeeded = useStableDefined(liveIsSeeded);
+  const liveAgents = useQuery(api.swarm.getAllAgents);
+  const agents = useStableDefined(liveAgents);
   const messages = useQuery(
     api.chat.getMessages,
     sessionParam ? { sessionId: sessionParam } : "skip",
@@ -224,7 +217,6 @@ function HomePageContent() {
   const deny = useMutation(api.approvals.deny);
 
   const [mode, setMode] = useState<PromptMode>("chat");
-  const [modelProfile, setModelProfile] = useState<ModelProfile>("auto");
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -371,14 +363,12 @@ function HomePageContent() {
             sessionId,
             agentId: defaultWorker._id,
             content: trimmed,
-            modelProfile,
           });
           const response = await fetch("/api/local/opencode/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               command: openCodeService.safeSettings?.command ?? "opencode",
-              model: openCodeModelForProfile(openCodeService.safeSettings, modelProfile),
               agent: openCodeService.safeSettings?.agent,
               attachUrl: openCodeService.safeSettings?.attachUrl,
               systemPrompt: prepared.systemPrompt,
@@ -402,7 +392,6 @@ function HomePageContent() {
           sessionId,
           agentId: defaultWorker._id,
           content: trimmed,
-          modelProfile,
         });
         router.replace(`/?session=${sessionId}`);
         return;
@@ -412,7 +401,6 @@ function HomePageContent() {
         title: titleFromPrompt(trimmed),
         objective: trimmed,
         sessionId,
-        modelProfile,
       });
 
       setMode("chat");
@@ -432,7 +420,6 @@ function HomePageContent() {
     ensureConversation,
     input,
     isSending,
-    modelProfile,
     mode,
     openCodeService,
     prepareLocalOpenCodeChat,
@@ -476,8 +463,6 @@ function HomePageContent() {
             setInput={setInput}
             inputRef={inputRef}
             isSending={isSending}
-            modelProfile={modelProfile}
-            setModelProfile={setModelProfile}
             onSend={handleSend}
           />
 
@@ -606,8 +591,6 @@ function HomePageContent() {
             setInput={setInput}
             inputRef={inputRef}
             isSending={isSending}
-            modelProfile={modelProfile}
-            setModelProfile={setModelProfile}
             onSend={handleSend}
           />
           {notice && <p className="mt-2 text-xs font-medium text-text-secondary">{notice}</p>}
@@ -625,8 +608,6 @@ function PromptBox({
   setInput,
   inputRef,
   isSending,
-  modelProfile,
-  setModelProfile,
   onSend,
 }: {
   mode: PromptMode;
@@ -635,15 +616,11 @@ function PromptBox({
   setInput: React.Dispatch<React.SetStateAction<string>>;
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
   isSending: boolean;
-  modelProfile: ModelProfile;
-  setModelProfile: (profile: ModelProfile) => void;
   onSend: () => void;
 }) {
   const [isListening, setIsListening] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const [isModelOpen, setIsModelOpen] = useState(false);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
-  const selectedProfile = modelProfileOptions.find((option) => option.id === modelProfile) ?? modelProfileOptions[0];
 
   useEffect(() => {
     return () => {
@@ -794,43 +771,6 @@ function PromptBox({
             )}
           </div>
 
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setIsModelOpen((prev) => !prev)}
-              disabled={isSending}
-              className="flex items-center gap-1.5 rounded-lg border border-black/[0.06] bg-white px-2.5 py-1.5 text-xs font-semibold text-text-secondary transition-all hover:bg-black/[0.02] hover:text-text-primary active:scale-[0.98]"
-            >
-              <span>{selectedProfile.label}</span>
-              <ChevronDown size={12} className="ml-0.5 text-text-muted" />
-            </button>
-
-            {isModelOpen && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setIsModelOpen(false)} />
-                <div className="absolute bottom-full left-0 z-50 mb-1.5 w-64 rounded-xl border border-black/[0.06] bg-white p-1 shadow-[0_10px_30px_rgba(0,0,0,0.08)] animate-slide-up">
-                  {modelProfileOptions.map((option) => (
-                    <button
-                      key={option.id}
-                      type="button"
-                      onClick={() => {
-                        setModelProfile(option.id);
-                        setIsModelOpen(false);
-                      }}
-                      className={`w-full rounded-lg px-2.5 py-2 text-left transition ${
-                        modelProfile === option.id
-                          ? "bg-black/[0.03] text-text-primary"
-                          : "text-text-secondary hover:bg-black/[0.015] hover:text-text-primary"
-                      }`}
-                    >
-                      <span className="block text-xs font-semibold">{option.label}</span>
-                      <span className="mt-0.5 block text-[11px] leading-4 text-text-muted">{option.helper}</span>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">

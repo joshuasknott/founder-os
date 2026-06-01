@@ -16,7 +16,7 @@ A private AI-native operating system for a non-technical founder running one bus
 
 - **Frontend**: Next.js 16 (App Router), React 19, Tailwind CSS v4, Radix UI, shadcn
 - **Backend**: Convex (real-time database, functions, crons)
-- **Auth**: BetterAuth with Google OAuth
+- **Auth**: Clerk with Convex JWT authentication
 - **AI Workers**: Background workers for documents, design, communications, and generic tasks
 - **Builder**: Multi-provider build system (Codex, OpenCode, DeepSeek, OpenRouter, and more)
 
@@ -47,8 +47,12 @@ Key variables:
 | --- | --- |
 | `CONVEX_DEPLOYMENT` | Convex deployment name |
 | `NEXT_PUBLIC_CONVEX_URL` | Convex API URL |
-| `BETTER_AUTH_SECRET` | Auth signing secret |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth for login |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Clerk browser key |
+| `CLERK_SECRET_KEY` | Clerk server key |
+| `CLERK_JWT_ISSUER_DOMAIN` | Clerk issuer domain configured for Convex |
+
+Create a Clerk JWT template named `convex`, then set the same issuer domain on
+the Convex deployment with `npx convex env set CLERK_JWT_ISSUER_DOMAIN <issuer>`.
 
 See [.env.example](.env.example) for the full list including worker providers and connector credentials.
 
@@ -114,5 +118,4 @@ tests/            # Test files
 - [Backend Schema](docs/3_BACKEND_SCHEMA.md)
 - [AI Worker Protocols](docs/4_AGENT_PROTOCOLS.md)
 - [Connector Runtime](docs/5_CONNECTOR_RUNTIME.md)
-- [Stripe Connector Safety](docs/6_STRIPE_CONNECTOR_SAFETY.md)
 - [Environment Setup](docs/7_ENVIRONMENT.md)

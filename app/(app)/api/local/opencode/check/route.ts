@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
+import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
-import { serverAuth } from "@/lib/auth-server";
 
 export const runtime = "nodejs";
 
@@ -62,7 +62,8 @@ function checkOpenCode(commandValue: unknown) {
 }
 
 export async function POST(request: NextRequest) {
-  if (!(await serverAuth.isAuthenticated())) {
+  const { isAuthenticated } = await auth();
+  if (!isAuthenticated) {
     return NextResponse.json({ ok: false, safeMessage: "Sign in to continue." }, { status: 401 });
   }
 
@@ -79,9 +80,8 @@ export async function POST(request: NextRequest) {
       ok: true,
       healthy: true,
       safeMessage: result.version
-        ? `OpenCode responded: ${result.version}`
-        : "OpenCode is installed and responding.",
-      version: result.version,
+        ? "OpenCode is ready on this computer."
+        : "OpenCode is ready on this computer.",
     });
   } catch (error) {
     return NextResponse.json(

@@ -1,13 +1,12 @@
 "use client";
 
 import { ReactNode, useEffect, useRef, useState } from "react";
-import { ConvexReactClient } from "convex/react";
-import { ConvexBetterAuthProvider } from "@convex-dev/better-auth/react";
-import { useMutation, useQuery } from "convex/react";
+import { useAuth } from "@clerk/nextjs";
+import { ConvexProviderWithClerk } from "convex/react-clerk";
+import { ConvexReactClient, useConvexAuth, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { LoginCard } from "@/components/auth/LoginCard";
 import { OnboardingFlow } from "@/components/auth/OnboardingFlow";
-import { authClient } from "@/lib/auth-client";
 import { Loader2 } from "lucide-react";
 
 const convex = new ConvexReactClient(
@@ -16,53 +15,57 @@ const convex = new ConvexReactClient(
 
 export default function ConvexClientProvider({ children }: { children: ReactNode }) {
   return (
-    <ConvexBetterAuthProvider client={convex} authClient={authClient}>
+    <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
       <AuthGate>{children}</AuthGate>
-    </ConvexBetterAuthProvider>
+    </ConvexProviderWithClerk>
   );
 }
 
 function AuthGate({ children }: { children: ReactNode }) {
-  const { data: liveSession, isPending } = authClient.useSession();
-  const [stableSession, setStableSession] = useState<typeof liveSession | null>(null);
+  const { isLoaded, isSignedIn, sessionId } = useAuth();
+  const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
   const seedWorkspace = useMutation(api.init.seedSwarm);
   const [seededSessionId, setSeededSessionId] = useState<string | null>(null);
   const [seedError, setSeedError] = useState<{ sessionId: string; message: string } | null>(null);
   const [authTimedOut, setAuthTimedOut] = useState(false);
+  const [hasPassedGate, setHasPassedGate] = useState(false);
   const seedingSessionRef = useRef<string | null>(null);
-  const session = liveSession?.session ? liveSession : stableSession;
-  const sessionId = liveSession?.session?.id ?? stableSession?.session?.id;
-  const shouldLoadWorkspace = Boolean(sessionId && seededSessionId === sessionId);
+  const shouldLoadWorkspace = Boolean(isAuthenticated && sessionId && seededSessionId === sessionId);
   const currentUser = useQuery(api.users.current, shouldLoadWorkspace ? {} : "skip");
   const workspaces = useQuery(api.workspaces.get, shouldLoadWorkspace ? {} : "skip");
   const workspace = workspaces?.[0];
+  const error = seedError && seedError.sessionId === sessionId ? seedError.message : null;
+  const isReady = Boolean(isAuthenticated && sessionId && seededSessionId === sessionId);
+  const workspaceLoaded = Boolean(
+    isReady &&
+    currentUser !== undefined &&
+    workspaces !== undefined &&
+    (!workspace || workspace.onboardingCompletedAt),
+  );
 
   useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      if (liveSession?.session) {
-        const liveId = liveSession.session.id;
-        const stableId = stableSession?.session?.id;
-        if (liveId !== stableId) {
-          setStableSession(liveSession);
-        }
-        return;
-      }
-      if (!isPending) setStableSession(null);
-    }, 0);
-    return () => window.clearTimeout(timeout);
-  }, [isPending, liveSession, liveSession?.session?.id, stableSession?.session?.id]);
+    if (isLoaded && !isSignedIn) {
+      seedingSessionRef.current = null;
+      queueMicrotask(() => {
+        setHasPassedGate(false);
+        setSeededSessionId(null);
+        setSeedError(null);
+      });
+    }
+  }, [isLoaded, isSignedIn]);
 
   useEffect(() => {
-    if (!isPending) {
-      const reset = window.setTimeout(() => setAuthTimedOut(false), 0);
-      return () => window.clearTimeout(reset);
+    const isWaitingForAuth = !isLoaded || (isSignedIn && isConvexAuthLoading);
+    if (!isWaitingForAuth) {
+      queueMicrotask(() => setAuthTimedOut(false));
+      return;
     }
     const timeout = window.setTimeout(() => setAuthTimedOut(true), 6000);
     return () => window.clearTimeout(timeout);
-  }, [isPending]);
+  }, [isConvexAuthLoading, isLoaded, isSignedIn]);
 
   useEffect(() => {
-    if (!sessionId) {
+    if (!isLoaded || !isSignedIn || !isAuthenticated || !sessionId) {
       seedingSessionRef.current = null;
       return;
     }
@@ -92,17 +95,21 @@ function AuthGate({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [seedError?.sessionId, seededSessionId, seedWorkspace, sessionId]);
+  }, [isAuthenticated, isLoaded, isSignedIn, seedError?.sessionId, seededSessionId, seedWorkspace, sessionId]);
 
-  if (isPending && !session?.session && authTimedOut) {
+  useEffect(() => {
+    if (workspaceLoaded) queueMicrotask(() => setHasPassedGate(true));
+  }, [workspaceLoaded]);
+
+  if ((!isLoaded || (isSignedIn && isConvexAuthLoading)) && authTimedOut) {
     return <AuthUnavailable />;
   }
 
-  if (isPending && !session?.session) {
+  if (!isLoaded) {
     return <PreparingWorkspace label="Checking your account" />;
   }
 
-  if (!session?.session) {
+  if (!isSignedIn) {
     return (
       <main className="flex h-screen w-full items-center justify-center bg-surface px-4">
         <LoginCard />
@@ -110,8 +117,12 @@ function AuthGate({ children }: { children: ReactNode }) {
     );
   }
 
-  const error = seedError && seedError.sessionId === sessionId ? seedError.message : null;
-  const isReady = Boolean(sessionId && seededSessionId === sessionId);
+  // Keep the app shell mounted after the first complete workspace load.
+  // Clerk and Convex can briefly refresh tokens or query snapshots in the
+  // background; those transitions should not replace the whole app tree.
+  if (hasPassedGate || workspaceLoaded) {
+    return children;
+  }
 
   if (error) {
     return (
@@ -132,7 +143,7 @@ function AuthGate({ children }: { children: ReactNode }) {
   }
 
   if (!isReady || currentUser === undefined || workspaces === undefined) {
-    return <PreparingWorkspace label="Preparing your workspace" />;
+    return <PreparingWorkspace label={isConvexAuthLoading ? "Checking your account" : "Preparing your workspace"} />;
   }
 
   if (workspace && !workspace.onboardingCompletedAt) {
@@ -163,7 +174,7 @@ function AuthUnavailable() {
       <div className="max-w-sm rounded-lg border border-amber-500/15 bg-white p-5 text-sm text-text-secondary shadow-sm">
         <p className="font-semibold text-text-primary">Account setup needs configuration</p>
         <p className="mt-2 leading-6">
-          Authentication is not responding. Check that Better Auth environment variables are set for this workspace.
+          Authentication is not responding. Check that Clerk environment variables are set for this workspace.
         </p>
         <button
           type="button"

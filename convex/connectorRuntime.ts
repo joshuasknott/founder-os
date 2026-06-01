@@ -217,7 +217,20 @@ export type OpenCodeConnectionSettings = {
   attachUrl?: string;
 };
 
-export type ApiKeyConnectorId = "stripe" | "vercel" | "posthog" | "resend";
+export const activeConnectorIds = [
+  "gmail",
+  "google_calendar",
+  "google_drive",
+  "google_docs",
+  "google_sheets",
+  "github",
+  "opencode",
+  "vercel",
+] as const;
+
+const activeConnectorIdSet = new Set<string>(activeConnectorIds);
+
+export type ApiKeyConnectorId = "vercel";
 
 export type ApiKeyConnectorSetupValidation = {
   ok: boolean;
@@ -1045,11 +1058,11 @@ export const connectorRegistry: Record<string, ConnectorDefinition> = {
 };
 
 export function listConnectorDefinitions() {
-  return Object.values(connectorRegistry);
+  return activeConnectorIds.map((connectorId) => connectorRegistry[connectorId]).filter(Boolean);
 }
 
 export function getConnectorDefinition(connectorId: string) {
-  return connectorRegistry[connectorId];
+  return activeConnectorIdSet.has(connectorId) ? connectorRegistry[connectorId] : undefined;
 }
 
 export function getConnectorAction(definition: ConnectorDefinition, actionType: string) {
@@ -1081,7 +1094,7 @@ export function publicConnectionCard(
 ) {
   const status = testConnectorConnection(definition, connection);
   const safeSettings = definition.id === "opencode"
-    ? definedSettings(sanitizeOpenCodeConnectionSettings(connection?.settings))
+    ? definedSettings({ command: sanitizeOpenCodeConnectionSettings(connection?.settings).command })
     : undefined;
   return {
     ...publicConnectorDefinition(definition),
@@ -1264,7 +1277,7 @@ export function sanitizeOpenCodeConnectionSettings(settings?: unknown): OpenCode
     : {};
 
   return {
-    command: cleanSettingString(source.command, 80),
+    command: cleanSettingString(source.command, 80) ?? "opencode",
     model: cleanSettingString(source.model, 120),
     modelLow: cleanSettingString(source.modelLow, 120),
     modelMedium: cleanSettingString(source.modelMedium, 120),
@@ -1298,18 +1311,6 @@ export function sanitizeConnectorConnectionSettings(connectorId: string, setting
     return definedSettings(sanitizeGitHubConnectionSettings(settings));
   }
 
-  if (connectorId === "posthog") {
-    return definedSettings(sanitizePostHogConnectionSettings(settings));
-  }
-
-  if (connectorId === "resend") {
-    return definedSettings(sanitizeResendConnectionSettings(settings));
-  }
-
-  if (connectorId === "canva") {
-    return definedSettings(sanitizeCanvaConnectionSettings(settings));
-  }
-
   if (connectorId === "opencode") {
     return definedSettings(sanitizeOpenCodeConnectionSettings(settings));
   }
@@ -1322,29 +1323,19 @@ export function sanitizeConnectorConnectionSettings(connectorId: string, setting
 }
 
 const apiKeyConnectorScopes: Record<ApiKeyConnectorId, string[]> = {
-  stripe: ["stripe.read"],
   vercel: ["web.preview", "web.publish"],
-  posthog: ["posthog.read"],
-  resend: ["resend.send"],
 };
 
 function isApiKeyConnectorId(connectorId: string): connectorId is ApiKeyConnectorId {
-  return connectorId === "stripe" || connectorId === "vercel" || connectorId === "posthog" || connectorId === "resend";
+  return connectorId === "vercel";
 }
 
 function cleanCredentialCandidate(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function isStripeRestrictedReadKey(value: string) {
-  return /^rk_(test|live)_[A-Za-z0-9_]+$/.test(value);
-}
-
 function hasReasonablePrivateTokenShape(connectorId: ApiKeyConnectorId, value: string) {
   if (!value || value.length < 12 || /\s/.test(value)) return false;
-  if (connectorId === "stripe") return isStripeRestrictedReadKey(value);
-  if (connectorId === "resend") return /^re_[A-Za-z0-9_-]{8,}$/.test(value);
-  if (connectorId === "posthog") return /^(phx|phc)_[A-Za-z0-9_-]{8,}$/.test(value);
   return value.length >= 16;
 }
 
@@ -1365,15 +1356,12 @@ export function validateApiKeyConnectorSetup(args: {
 
   const credential = cleanCredentialCandidate(args.credential);
   if (!hasReasonablePrivateTokenShape(args.connectorId, credential)) {
-    const message = args.connectorId === "stripe"
-      ? "Use a restricted read-only Stripe key."
-      : "Use a valid private key for this service.";
     return {
       ok: false,
       connectorId: args.connectorId,
       grantedScopes: [],
       status: "needs_attention",
-      safeMessage: message,
+      safeMessage: "Use a valid private key for this service.",
     };
   }
 
@@ -1765,7 +1753,7 @@ export function safeConnectorError(error: unknown, fallback = "The connection co
   const scrubbed = raw
     .replace(/https?:\/\/\S+/gi, "the service")
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "private credential")
-    .replace(/\b(sk|pk|rk|ghp|ghs|github_pat|xox[baprs]?|ya29|re|phx|phc)[-_A-Za-z0-9]{8,}\b/gi, "private credential")
+    .replace(/\b(sk|pk|rk|ghp|ghs|github_pat|xox[baprs]?|ya29|re|phx|phc)[-._A-Za-z0-9]{8,}\b/gi, "private credential")
     .replace(/\b[A-Za-z0-9+/]{32,}={0,2}\b/g, "private detail")
     .replace(/\{[\s\S]*\}/g, "details")
     .replace(/\s+/g, " ")
@@ -1781,9 +1769,9 @@ export function safeConnectorError(error: unknown, fallback = "The connection co
   return scrubbed.slice(0, 180);
 }
 
-const safeNoopHandler: ConnectorActionHandler = async ({ actionType }) => ({
-  status: "completed",
-  safeSummary: safeActionSummary(actionType),
+const unsupportedActionHandler: ConnectorActionHandler = async () => ({
+  status: "needs_attention",
+  safeSummary: "That service action is not connected to a live provider yet.",
 });
 
 const blockedActionHandler: ConnectorActionHandler = async () => ({
@@ -1792,63 +1780,63 @@ const blockedActionHandler: ConnectorActionHandler = async () => ({
 });
 
 export const connectorActionHandlers: Record<string, ConnectorActionHandler> = {
-  "email.read": safeNoopHandler,
-  "email.send": safeNoopHandler,
-  "gmail.read": safeNoopHandler,
-  "gmail.draft": safeNoopHandler,
-  "gmail.send": safeNoopHandler,
-  "calendar.read": safeNoopHandler,
-  "calendar.schedule": safeNoopHandler,
-  "google_calendar.read": safeNoopHandler,
-  "google_calendar.availability": safeNoopHandler,
-  "google_calendar.create_event": safeNoopHandler,
-  "google_drive.import": safeNoopHandler,
-  "google_drive.export": safeNoopHandler,
-  "google_drive.update": safeNoopHandler,
-  "google_docs.import": safeNoopHandler,
-  "google_docs.export": safeNoopHandler,
-  "google_docs.update": safeNoopHandler,
-  "google_sheets.import": safeNoopHandler,
-  "google_sheets.export": safeNoopHandler,
-  "google_sheets.update": safeNoopHandler,
-  "github.import_repository_context": safeNoopHandler,
-  "github.create_pull_request": safeNoopHandler,
-  "github.create_issue": safeNoopHandler,
-  "slack.import": safeNoopHandler,
-  "slack.post": safeNoopHandler,
-  "slack.update": safeNoopHandler,
-  "notion.import": safeNoopHandler,
-  "notion.export": safeNoopHandler,
-  "notion.update": safeNoopHandler,
-  "payments.read": safeNoopHandler,
-  "payments.charge": safeNoopHandler,
-  "stripe.sync_customers": safeNoopHandler,
-  "stripe.sync_products": safeNoopHandler,
-  "stripe.sync_prices": safeNoopHandler,
-  "stripe.sync_invoices": safeNoopHandler,
-  "stripe.sync_subscriptions": safeNoopHandler,
-  "stripe.sync_revenue": safeNoopHandler,
-  "stripe.sync_finance_context": safeNoopHandler,
+  "email.read": unsupportedActionHandler,
+  "email.send": unsupportedActionHandler,
+  "gmail.read": unsupportedActionHandler,
+  "gmail.draft": unsupportedActionHandler,
+  "gmail.send": unsupportedActionHandler,
+  "calendar.read": unsupportedActionHandler,
+  "calendar.schedule": unsupportedActionHandler,
+  "google_calendar.read": unsupportedActionHandler,
+  "google_calendar.availability": unsupportedActionHandler,
+  "google_calendar.create_event": unsupportedActionHandler,
+  "google_drive.import": unsupportedActionHandler,
+  "google_drive.export": unsupportedActionHandler,
+  "google_drive.update": unsupportedActionHandler,
+  "google_docs.import": unsupportedActionHandler,
+  "google_docs.export": unsupportedActionHandler,
+  "google_docs.update": unsupportedActionHandler,
+  "google_sheets.import": unsupportedActionHandler,
+  "google_sheets.export": unsupportedActionHandler,
+  "google_sheets.update": unsupportedActionHandler,
+  "github.import_repository_context": unsupportedActionHandler,
+  "github.create_pull_request": unsupportedActionHandler,
+  "github.create_issue": unsupportedActionHandler,
+  "slack.import": unsupportedActionHandler,
+  "slack.post": unsupportedActionHandler,
+  "slack.update": unsupportedActionHandler,
+  "notion.import": unsupportedActionHandler,
+  "notion.export": unsupportedActionHandler,
+  "notion.update": unsupportedActionHandler,
+  "payments.read": unsupportedActionHandler,
+  "payments.charge": unsupportedActionHandler,
+  "stripe.sync_customers": unsupportedActionHandler,
+  "stripe.sync_products": unsupportedActionHandler,
+  "stripe.sync_prices": unsupportedActionHandler,
+  "stripe.sync_invoices": unsupportedActionHandler,
+  "stripe.sync_subscriptions": unsupportedActionHandler,
+  "stripe.sync_revenue": unsupportedActionHandler,
+  "stripe.sync_finance_context": unsupportedActionHandler,
   "stripe.blocked": blockedActionHandler,
-  "posthog.query": safeNoopHandler,
-  "posthog.import": safeNoopHandler,
+  "posthog.query": unsupportedActionHandler,
+  "posthog.import": unsupportedActionHandler,
   "posthog.blocked": blockedActionHandler,
-  "resend.draft": safeNoopHandler,
-  "resend.send": safeNoopHandler,
-  "canva.create_design": safeNoopHandler,
-  "canva.import": safeNoopHandler,
-  "canva.export_design": safeNoopHandler,
-  "canva.update": safeNoopHandler,
-  "publishing.post": safeNoopHandler,
-  "publishing.update": safeNoopHandler,
-  "knowledge.read": safeNoopHandler,
-  "knowledge.write": safeNoopHandler,
-  "code.preview": safeNoopHandler,
-  "code.update": safeNoopHandler,
-  "opencode.run": safeNoopHandler,
-  "opencode.apply": safeNoopHandler,
-  "vercel.preview": safeNoopHandler,
-  "vercel.publish": safeNoopHandler,
+  "resend.draft": unsupportedActionHandler,
+  "resend.send": unsupportedActionHandler,
+  "canva.create_design": unsupportedActionHandler,
+  "canva.import": unsupportedActionHandler,
+  "canva.export_design": unsupportedActionHandler,
+  "canva.update": unsupportedActionHandler,
+  "publishing.post": unsupportedActionHandler,
+  "publishing.update": unsupportedActionHandler,
+  "knowledge.read": unsupportedActionHandler,
+  "knowledge.write": unsupportedActionHandler,
+  "code.preview": unsupportedActionHandler,
+  "code.update": unsupportedActionHandler,
+  "opencode.run": unsupportedActionHandler,
+  "opencode.apply": unsupportedActionHandler,
+  "vercel.preview": unsupportedActionHandler,
+  "vercel.publish": unsupportedActionHandler,
 };
 
 export function getConnectorActionHandler(handlerKey: string) {

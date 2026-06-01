@@ -1,63 +1,32 @@
 "use client";
 
+import { SignIn, SignUp } from "@clerk/nextjs";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { authClient } from "@/lib/auth-client";
-import { Loader2, ShieldAlert } from "lucide-react";
+
+const clerkAppearance = {
+  elements: {
+    rootBox: "w-full",
+    cardBox: "w-full shadow-none",
+    card: "w-full rounded-none border-0 bg-transparent p-0 shadow-none",
+    headerTitle: "hidden",
+    headerSubtitle: "hidden",
+    socialButtonsBlockButton:
+      "h-11 rounded-xl border border-black/[0.08] bg-white text-sm font-semibold text-text-primary shadow-sm hover:bg-surface",
+    formButtonPrimary:
+      "h-11 rounded-xl bg-accent text-xs font-bold text-white shadow-sm hover:bg-accent-hover",
+    formFieldInput:
+      "h-11 rounded-xl border border-black/[0.05] bg-white px-4 py-2.5 text-sm text-text-primary shadow-sm outline-none focus:border-accent/40 focus:ring-4 focus:ring-accent/5",
+    formFieldLabel: "text-xs font-semibold text-text-secondary",
+    dividerLine: "bg-black/[0.06]",
+    dividerText: "text-[10px] font-bold uppercase tracking-widest text-text-muted",
+    footer: "hidden",
+    formFieldAction: "text-xs font-semibold text-text-secondary hover:text-text-primary",
+    identityPreviewEditButton: "text-xs font-semibold text-text-secondary hover:text-text-primary",
+  },
+};
 
 export function LoginCard() {
-  const router = useRouter();
   const [mode, setMode] = useState<"signIn" | "signUp">("signIn");
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [errorStatus, setErrorStatus] = useState<string | null>(null);
-
-  const handleLogin = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setIsLoading(true);
-    setErrorStatus(null);
-
-    try {
-      const { error } =
-        mode === "signUp"
-          ? await authClient.signUp.email({
-              email,
-              password,
-              name: name.trim() || email.split("@")[0],
-            })
-          : await authClient.signIn.email({
-              email,
-              password,
-            });
-
-      if (error) throw error;
-
-      router.replace("/");
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Failed to sign in.";
-      setErrorStatus(message);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleGoogle = async () => {
-    setIsLoading(true);
-    setErrorStatus(null);
-    try {
-      const { error } = await authClient.signIn.social({
-        provider: "google",
-        callbackURL: "/",
-      });
-      if (error) throw error;
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Google sign-in is not available here.";
-      setErrorStatus(message);
-      setIsLoading(false);
-    }
-  };
 
   return (
     <div className="flex w-full max-w-[400px] select-none flex-col items-center justify-center rounded-2xl border border-black/[0.04] bg-white/75 p-8 shadow-[0_10px_35px_rgba(0,0,0,0.03)] backdrop-blur-xl animate-slide-up">
@@ -70,96 +39,34 @@ export function LoginCard() {
         </p>
       </div>
 
-      <div className="w-full space-y-4">
-        <button
-          type="button"
-          onClick={() => void handleGoogle()}
-          disabled={isLoading}
-          className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-black/[0.08] bg-white px-4 text-sm font-semibold text-text-primary shadow-sm transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <span className="flex h-5 w-5 items-center justify-center rounded-full border border-black/[0.08] text-xs font-bold text-[#4285F4]">
-            G
-          </span>
-          Continue with Google
-        </button>
-
-        <div className="flex items-center gap-3">
-          <div className="h-px flex-1 bg-black/[0.06]" />
-          <span className="text-[10px] font-bold uppercase tracking-widest text-text-muted">
-            or
-          </span>
-          <div className="h-px flex-1 bg-black/[0.06]" />
-        </div>
-      </div>
-
-      <form onSubmit={handleLogin} className="mt-4 w-full space-y-4">
-        {mode === "signUp" && (
-          <input
-            type="text"
-            placeholder="Your name"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            className="h-11 w-full rounded-xl border border-black/[0.05] bg-white px-4 py-2.5 text-sm text-text-primary shadow-sm outline-none transition-all placeholder:text-text-muted/60 focus:border-accent/40 focus:bg-white focus:ring-4 focus:ring-accent/5"
-            disabled={isLoading}
-          />
-        )}
-
-        <input
-          type="email"
-          placeholder="founder@company.com"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          className="h-11 w-full rounded-xl border border-black/[0.05] bg-white px-4 py-2.5 text-sm text-text-primary shadow-sm outline-none transition-all placeholder:text-text-muted/60 focus:border-accent/40 focus:bg-white focus:ring-4 focus:ring-accent/5"
-          required
-          disabled={isLoading}
+      {mode === "signUp" ? (
+        <SignUp
+          routing="hash"
+          fallbackRedirectUrl="/"
+          signInUrl="/"
+          appearance={clerkAppearance}
+          oauthFlow="redirect"
         />
-
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          className="h-11 w-full rounded-xl border border-black/[0.05] bg-white px-4 py-2.5 text-sm text-text-primary shadow-sm outline-none transition-all placeholder:text-text-muted/60 focus:border-accent/40 focus:bg-white focus:ring-4 focus:ring-accent/5"
-          required
-          disabled={isLoading}
+      ) : (
+        <SignIn
+          routing="hash"
+          fallbackRedirectUrl="/"
+          signUpUrl="/"
+          appearance={clerkAppearance}
+          oauthFlow="redirect"
+          withSignUp
         />
+      )}
 
-        {errorStatus && (
-          <div className="mt-2 flex items-start gap-2 rounded-xl border border-rose-500/10 bg-rose-50 p-3 text-[10px] font-semibold leading-normal text-rose-600 animate-fade-in">
-            <ShieldAlert size={14} className="shrink-0 text-rose-500" />
-            <p>{errorStatus}</p>
-          </div>
-        )}
-
-        <button
-          type="submit"
-          className="flex h-11 w-full cursor-pointer items-center justify-center rounded-xl bg-accent text-xs font-bold text-white shadow-sm transition-all hover:scale-[1.02] hover:bg-accent-hover active:scale-[0.98] disabled:opacity-50"
-          disabled={isLoading}
-        >
-          {isLoading ? (
-            <span className="flex items-center justify-center gap-1.5">
-              <Loader2 size={13} className="animate-spin" />
-              {mode === "signUp" ? "Creating..." : "Opening..."}
-            </span>
-          ) : (
-            mode === "signUp" ? "Create Workspace" : "Open Workspace"
-          )}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => {
-            setErrorStatus(null);
-            setMode((current) => (current === "signIn" ? "signUp" : "signIn"));
-          }}
-          className="w-full text-center text-xs font-semibold text-text-secondary hover:text-text-primary"
-          disabled={isLoading}
-        >
-          {mode === "signUp"
-            ? "Already have an account? Sign in"
-            : "New here? Create an account"}
-        </button>
-      </form>
+      <button
+        type="button"
+        onClick={() => setMode((current) => (current === "signIn" ? "signUp" : "signIn"))}
+        className="mt-4 w-full text-center text-xs font-semibold text-text-secondary hover:text-text-primary"
+      >
+        {mode === "signUp"
+          ? "Already have an account? Sign in"
+          : "New here? Create an account"}
+      </button>
     </div>
   );
 }

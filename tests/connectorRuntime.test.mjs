@@ -23,209 +23,60 @@ async function loadConnectorRuntimeModule() {
 
 const runtime = await loadConnectorRuntimeModule();
 
-test("registry exposes safe connector metadata and action handlers", () => {
-  const email = runtime.getConnectorDefinition("email");
-  assert.equal(email.safeDisplayName, "Email");
-  assert.equal(email.authType, "oauth2");
-  assert.deepEqual(email.capabilities, ["read_email", "send_email"]);
-  assert.deepEqual(email.requiredScopes, ["email.read", "email.send"]);
-  assert.equal(email.approvalPolicy, "per_sensitive_action");
+const activeConnectorIds = [
+  "gmail",
+  "google_calendar",
+  "google_drive",
+  "google_docs",
+  "google_sheets",
+  "github",
+  "opencode",
+  "vercel",
+];
 
-  const publicEmail = runtime.publicConnectorDefinition(email);
-  assert.equal(publicEmail.safeDisplayName, "Email");
-  assert.equal("requiredScopes" in publicEmail, false);
-  assert.equal(JSON.stringify(publicEmail).includes("handlerKey"), false);
-  assert.equal(JSON.stringify(publicEmail).includes("private credential"), false);
+const removedConnectorIds = ["posthog", "resend", "slack", "canva", "notion", "stripe"];
 
-  const gmail = runtime.getConnectorDefinition("gmail");
-  assert.equal(gmail.safeDisplayName, "Gmail");
-  assert.deepEqual(gmail.capabilities, ["read_email", "draft_email", "send_email"]);
-  assert.equal(gmail.approvalPolicy, "per_sensitive_action");
-  assert.equal(JSON.stringify(runtime.publicConnectorDefinition(gmail)).includes("google.gmail"), false);
-
-  const googleCalendar = runtime.getConnectorDefinition("google_calendar");
-  assert.equal(googleCalendar.safeDisplayName, "Google Calendar");
-  assert.deepEqual(googleCalendar.capabilities, [
-    "read_calendar",
-    "check_availability",
-    "create_calendar_event",
-  ]);
-  assert.equal(JSON.stringify(runtime.publicConnectorDefinition(googleCalendar)).includes("google.calendar"), false);
-
-  const drive = runtime.getConnectorDefinition("google_drive");
-  assert.equal(drive.safeDisplayName, "Google Drive");
+test("registry exposes only active founder-facing connectors", () => {
   assert.deepEqual(
-    drive.actions.map((action) => action.type),
-    ["import_content", "export_content", "update_external_record"],
+    runtime.listConnectorDefinitions().map((connector) => connector.id),
+    activeConnectorIds,
   );
 
-  const docs = runtime.getConnectorDefinition("google_docs");
-  assert.equal(docs.safeDisplayName, "Google Docs");
-  assert.deepEqual(
-    docs.actions.map((action) => action.type),
-    ["import_content", "export_content", "update_external_record"],
-  );
+  for (const connectorId of activeConnectorIds) {
+    const definition = runtime.getConnectorDefinition(connectorId);
+    assert.equal(definition.id, connectorId);
+    const publicDefinition = runtime.publicConnectorDefinition(definition);
+    assert.equal("requiredScopes" in publicDefinition, false);
+    assert.equal(JSON.stringify(publicDefinition).includes("handlerKey"), false);
+  }
 
-  const sheets = runtime.getConnectorDefinition("google_sheets");
-  assert.equal(sheets.safeDisplayName, "Google Sheets");
-  assert.deepEqual(
-    sheets.actions.map((action) => action.type),
-    ["import_content", "export_content", "update_external_record"],
-  );
-
-  const github = runtime.getConnectorDefinition("github");
-  assert.equal(github.authType, "github_app");
-  assert.equal(JSON.stringify(runtime.publicConnectorDefinition(github)).includes("github.contents"), false);
-
-  const posthog = runtime.getConnectorDefinition("posthog");
-  assert.equal(posthog.safeDisplayName, "PostHog");
-  assert.equal(posthog.actions.some((action) => action.approval === "blocked"), true);
-
-  const resend = runtime.getConnectorDefinition("resend");
-  assert.equal(resend.safeDisplayName, "Resend");
-
-  const canva = runtime.getConnectorDefinition("canva");
-  assert.equal(canva.safeDisplayName, "Canva");
-
-  const opencode = runtime.getConnectorDefinition("opencode");
-  assert.equal(opencode.authType, "managed");
-
-  const stripe = runtime.getConnectorDefinition("stripe");
-  assert.equal(stripe.safeDisplayName, "Stripe");
-  assert.equal(stripe.authType, "api_key");
-  assert.deepEqual(stripe.requiredScopes, ["stripe.read"]);
-  assert.equal(stripe.approvalPolicy, "per_sensitive_action");
-  assert.equal(JSON.stringify(runtime.publicConnectorDefinition(stripe)).includes("stripe.read"), false);
-  assert.equal(stripe.actions.some((action) => action.approval === "blocked"), true);
-
-  for (const connector of runtime.listConnectorDefinitions()) {
-    for (const action of connector.actions) {
-      assert.equal(typeof runtime.getConnectorActionHandler(action.handlerKey), "function");
-    }
+  for (const connectorId of removedConnectorIds) {
+    assert.equal(runtime.getConnectorDefinition(connectorId), undefined);
   }
 });
 
-test("content connectors import freely and gate external writes", () => {
-  const driveConnection = {
-    status: "connected",
-    credentialRef: "vault:drive",
-    grantedScopes: ["google.drive.read", "google.drive.file"],
-  };
-  const driveImport = runtime.evaluateConnectorActionRequest({
-    connectorId: "google_drive",
-    actionType: "import_content",
-    connection: driveConnection,
-  });
-  assert.equal(driveImport.allowed, true);
-  assert.equal(driveImport.approvalRequired, false);
+test("removed connector setup and evaluation are safely unavailable", () => {
+  for (const connectorId of removedConnectorIds) {
+    const setup = runtime.validateApiKeyConnectorSetup({
+      connectorId,
+      credential: "private_token_1234567890",
+    });
+    assert.equal(setup.ok, false);
+    assert.equal(setup.safeMessage, "That service is not available for private key setup.");
 
-  const driveExport = runtime.evaluateConnectorActionRequest({
-    connectorId: "google_drive",
-    actionType: "export_content",
-    connection: driveConnection,
-  });
-  assert.equal(driveExport.allowed, false);
-  assert.equal(driveExport.reason, "approval_required");
-  assert.equal(driveExport.sensitiveActionKind, "change_live_asset");
-
-  const docsConnection = {
-    status: "connected",
-    credentialRef: "vault:docs",
-    grantedScopes: ["google.docs.read", "google.docs.file"],
-  };
-  const docsImport = runtime.evaluateConnectorActionRequest({
-    connectorId: "google_docs",
-    actionType: "import_content",
-    connection: docsConnection,
-  });
-  assert.equal(docsImport.allowed, true);
-  assert.equal(docsImport.approvalRequired, false);
-
-  const docsUpdate = runtime.evaluateConnectorActionRequest({
-    connectorId: "google_docs",
-    actionType: "update_external_record",
-    connection: docsConnection,
-  });
-  assert.equal(docsUpdate.allowed, false);
-  assert.equal(docsUpdate.reason, "approval_required");
-  assert.equal(docsUpdate.sensitiveActionKind, "change_live_asset");
-
-  const githubConnection = {
-    status: "connected",
-    credentialRef: "vault:github",
-    grantedScopes: ["github.metadata", "github.contents.read", "github.pull_requests.write", "github.issues.write"],
-    settings: { installationId: "123", repositoryOwner: "founder", repositoryName: "os" },
-  };
-  const githubImport = runtime.evaluateConnectorActionRequest({
-    connectorId: "github",
-    actionType: "import_repository_context",
-    connection: githubConnection,
-  });
-  assert.equal(githubImport.allowed, true);
-  assert.equal(githubImport.approvalRequired, false);
-
-  const pullRequest = runtime.evaluateConnectorActionRequest({
-    connectorId: "github",
-    actionType: "create_pull_request",
-    connection: githubConnection,
-    approvalGranted: true,
-  });
-  assert.equal(pullRequest.allowed, true);
-  assert.equal(pullRequest.approvalRequired, true);
-});
-
-test("stripe sync is read-only and write actions are blocked by policy", () => {
-  const connection = {
-    status: "connected",
-    credentialRef: "vault:stripe",
-    grantedScopes: ["stripe.read", "stripe.write"],
-  };
-
-  const sync = runtime.evaluateConnectorActionRequest({
-    connectorId: "stripe",
-    actionType: "sync_stripe_finance_context",
-    connection,
-  });
-  assert.equal(sync.allowed, true);
-  assert.equal(sync.approvalRequired, false);
-
-  const charge = runtime.evaluateConnectorActionRequest({
-    connectorId: "stripe",
-    actionType: "charge_payment",
-    connection,
-    approvalGranted: true,
-  });
-  assert.equal(charge.allowed, false);
-  assert.equal(charge.reason, "blocked_by_policy");
-  assert.equal(charge.approvalRequired, false);
-  assert.equal(charge.sensitiveActionKind, "spend_money");
-  assert.equal(charge.safeMessage.includes("blocked by policy"), true);
-
-  const refund = runtime.evaluateConnectorActionRequest({
-    connectorId: "stripe",
-    actionType: "refund_payment",
-    connection,
-    approvalGranted: true,
-  });
-  assert.equal(refund.reason, "blocked_by_policy");
-
-  const cancel = runtime.evaluateConnectorActionRequest({
-    connectorId: "stripe",
-    actionType: "cancel_subscription",
-    connection,
-    approvalGranted: true,
-  });
-  assert.equal(cancel.reason, "blocked_by_policy");
-  assert.equal(cancel.sensitiveActionKind, "change_live_asset");
-
-  const deletion = runtime.evaluateConnectorActionRequest({
-    connectorId: "stripe",
-    actionType: "delete_external_record",
-    connection,
-    approvalGranted: true,
-  });
-  assert.equal(deletion.reason, "blocked_by_policy");
-  assert.equal(deletion.sensitiveActionKind, "delete_data");
+    const evaluation = runtime.evaluateConnectorActionRequest({
+      connectorId,
+      actionType: "import_content",
+      connection: {
+        status: "connected",
+        credentialRef: "vault:removed",
+        grantedScopes: ["legacy.scope"],
+      },
+    });
+    assert.equal(evaluation.allowed, false);
+    assert.equal(evaluation.reason, "unknown_connector");
+    assert.equal(evaluation.safeMessage, "That service is not available yet.");
+  }
 });
 
 test("google workspace connectors draft/import freely and gate external actions", () => {
@@ -235,21 +86,16 @@ test("google workspace connectors draft/import freely and gate external actions"
     grantedScopes: ["google.gmail.read", "google.gmail.compose", "google.gmail.send"],
   };
 
-  const read = runtime.evaluateConnectorActionRequest({
+  assert.equal(runtime.evaluateConnectorActionRequest({
     connectorId: "gmail",
     actionType: "read_email",
     connection: gmailConnection,
-  });
-  assert.equal(read.allowed, true);
-  assert.equal(read.approvalRequired, false);
-
-  const draft = runtime.evaluateConnectorActionRequest({
+  }).allowed, true);
+  assert.equal(runtime.evaluateConnectorActionRequest({
     connectorId: "gmail",
     actionType: "draft_email",
     connection: gmailConnection,
-  });
-  assert.equal(draft.allowed, true);
-  assert.equal(draft.approvalRequired, false);
+  }).allowed, true);
 
   const pendingSend = runtime.evaluateConnectorActionRequest({
     connectorId: "gmail",
@@ -265,13 +111,11 @@ test("google workspace connectors draft/import freely and gate external actions"
     credentialRef: "vault:google-calendar",
     grantedScopes: ["google.calendar.read", "google.calendar.events"],
   };
-  const availability = runtime.evaluateConnectorActionRequest({
+  assert.equal(runtime.evaluateConnectorActionRequest({
     connectorId: "google_calendar",
     actionType: "check_availability",
     connection: calendarConnection,
-  });
-  assert.equal(availability.allowed, true);
-  assert.equal(availability.approvalRequired, false);
+  }).allowed, true);
 
   const pendingEvent = runtime.evaluateConnectorActionRequest({
     connectorId: "google_calendar",
@@ -280,352 +124,103 @@ test("google workspace connectors draft/import freely and gate external actions"
   });
   assert.equal(pendingEvent.allowed, false);
   assert.equal(pendingEvent.reason, "approval_required");
-  assert.equal(pendingEvent.sensitiveActionKind, "create_calendar_event");
+
+  for (const connectorId of ["google_drive", "google_docs", "google_sheets"]) {
+    const definition = runtime.getConnectorDefinition(connectorId);
+    assert.deepEqual(
+      definition.actions.map((action) => action.type),
+      ["import_content", "export_content", "update_external_record"],
+    );
+  }
 });
 
-test("connection status is safe and does not expose raw permission names", () => {
-  const payments = runtime.getConnectorDefinition("payments");
-
-  assert.deepEqual(runtime.testConnectorConnection(payments), {
-    status: "not_connected",
-    safeMessage: "Not connected yet.",
-    healthy: false,
-  });
-
-  const missing = runtime.testConnectorConnection(payments, {
+test("github and website preview connections keep approval boundaries", () => {
+  const githubConnection = {
     status: "connected",
-    credentialRef: "vault:payments",
-    grantedScopes: ["payments.read"],
-  });
-  assert.equal(missing.status, "needs_attention");
-  assert.equal(missing.safeMessage.includes("payments.charge"), false);
-
-  const ready = runtime.testConnectorConnection(payments, {
-    status: "connected",
-    credentialRef: "vault:payments",
-    grantedScopes: ["payments.read", "payments.charge"],
-  });
-  assert.equal(ready.status, "connected");
-  assert.equal(ready.healthy, true);
-});
-
-test("permissions block missing scopes before actions run", () => {
-  const result = runtime.evaluateConnectorActionRequest({
-    connectorId: "email",
-    actionType: "send_email",
-    connection: {
-      status: "connected",
-      credentialRef: "vault:email",
-      grantedScopes: ["email.read"],
-    },
-    approvalGranted: true,
-  });
-
-  assert.equal(result.allowed, false);
-  assert.equal(result.reason, "missing_permission");
-  assert.equal(result.safeMessage, "This service needs updated access before FounderOS can do that.");
-  assert.equal(result.safeMessage.includes("email.send"), false);
-});
-
-test("sensitive actions require approval and approved actions are allowed", () => {
-  const connection = {
-    status: "connected",
-    credentialRef: "vault:email",
-    grantedScopes: ["email.read", "email.send"],
+    credentialRef: "vault:github",
+    grantedScopes: ["github.metadata", "github.contents.read", "github.pull_requests.write", "github.issues.write"],
+    settings: { installationId: "123", repositoryOwner: "founder", repositoryName: "os" },
   };
+  assert.equal(runtime.evaluateConnectorActionRequest({
+    connectorId: "github",
+    actionType: "import_repository_context",
+    connection: githubConnection,
+  }).allowed, true);
 
-  const pending = runtime.evaluateConnectorActionRequest({
-    connectorId: "email",
-    actionType: "send_email",
-    connection,
-  });
-  assert.equal(pending.allowed, false);
-  assert.equal(pending.approvalRequired, true);
-  assert.equal(pending.reason, "approval_required");
-  assert.equal(pending.sensitiveActionKind, "send_email");
-
-  const approved = runtime.evaluateConnectorActionRequest({
-    connectorId: "email",
-    actionType: "send_email",
-    connection,
+  const pullRequest = runtime.evaluateConnectorActionRequest({
+    connectorId: "github",
+    actionType: "create_pull_request",
+    connection: githubConnection,
     approvalGranted: true,
   });
-  assert.equal(approved.allowed, true);
-  assert.equal(approved.approvalRequired, true);
+  assert.equal(pullRequest.allowed, true);
+  assert.equal(pullRequest.approvalRequired, true);
 
-  const readOnly = runtime.evaluateConnectorActionRequest({
-    connectorId: "email",
-    actionType: "read_email",
-    connection,
-  });
-  assert.equal(readOnly.allowed, true);
-  assert.equal(readOnly.approvalRequired, false);
-});
-
-test("vercel connector creates previews without approval and gates live publishing", () => {
   const vercel = runtime.getConnectorDefinition("vercel");
-  assert.equal(vercel.safeDisplayName, "Website previews");
-  assert.equal(vercel.authType, "api_key");
-  assert.equal(JSON.stringify(runtime.publicConnectorDefinition(vercel)).includes("Vercel"), false);
+  const vercelSettings = runtime.sanitizeConnectorConnectionSettings("vercel", {
+    projectId: " prj_abc ",
+    projectName: " founder-os ",
+    productionDomain: "https://Founder.example/path",
+    token: "vercel_secret_should_not_store",
+  });
+  assert.equal(vercelSettings.projectId, "prj_abc");
+  assert.equal(vercelSettings.productionDomain, "founder.example");
+  assert.equal(JSON.stringify(runtime.publicConnectionCard(vercel, { settings: vercelSettings })).includes("prj_abc"), false);
 
-  const connection = {
+  const vercelConnection = {
     status: "connected",
     credentialRef: "vault:vercel",
     grantedScopes: ["web.preview", "web.publish"],
-    settings: {
-      projectId: "prj_123",
-      productionDomain: "founder.example",
-    },
+    settings: vercelSettings,
   };
-
-  const preview = runtime.evaluateConnectorActionRequest({
+  assert.equal(runtime.evaluateConnectorActionRequest({
     connectorId: "vercel",
     actionType: "create_preview_deployment",
-    connection,
-  });
-  assert.equal(preview.allowed, true);
-  assert.equal(preview.approvalRequired, false);
-
-  const live = runtime.evaluateConnectorActionRequest({
+    connection: vercelConnection,
+  }).allowed, true);
+  assert.equal(runtime.evaluateConnectorActionRequest({
     connectorId: "vercel",
     actionType: "publish_live_deployment",
-    connection,
-  });
-  assert.equal(live.allowed, false);
-  assert.equal(live.reason, "approval_required");
-  assert.equal(live.sensitiveActionKind, "change_live_asset");
-
-  const approved = runtime.evaluateConnectorActionRequest({
-    connectorId: "vercel",
-    actionType: "publish_live_deployment",
-    connection,
-    approvalGranted: true,
-  });
-  assert.equal(approved.allowed, true);
-  assert.equal(approved.approvalRequired, true);
+    connection: vercelConnection,
+  }).reason, "approval_required");
 });
 
-test("opencode managed setup runs builder work without storing provider keys", () => {
-  const missingSetup = runtime.testConnectorConnection(
-    runtime.getConnectorDefinition("opencode"),
-    {
-      status: "connected",
-      grantedScopes: ["opencode.run"],
-    },
-  );
-  assert.equal(missingSetup.status, "needs_attention");
+test("opencode managed setup defaults to local command and hides advanced details", () => {
+  const definition = runtime.getConnectorDefinition("opencode");
+  const settings = runtime.sanitizeOpenCodeConnectionSettings({
+    model: "provider/private-model",
+    attachUrl: "http://localhost:4096",
+  });
+  assert.equal(settings.command, "opencode");
+  assert.equal(settings.attachUrl, "http://localhost:4096");
+  assert.equal(runtime.sanitizeOpenCodeConnectionSettings({ attachUrl: "http://example.com" }).attachUrl, undefined);
 
   const connection = {
     status: "connected",
     grantedScopes: ["opencode.run"],
-    settings: { command: "opencode", model: "openrouter/deepseek/deepseek-chat" },
+    settings,
   };
-  const localSettings = runtime.sanitizeOpenCodeConnectionSettings({
-    command: "opencode",
-    attachUrl: "http://localhost:4096",
-  });
-  assert.equal(localSettings.attachUrl, "http://localhost:4096");
-  assert.equal(
-    runtime.sanitizeOpenCodeConnectionSettings({ attachUrl: "http://example.com" }).attachUrl,
-    undefined,
-  );
-
-  const status = runtime.testConnectorConnection(runtime.getConnectorDefinition("opencode"), connection);
+  const status = runtime.testConnectorConnection(definition, connection);
   assert.equal(status.status, "connected");
   assert.equal(status.healthy, true);
 
-  const run = runtime.evaluateConnectorActionRequest({
+  const publicCard = runtime.publicConnectionCard(definition, connection);
+  assert.equal(publicCard.safeSettings.command, "opencode");
+  assert.equal(JSON.stringify(publicCard).includes("provider/private-model"), false);
+
+  assert.equal(runtime.evaluateConnectorActionRequest({
     connectorId: "opencode",
     actionType: "run_code_builder",
     connection,
-  });
-  assert.equal(run.allowed, true);
-  assert.equal(run.approvalRequired, false);
-
-  const apply = runtime.evaluateConnectorActionRequest({
+  }).allowed, true);
+  assert.equal(runtime.evaluateConnectorActionRequest({
     connectorId: "opencode",
     actionType: "update_live_asset",
     connection,
-  });
-  assert.equal(apply.allowed, false);
-  assert.equal(apply.reason, "approval_required");
+  }).reason, "approval_required");
 });
 
-test("new connector actions follow v1 approval boundaries", () => {
-  const posthogConnection = {
-    status: "connected",
-    credentialRef: "vault:posthog",
-    grantedScopes: ["posthog.read", "posthog.write"],
-    settings: { host: "https://us.posthog.com", projectId: "12345" },
-  };
-  const analytics = runtime.evaluateConnectorActionRequest({
-    connectorId: "posthog",
-    actionType: "query_analytics",
-    connection: posthogConnection,
-  });
-  assert.equal(analytics.allowed, true);
-  assert.equal(analytics.approvalRequired, false);
-  const posthogWrite = runtime.evaluateConnectorActionRequest({
-    connectorId: "posthog",
-    actionType: "update_external_record",
-    connection: posthogConnection,
-    approvalGranted: true,
-  });
-  assert.equal(posthogWrite.allowed, false);
-  assert.equal(posthogWrite.reason, "blocked_by_policy");
-
-  const resendConnection = {
-    status: "connected",
-    credentialRef: "vault:resend",
-    grantedScopes: ["resend.send"],
-    settings: { senderEmail: "founder@example.com" },
-  };
-  const draft = runtime.evaluateConnectorActionRequest({
-    connectorId: "resend",
-    actionType: "draft_email",
-    connection: resendConnection,
-  });
-  assert.equal(draft.allowed, true);
-  assert.equal(draft.approvalRequired, false);
-  const send = runtime.evaluateConnectorActionRequest({
-    connectorId: "resend",
-    actionType: "send_transactional_email",
-    connection: resendConnection,
-  });
-  assert.equal(send.allowed, false);
-  assert.equal(send.reason, "approval_required");
-  assert.equal(send.sensitiveActionKind, "send_email");
-
-  const canvaConnection = {
-    status: "connected",
-    credentialRef: "vault:canva",
-    grantedScopes: ["canva.design.read", "canva.design.write", "canva.asset.read"],
-  };
-  const createDesign = runtime.evaluateConnectorActionRequest({
-    connectorId: "canva",
-    actionType: "create_design",
-    connection: canvaConnection,
-  });
-  assert.equal(createDesign.allowed, true);
-  assert.equal(createDesign.approvalRequired, false);
-  const updateDesign = runtime.evaluateConnectorActionRequest({
-    connectorId: "canva",
-    actionType: "update_external_record",
-    connection: canvaConnection,
-  });
-  assert.equal(updateDesign.allowed, false);
-  assert.equal(updateDesign.reason, "approval_required");
-});
-
-test("vercel connection settings are internal, sanitized, and required", () => {
-  const vercel = runtime.getConnectorDefinition("vercel");
-  const sanitized = runtime.sanitizeConnectorConnectionSettings("vercel", {
-    projectId: " prj_abc ",
-    projectName: " founder-os ",
-    teamId: " team_123 ",
-    productionDomain: "https://Founder.example/path",
-    rootDirectory: "../apps/web",
-    token: "vercel_secret_should_not_store",
-  });
-
-  assert.equal(sanitized.projectId, "prj_abc");
-  assert.equal(sanitized.productionDomain, "founder.example");
-  assert.equal(JSON.stringify(sanitized).includes("secret"), false);
-  assert.equal(JSON.stringify(runtime.publicConnectionCard(vercel, { settings: sanitized })).includes("prj_abc"), false);
-
-  const missingSettings = runtime.testConnectorConnection(vercel, {
-    status: "connected",
-    credentialRef: "vault:vercel",
-    grantedScopes: ["web.preview", "web.publish"],
-  });
-  assert.equal(missingSettings.status, "needs_attention");
-  assert.equal(missingSettings.safeMessage.includes("project"), false);
-
-  const ready = runtime.testConnectorConnection(vercel, {
-    status: "connected",
-    credentialRef: "vault:vercel",
-    grantedScopes: ["web.preview", "web.publish"],
-    settings: sanitized,
-  });
-  assert.equal(ready.status, "connected");
-});
-
-test("google workspace settings are sanitized and kept out of public cards", () => {
-  const gmail = runtime.getConnectorDefinition("gmail");
-  const sanitized = runtime.sanitizeConnectorConnectionSettings("gmail", {
-    accountEmail: " Founder@Example.COM ",
-    calendarName: " Primary calendar ",
-    accessToken: "ya29.private_token_should_not_store",
-  });
-
-  assert.equal(sanitized.accountEmail, "founder@example.com");
-  assert.equal(sanitized.calendarName, "Primary calendar");
-  assert.equal(JSON.stringify(sanitized).includes("private_token"), false);
-  assert.equal(JSON.stringify(runtime.publicConnectionCard(gmail, { settings: sanitized })).includes("founder@example.com"), false);
-});
-
-test("content connector settings are sanitized and kept out of public cards", () => {
-  const github = runtime.getConnectorDefinition("github");
-  const githubSettings = runtime.sanitizeConnectorConnectionSettings("github", {
-    accountName: " founder ",
-    repositoryOwner: " founderos ",
-    repositoryName: " founder-os ",
-    installationId: " 12345 ",
-    privateKey: "-----BEGIN PRIVATE KEY-----secret",
-  });
-
-  assert.equal(githubSettings.accountName, "founder");
-  assert.equal(githubSettings.installationId, "12345");
-  assert.equal(JSON.stringify(githubSettings).includes("PRIVATE KEY"), false);
-  assert.equal(JSON.stringify(runtime.publicConnectionCard(github, { settings: githubSettings })).includes("12345"), false);
-
-  const posthog = runtime.getConnectorDefinition("posthog");
-  const posthogSettings = runtime.sanitizeConnectorConnectionSettings("posthog", {
-    host: "https://US.posthog.com/project/123",
-    projectId: " 12345 ",
-    personalApiKey: "phx_private_token_should_not_store",
-  });
-  assert.equal(posthogSettings.host, "https://us.posthog.com");
-  assert.equal(posthogSettings.projectId, "12345");
-  assert.equal(JSON.stringify(posthogSettings).includes("private_token"), false);
-
-  const resend = runtime.getConnectorDefinition("resend");
-  const resendSettings = runtime.sanitizeConnectorConnectionSettings("resend", {
-    accountEmail: " Founder@Example.COM ",
-    senderEmail: " founder@example.com ",
-    senderDomain: "https://Example.com/path",
-    apiKey: "re_private_token_should_not_store",
-  });
-  assert.equal(resendSettings.senderEmail, "founder@example.com");
-  assert.equal(resendSettings.senderDomain, "example.com");
-  assert.equal(JSON.stringify(runtime.publicConnectionCard(resend, { settings: resendSettings })).includes("founder@example.com"), false);
-
-  const readyPosthog = runtime.testConnectorConnection(posthog, {
-    status: "connected",
-    credentialRef: "vault:posthog",
-    grantedScopes: ["posthog.read"],
-    settings: posthogSettings,
-  });
-  assert.equal(readyPosthog.status, "connected");
-});
-
-test("api-key setup validation stores only allowed connector access", () => {
-  const rejectedStripe = runtime.validateApiKeyConnectorSetup({
-    connectorId: "stripe",
-    credential: "sk_live_broad_secret_should_not_store",
-  });
-  assert.equal(rejectedStripe.ok, false);
-  assert.equal(rejectedStripe.safeMessage.includes("read-only"), true);
-  assert.equal(JSON.stringify(rejectedStripe).includes("sk_live"), false);
-
-  const stripe = runtime.validateApiKeyConnectorSetup({
-    connectorId: "stripe",
-    credential: "rk_test_readonly_1234567890",
-  });
-  assert.equal(stripe.ok, true);
-  assert.deepEqual(stripe.grantedScopes, ["stripe.read"]);
-  assert.equal(stripe.status, "connected");
-
+test("api-key setup validation is limited to website previews", () => {
   const vercelNeedsProject = runtime.validateApiKeyConnectorSetup({
     connectorId: "vercel",
     credential: "vercel_private_token_1234567890",
@@ -636,67 +231,18 @@ test("api-key setup validation stores only allowed connector access", () => {
   const vercelReady = runtime.validateApiKeyConnectorSetup({
     connectorId: "vercel",
     credential: "vercel_private_token_1234567890",
-    settings: {
-      projectId: " prj_123 ",
-      token: "should_not_store",
-    },
+    settings: { projectId: " prj_123 ", token: "should_not_store" },
   });
   assert.equal(vercelReady.status, "connected");
   assert.deepEqual(vercelReady.grantedScopes, ["web.preview", "web.publish"]);
   assert.equal(JSON.stringify(vercelReady.settings).includes("should_not_store"), false);
-
-  const posthog = runtime.validateApiKeyConnectorSetup({
-    connectorId: "posthog",
-    credential: "phx_private_1234567890",
-    settings: {
-      host: "https://US.posthog.com/project/123",
-      projectId: " 12345 ",
-      personalApiKey: "should_not_store",
-    },
-  });
-  assert.equal(posthog.status, "connected");
-  assert.deepEqual(posthog.grantedScopes, ["posthog.read"]);
-  assert.equal(JSON.stringify(posthog.settings).includes("should_not_store"), false);
-
-  const resend = runtime.validateApiKeyConnectorSetup({
-    connectorId: "resend",
-    credential: "re_private_1234567890",
-    settings: {
-      senderEmail: " founder@example.com ",
-      apiKey: "should_not_store",
-    },
-  });
-  assert.equal(resend.status, "connected");
-  assert.deepEqual(resend.grantedScopes, ["resend.send"]);
-});
-
-test("disconnect and reconnect status remains safe", () => {
-  const vercel = runtime.getConnectorDefinition("vercel");
-  const disabled = runtime.testConnectorConnection(vercel, {
-    status: "disabled",
-    disabledAt: 1000,
-    credentialRef: "vault:vercel",
-    grantedScopes: ["web.preview", "web.publish"],
-    settings: { projectId: "prj_123" },
-  });
-  assert.equal(disabled.status, "disabled");
-  assert.equal(disabled.safeMessage, "Turned off.");
-
-  const reconnect = runtime.validateApiKeyConnectorSetup({
-    connectorId: "vercel",
-    credential: "vercel_private_token_1234567890",
-    settings: { projectId: "prj_123" },
-  });
-  assert.equal(reconnect.ok, true);
-  assert.equal(reconnect.status, "connected");
-  assert.equal(JSON.stringify(reconnect).includes("vercel_private_token"), false);
 });
 
 test("credential storage abstraction encrypts secrets and returns only safe metadata", async () => {
-  const rawSecret = "sk_live_super_secret_1234567890";
+  const rawSecret = "private_secret_1234567890";
   const envelope = await runtime.connectorCredentialStorage.seal({
     workspaceId: "workspace1",
-    connectorId: "payments",
+    connectorId: "vercel",
     secret: rawSecret,
     now: 1000,
     keyMaterial: "unit-test-key",
@@ -720,13 +266,13 @@ test("credential storage abstraction encrypts secrets and returns only safe meta
 
 test("safe errors strip secrets, responses, URLs, and technical logs", () => {
   const error = new Error(
-    'HTTP 401 from https://api.stripe.com/v1/customers with Bearer sk_live_abc1234567890 stack trace {"error":"raw response"}',
+    'HTTP 401 from https://api.example.com/v1/resources with Bearer private_secret_1234567890 stack trace {"error":"raw response"}',
   );
 
   const safe = runtime.safeConnectorError(error);
   assert.equal(safe, "The connection could not finish that step.");
-  assert.equal(safe.includes("sk_live"), false);
-  assert.equal(safe.includes("stripe.com"), false);
+  assert.equal(safe.includes("private_secret"), false);
+  assert.equal(safe.includes("api.example.com"), false);
   assert.equal(safe.includes("raw response"), false);
 
   assert.equal(

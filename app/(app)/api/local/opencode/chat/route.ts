@@ -2,8 +2,8 @@ import { execFile } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
-import { serverAuth } from "@/lib/auth-server";
 
 export const runtime = "nodejs";
 
@@ -136,7 +136,8 @@ async function runOpenCodeChat(args: {
 }
 
 export async function POST(request: NextRequest) {
-  if (!(await serverAuth.isAuthenticated())) {
+  const { isAuthenticated } = await auth();
+  if (!isAuthenticated) {
     return NextResponse.json({ ok: false, safeMessage: "Sign in to continue." }, { status: 401 });
   }
 

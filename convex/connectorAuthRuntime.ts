@@ -1,13 +1,12 @@
 import { requestConnectorJson, type ConnectorRequest } from "./connectorProviderRuntime";
 
-export type OAuthConnectorId = "google_workspace" | "canva";
+export type OAuthConnectorId = "google_workspace";
 export type ConnectorOAuthServiceId =
   | "gmail"
   | "google_calendar"
   | "google_drive"
   | "google_docs"
-  | "google_sheets"
-  | "canva";
+  | "google_sheets";
 export type ConnectorSetupProviderId = OAuthConnectorId | "github_app";
 
 export type ConnectorSetupStatePayload = {
@@ -33,7 +32,7 @@ export const googleWorkspaceConnectorIds = [
   "google_sheets",
 ] as const;
 
-export const apiKeyConnectorIds = ["stripe", "vercel", "posthog", "resend"] as const;
+export const apiKeyConnectorIds = ["vercel"] as const;
 export type ApiKeyConnectorId = (typeof apiKeyConnectorIds)[number];
 
 export const oauthConnectorConfigs: Record<OAuthConnectorId, OAuthConnectorConfig> = {
@@ -55,22 +54,6 @@ export const oauthConnectorConfigs: Record<OAuthConnectorId, OAuthConnectorConfi
       "https://www.googleapis.com/auth/spreadsheets",
     ],
   },
-  canva: {
-    connectorId: "canva",
-    authorizationUrl: "https://www.canva.com/api/oauth/authorize",
-    tokenUrl: "https://api.canva.com/rest/v1/oauth/token",
-    defaultScopes: [
-      "openid",
-      "profile",
-      "email",
-      "profile:read",
-      "design:meta:read",
-      "design:content:read",
-      "design:content:write",
-      "asset:read",
-      "folder:read",
-    ],
-  },
 };
 
 const oauthScopeMap: Record<OAuthConnectorId, Record<string, string[]>> = {
@@ -88,13 +71,6 @@ const oauthScopeMap: Record<OAuthConnectorId, Record<string, string[]>> = {
     "https://www.googleapis.com/auth/spreadsheets.readonly": ["google.sheets.read"],
     "https://www.googleapis.com/auth/spreadsheets": ["google.sheets.read", "google.sheets.write"],
   },
-  canva: {
-    "design:meta:read": ["canva.design.read"],
-    "design:content:read": ["canva.design.read"],
-    "design:content:write": ["canva.design.write"],
-    "asset:read": ["canva.asset.read"],
-    "folder:read": ["canva.asset.read"],
-  },
 };
 
 const providerDefaultInternalScopes: Record<OAuthConnectorId, string[]> = {
@@ -105,28 +81,12 @@ const providerDefaultInternalScopes: Record<OAuthConnectorId, string[]> = {
       ),
     ),
   ),
-  canva: Array.from(
-    new Set(
-      oauthConnectorConfigs.canva.defaultScopes.flatMap((scope) =>
-        oauthScopeMap.canva[scope] ?? [],
-      ),
-    ),
-  ),
 };
 
 function bytesToBase64(bytes: Uint8Array) {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
-}
-
-function base64ToBytes(value: string) {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
 }
 
 function base64UrlEncode(value: string | Uint8Array) {
@@ -166,14 +126,12 @@ export function randomConnectorSecret(byteLength = 32) {
 
 export function oauthProviderForConnector(connectorId: string): OAuthConnectorId | undefined {
   if ((googleWorkspaceConnectorIds as readonly string[]).includes(connectorId)) return "google_workspace";
-  if (connectorId === "canva") return "canva";
   return undefined;
 }
 
 export function connectorIdsForOAuthSetup(connectorId: string) {
   const providerId = oauthProviderForConnector(connectorId);
   if (providerId === "google_workspace") return [...googleWorkspaceConnectorIds];
-  if (providerId === "canva") return ["canva"];
   return [];
 }
 
@@ -249,10 +207,6 @@ export function buildOAuthAuthorizationUrl(args: {
     url.searchParams.set("access_type", "offline");
     url.searchParams.set("include_granted_scopes", "true");
   }
-  if (args.connectorId === "canva" && args.codeChallenge) {
-    url.searchParams.set("code_challenge", args.codeChallenge);
-    url.searchParams.set("code_challenge_method", args.codeChallengeMethod ?? "S256");
-  }
   if (args.prompt) url.searchParams.set("prompt", args.prompt);
   return url.toString();
 }
@@ -273,18 +227,6 @@ export async function exchangeOAuthCode(args: {
     redirect_uri: args.redirectUri,
     grant_type: "authorization_code",
   });
-
-  if (args.connectorId === "canva") {
-    if (args.codeVerifier) body.set("code_verifier", args.codeVerifier);
-    return await requestConnectorJson(args.request, config.tokenUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Authorization: `Basic ${bytesToBase64(new TextEncoder().encode(`${args.clientId}:${args.clientSecret}`))}`,
-      },
-      body: body.toString(),
-    });
-  }
 
   body.set("client_secret", args.clientSecret);
   return await requestConnectorJson(args.request, config.tokenUrl, {
@@ -307,17 +249,6 @@ export async function refreshOAuthToken(args: {
     refresh_token: args.refreshToken,
     grant_type: "refresh_token",
   });
-
-  if (args.connectorId === "canva") {
-    return await requestConnectorJson(args.request, config.tokenUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Authorization: `Basic ${bytesToBase64(new TextEncoder().encode(`${args.clientId}:${args.clientSecret}`))}`,
-      },
-      body: body.toString(),
-    });
-  }
 
   body.set("client_secret", args.clientSecret);
   return await requestConnectorJson(args.request, config.tokenUrl, {

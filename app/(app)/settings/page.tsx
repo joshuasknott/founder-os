@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useClerk, useUser } from "@clerk/nextjs";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { ConnectedServicesSettings } from "@/components/settings/connected-services-settings";
 import { Mail, Save, User, Camera, Building, Trash2, X } from "lucide-react";
-import { authClient } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
 
 export default function SettingsPage() {
@@ -15,6 +15,8 @@ export default function SettingsPage() {
   const updateWorkspace = useMutation(api.workspaces.updateDetails);
   const deleteAccount = useMutation(api.users.deleteAccount);
   const router = useRouter();
+  const { signOut } = useClerk();
+  const { user: clerkUser } = useUser();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
@@ -91,12 +93,17 @@ export default function SettingsPage() {
     setDeleting(true);
     try {
       await deleteAccount({});
-      await authClient.signOut();
-      router.replace("/");
+      if (clerkUser?.deleteSelfEnabled) {
+        await clerkUser.delete();
+        router.replace("/");
+      } else {
+        await signOut({ redirectUrl: "/" });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete account.");
       setShowDeleteModal(false);
       setDeleting(false);
+      router.replace("/");
     }
   };
 

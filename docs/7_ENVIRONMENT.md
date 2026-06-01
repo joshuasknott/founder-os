@@ -9,28 +9,36 @@ or AI calls can use them.
 
 - `CONVEX_DEPLOYMENT`: Local Convex deployment name from `npx convex dev`.
 - `NEXT_PUBLIC_CONVEX_URL`: Convex deployment URL used by Next and workers. Workers may use `CONVEX_URL` instead.
-- `NEXT_PUBLIC_CONVEX_SITE_URL`: Convex HTTP actions site URL used by Better Auth routes.
 - `NEXT_PUBLIC_SITE_URL`: Browser-facing app URL, normally `http://localhost:3000`.
-- `BETTER_AUTH_SECRET`: Long random value for Better Auth sessions.
-- `BETTER_AUTH_BASE_URL`: Auth callback base URL, normally `http://localhost:3000`.
+- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`: Clerk publishable key for the browser app.
+- `CLERK_SECRET_KEY`: Clerk secret key used by Next.js route handlers and proxy auth checks.
+- `CLERK_JWT_ISSUER_DOMAIN`: Clerk JWT issuer domain configured in Convex, for example `https://your-app.clerk.accounts.dev`.
 - `FOUNDEROS_WORKER_TOKEN`: Long random shared secret for local workers that call worker-only mutations.
+
+## Clerk and Convex setup
+
+1. Create or select a Clerk application and enable the sign-in methods FounderOS should offer, including Google if needed.
+2. In Clerk, create a JWT template named `convex`. The template name must match the Convex auth `applicationID`.
+3. Copy the Clerk JWT issuer domain into `.env.local` as `CLERK_JWT_ISSUER_DOMAIN`.
+4. Set the same issuer domain on the active Convex deployment:
+   `npx convex env set CLERK_JWT_ISSUER_DOMAIN https://your-app.clerk.accounts.dev`
+5. Set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` in the Next.js runtime environment.
+6. Run `npx convex codegen` or `npx convex dev` after the Convex env value is set, then sign in and confirm workspace data loads through `ctx.auth.getUserIdentity()`.
 
 ## Optional accounts by feature
 
-- Google sign-in: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`.
+- Google sign-in: enable Google as a social connection in the Clerk dashboard.
 - AI reasoning and generation: `DEEPSEEK_API_KEY`; optional `DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, `DEEPSEEK_REASONING_MODEL`.
 - Z.ai/GLM generation: `ZAI_API_KEY`.
 - Embeddings and Gemini fallback: `GEMINI_API_KEY`; optional `GEMINI_MODEL`, `GEMINI_EMBEDDING_MODEL`.
 - Connector credential encryption: `CONNECTOR_SECRET_ENCRYPTION_KEY`; optional `CONNECTOR_OAUTH_STATE_SECRET`.
-- Google Workspace connector OAuth: `GOOGLE_CONNECTOR_CLIENT_ID`, `GOOGLE_CONNECTOR_CLIENT_SECRET`; falls back to the Google sign-in client when these are not set.
+- Google Workspace connector OAuth: `GOOGLE_CONNECTOR_CLIENT_ID`, `GOOGLE_CONNECTOR_CLIENT_SECRET`.
 - GitHub App install flow and webhook ingestion: `GITHUB_APP_NAME`, `GITHUB_WEBHOOK_SECRET`; optional app variables `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`.
-- Canva design connector OAuth: `CANVA_CLIENT_ID`, `CANVA_CLIENT_SECRET`.
-- Stripe, Vercel, PostHog, and Resend private keys are entered in Settings and stored through the encrypted connector credential path.
+- Vercel private keys are entered in Settings and stored through the encrypted connector credential path.
 - Preferred real product-building runs with OpenCode:
-  - Install and authenticate OpenCode, then set `BUILDER_PROVIDER=opencode`.
-  - Choose a model with `BUILDER_OPENCODE_MODEL`, for example an OpenRouter, DeepSeek, Z.ai, or local provider model in OpenCode's `provider/model` format.
-  - Optional: set `BUILDER_OPENCODE_AGENT` for a locked-down OpenCode agent and `BUILDER_OPENCODE_ATTACH_URL` to reuse a headless OpenCode server.
-  - Reference: [OpenCode CLI](https://opencode.ai/docs/cli/) and [OpenCode providers](https://opencode.ai/docs/providers/).
+  - Install and sign in to OpenCode on the computer running FounderOS.
+  - FounderOS uses `opencode` by default. In Settings, use **Check local setup** to confirm it is ready.
+  - Advanced builder environment variables are still supported for hosted worker runs when needed: `BUILDER_PROVIDER=opencode`, `BUILDER_OPENCODE_MODEL`, `BUILDER_OPENCODE_AGENT`, and `BUILDER_OPENCODE_ATTACH_URL`.
 - Real builder runs with cheaper chat-completions models when OpenCode is not used:
   - DeepSeek preset: `BUILDER_PROVIDER=deepseek` and `DEEPSEEK_API_KEY`.
   - Z.ai preset: `BUILDER_PROVIDER=zai` and `ZAI_API_KEY`.
@@ -52,8 +60,8 @@ Vercel settings are optional and documented in `.env.example`.
 2. Start Convex with `npx convex dev` and keep it running.
 3. In another terminal, run `npm run dev`.
 4. For real product-building work, prefer OpenCode:
-   `BUILDER_PROVIDER=opencode` and `BUILDER_OPENCODE_MODEL=deepseek/deepseek-chat`
-   or the provider/model name from your OpenCode setup, then run `npm run builder`.
+   install and sign in to OpenCode, then use **Check local setup** in Settings.
+   Worker-only runs can still use `BUILDER_PROVIDER=opencode`, then run `npm run builder`.
    For direct chat-completions fallback, use `BUILDER_PROVIDER=deepseek`,
    `BUILDER_PROVIDER=zai`, or `BUILDER_PROVIDER=openrouter` with the matching API key.
 5. Start only the other workers you need, for example
@@ -64,5 +72,5 @@ is explicitly set. It saves review versions to Library, runs configured checks,
 attempts a repair pass when checks fail, prepares private previews, and requires
 approval before live publishing through Vercel.
 
-Generate `BETTER_AUTH_SECRET` and `FOUNDEROS_WORKER_TOKEN` as long random values
-before using a hosted workspace.
+Generate `FOUNDEROS_WORKER_TOKEN` as a long random value before using a hosted
+workspace.

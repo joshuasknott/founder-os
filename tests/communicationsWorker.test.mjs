@@ -122,12 +122,13 @@ test("approved communications produce Library-safe history metadata", () => {
         },
       },
     },
-    { now: 1000 },
+    { now: 1000, connectorResult: { externalId: "gmail_msg_123" } },
   );
 
   assert.equal(emailHistory.summary, "The approved email was sent.");
   assert.equal(emailHistory.metadata.communicationHistory.type, "email_sent");
   assert.equal(emailHistory.metadata.communicationHistory.connectorId, "gmail");
+  assert.equal(emailHistory.metadata.communicationHistory.externalId, "gmail_msg_123");
   assert.equal(emailHistory.content.includes("Status: Sent after approval"), true);
 
   const eventHistory = historyForApprovedCommunication(
@@ -145,11 +146,13 @@ test("approved communications produce Library-safe history metadata", () => {
         },
       },
     },
-    { now: 1000 },
+    { now: 1000, connectorResult: { externalId: "cal_event_123", providerUrl: "https://calendar.google.com/event" } },
   );
 
   assert.equal(eventHistory.summary, "The approved calendar event was created.");
   assert.equal(eventHistory.metadata.communicationHistory.type, "calendar_event_created");
+  assert.equal(eventHistory.metadata.communicationHistory.externalId, "cal_event_123");
+  assert.equal(eventHistory.metadata.communicationHistory.providerUrl, "https://calendar.google.com/event");
   assert.equal(eventHistory.content.includes("Status: Created after approval"), true);
 });
 

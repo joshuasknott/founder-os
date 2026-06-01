@@ -47,41 +47,41 @@ test("google drive import becomes version-ready Library metadata", () => {
   assert.equal(JSON.stringify(imported).includes("token"), false);
 });
 
-test("slack import stores searchable conversation context without raw API details", () => {
+test("gmail import stores searchable conversation context without raw API details", () => {
   const imported = content.buildConnectorImport({
-    connectorId: "slack",
-    connectorName: "Slack",
-    externalId: "C123:1717000000.000100",
-    externalType: "channel_message",
-    sourceName: "#leadership",
+    connectorId: "gmail",
+    connectorName: "Gmail",
+    externalId: "thread_123",
+    externalType: "message_thread",
+    sourceName: "Customer onboarding thread",
     content: "Maya: Customer onboarding is the launch risk.\nAlex: Add a checklist before Friday.",
     tags: ["customer", "Launch"],
     importedAt: 2000,
   });
 
   assert.equal(imported.kind, "conversation");
-  assert.equal(imported.title, "#leadership");
-  assert.equal(imported.tags.includes("slack"), true);
+  assert.equal(imported.title, "Customer onboarding thread");
+  assert.equal(imported.tags.includes("gmail"), true);
   assert.equal(imported.metadata.searchText.includes("customer onboarding"), true);
   assert.equal(/api|oauth|scope|token/i.test(JSON.stringify(imported)), false);
 });
 
-test("notion import stores source metadata and summarizes records", () => {
+test("google docs import stores source metadata and summarizes records", () => {
   const imported = content.buildConnectorImport({
-    connectorId: "notion",
-    connectorName: "Notion",
-    externalId: "page_abc",
-    externalType: "page",
+    connectorId: "google_docs",
+    connectorName: "Google Docs",
+    externalId: "doc_abc",
+    externalType: "document",
     title: "Customer research",
     content: "Interview notes show buyers want faster setup. Follow-up is to test pricing language.",
-    sourceUrl: "https://notion.so/page_abc",
+    sourceUrl: "https://docs.google.com/document/d/doc_abc/edit",
     importedAt: 3000,
     externalUpdatedAt: 2900,
   });
 
-  assert.equal(imported.kind, "record");
+  assert.equal(imported.kind, "doc");
   assert.equal(imported.summary, "Interview notes show buyers want faster setup.");
   assert.equal(imported.metadata.connector.externalUpdatedAt, 2900);
   assert.equal(imported.metadata.searchText.includes("pricing language"), true);
-  assert.equal(JSON.stringify(imported).includes("notion.so/page_abc"), true);
+  assert.equal(JSON.stringify(imported).includes("docs.google.com/document"), true);
 });

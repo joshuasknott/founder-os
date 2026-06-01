@@ -3,7 +3,6 @@ import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
 import { httpAction } from "./_generated/server";
 import { v } from "convex/values";
-import { authComponent, createAuth } from "./auth";
 
 // =========================================================================
 // HMAC SIGNATURE VALIDATION (Doc 7 §3)
@@ -92,8 +91,6 @@ export const logWebhookEvent = internalMutation({
 // =========================================================================
 
 const http = httpRouter();
-
-authComponent.registerRoutes(http, createAuth);
 
 // -------------------------------------------------------------------------
 // POST /webhooks/github

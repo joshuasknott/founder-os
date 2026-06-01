@@ -77,10 +77,11 @@ async function requestConnectorAction(client, workspaceId, args) {
     };
   }
 
-  return await client.mutation(api.connectors.requestAction, {
+  return await client.action(api.connectors.executeConnectorAction, {
     workspaceId,
     connectorId: args.connectorId,
     actionType: args.actionType,
+    actionPayload: args.actionPayload,
     approvalGranted: args.approvalGranted,
     requestedBy: "FounderOS",
     directiveId: args.directiveId,
@@ -199,6 +200,7 @@ async function finishApprovedCommunication(client, run, approvedAction) {
     actionResult = await requestConnectorAction(client, workspaceId, {
       connectorId,
       actionType,
+      actionPayload: payload,
       approvalGranted: true,
       directiveId: run.directiveId,
       runId: run._id,
@@ -235,7 +237,9 @@ async function finishApprovedCommunication(client, run, approvedAction) {
     return true;
   }
 
-  const history = historyForApprovedCommunication(run, approvedAction);
+  const history = historyForApprovedCommunication(run, approvedAction, {
+    connectorResult: actionResult,
+  });
   if (!history) return false;
 
   const metadata = {

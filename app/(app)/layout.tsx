@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ClerkProvider } from "@clerk/nextjs";
 import ConvexClientProvider from "./providers";
 import { Leftnav } from "@/components/layout/Leftnav";
 import "./globals.css";
@@ -24,14 +25,16 @@ export default function AppLayout({
         />
       </head>
       <body className="h-full overflow-hidden bg-surface text-text-primary font-sans antialiased">
-        <ConvexClientProvider>
-          <div className="relative z-10 flex h-screen w-full flex-col overflow-hidden lg:flex-row">
-            <Leftnav />
-            <main className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-surface">
-              {children}
-            </main>
-          </div>
-        </ConvexClientProvider>
+        <ClerkProvider>
+          <ConvexClientProvider>
+            <div className="relative z-10 flex h-screen w-full flex-col overflow-hidden lg:flex-row">
+              <Leftnav />
+              <main className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-surface">
+                {children}
+              </main>
+            </div>
+          </ConvexClientProvider>
+        </ClerkProvider>
       </body>
     </html>
   );

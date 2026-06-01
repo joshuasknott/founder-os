@@ -58,7 +58,7 @@ export function safeGoogleWorkspaceError(
   const scrubbed = raw
     .replace(/https?:\/\/\S+/gi, "the service")
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "private credential")
-    .replace(/\b(ya29|sk|pk|rk|ghp)[-_A-Za-z0-9]{8,}\b/gi, "private credential")
+    .replace(/\b(ya29|sk|pk|rk|ghp)[-._A-Za-z0-9]{8,}\b/gi, "private credential")
     .replace(/\b[A-Za-z0-9+/]{32,}={0,2}\b/g, "private detail")
     .replace(/\{[\s\S]*\}/g, "details")
     .replace(/\s+/g, " ")
@@ -300,10 +300,14 @@ export function historyForApprovedCommunication(run, approvedAction, args = {}) 
   const now = args.now ?? Date.now();
   const payload = approvedAction?.actionPayload ?? {};
   const actionKind = approvedAction?.actionKind;
+  const connectorResult = args.connectorResult && typeof args.connectorResult === "object"
+    ? args.connectorResult
+    : {};
 
   if (actionKind === "send_email") {
     const draft = payload.draft ?? {};
-    const externalId = `email_${stableHash(`${run?._id ?? run?.title}:${draft.to}:${draft.subject}:${now}`)}`;
+    const externalId = compactText(connectorResult.externalId, 120) ||
+      `email_${stableHash(`${run?._id ?? run?.title}:${draft.to}:${draft.subject}:${now}`)}`;
     const summary = "The approved email was sent.";
     const content = [
       `# ${run?.title ?? "Sent email"}`,
@@ -331,6 +335,7 @@ export function historyForApprovedCommunication(run, approvedAction, args = {}) 
           externalId,
           approvalId: approvedAction?.approvalId,
           performedAt: now,
+          providerUrl: compactText(connectorResult.providerUrl, 300) || undefined,
         },
       },
     };
@@ -338,7 +343,8 @@ export function historyForApprovedCommunication(run, approvedAction, args = {}) 
 
   if (actionKind === "create_calendar_event") {
     const event = payload.event ?? {};
-    const externalId = `event_${stableHash(`${run?._id ?? run?.title}:${event.title}:${event.when}:${now}`)}`;
+    const externalId = compactText(connectorResult.externalId, 120) ||
+      `event_${stableHash(`${run?._id ?? run?.title}:${event.title}:${event.when}:${now}`)}`;
     const summary = "The approved calendar event was created.";
     const content = [
       `# ${run?.title ?? "Scheduled event"}`,
@@ -367,6 +373,7 @@ export function historyForApprovedCommunication(run, approvedAction, args = {}) 
           externalId,
           approvalId: approvedAction?.approvalId,
           performedAt: now,
+          providerUrl: compactText(connectorResult.providerUrl, 300) || undefined,
         },
       },
     };

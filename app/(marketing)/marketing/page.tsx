@@ -27,16 +27,13 @@ import {
   Star,
   Mail,
   GitBranch,
-  CreditCard,
-  Palette,
-  Send,
   X,
   Check,
 } from "lucide-react";
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
    Scroll reveal hook
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
 
 function useScrollReveal() {
   const ref = useRef<HTMLDivElement>(null);
@@ -63,9 +60,9 @@ function useScrollReveal() {
   return [ref, isVisible] as const;
 }
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
    Typewriter effect
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
 
 function useTypewriter(phrases: string[], speed = 60, pause = 2000) {
   const [text, setText] = useState("");
@@ -104,9 +101,9 @@ function useTypewriter(phrases: string[], speed = 60, pause = 2000) {
   return text;
 }
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
    Main Marketing Page
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
 
 export default function MarketingPage() {
   const [scrollY, setScrollY] = useState(0);
@@ -138,10 +135,9 @@ export default function MarketingPage() {
     </div>
   );
 }
-
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
    Navbar
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
 
 function Navbar({ scrollY }: { scrollY: number }) {
   const isScrolled = scrollY > 50;
@@ -223,9 +219,9 @@ function Navbar({ scrollY }: { scrollY: number }) {
   );
 }
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
    Hero Section
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
 
 function HeroSection() {
   const typedText = useTypewriter(
@@ -283,7 +279,7 @@ function HeroSection() {
         <p className="reveal-up stagger-3 mx-auto mt-8 max-w-2xl text-lg leading-relaxed text-zinc-400 sm:text-xl" style={{ opacity: 0 }}>
           FounderOS is your AI-powered business assistant that handles the work you
           don&apos;t have time for. Delegate tasks in plain English, and get polished
-          results — emails drafted, reports built, code shipped — all with your approval.
+          results â€” emails drafted, reports built, code shipped â€” all with your approval.
         </p>
 
         {/* Simulated prompt box */}
@@ -344,9 +340,9 @@ function HeroSection() {
   );
 }
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
    Inline Brand Icons for Marketing Page
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
 
 function BrandIcon({ id, className = "h-4 w-4" }: { id: string; className?: string }) {
   const icons: Record<string, { path: string; color: string; viewBox?: string }> = {
@@ -370,37 +366,17 @@ function BrandIcon({ id, className = "h-4 w-4" }: { id: string; className?: stri
       path: "M19.09 1.636H4.91c-.905 0-1.637.732-1.637 1.637v17.454c0 .905.732 1.637 1.636 1.637h14.182c.904 0 1.636-.732 1.636-1.637V3.273c0-.905-.732-1.637-1.636-1.637zM9.273 19.09H5.727v-2.454h3.546v2.455zm0-4.09H5.727v-2.455h3.546V15zm0-4.09H5.727V8.454h3.546v2.455zm8.454 8.181h-6.545v-2.454h6.545v2.455zm0-4.09h-6.545v-2.455h6.545V15zm0-4.09h-6.545V8.454h6.545v2.455z",
       color: "#0F9D58",
     },
+    opencode: {
+      path: "M3 3h18v6h-6v6h6v6H3v-6h6V9H3V3z",
+      color: "#ffffff",
+    },
     github: {
       path: "M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12",
       color: "#ffffff",
     },
-    slack: {
-      path: "M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.688 8.834a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312zM15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zM15.165 17.688a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z",
-      color: "#4A154B",
-    },
-    notion: {
-      path: "M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L18.29 2.29c-.42-.326-.98-.7-2.055-.607L3.01 2.81c-.466.046-.56.28-.374.466l1.823.933zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.84-.046.933-.56.933-1.167V6.354c0-.606-.233-.933-.746-.886l-15.177.886c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952l1.448.327s0 .84-1.168.84l-3.22.186c-.094-.187 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.454-.233 4.764 7.279v-6.44l-1.215-.14c-.093-.514.28-.886.747-.933l3.224-.187zM1.936 1.035L15.63.14c1.682-.14 2.1.047 3.13.84l4.3 3.033c.7.514.934.653.934 1.213v16.378c0 1.026-.374 1.633-1.682 1.726l-15.457.933c-.98.047-1.448-.093-1.962-.747l-3.13-4.06c-.56-.747-.793-1.306-.793-1.96V2.667c0-.84.374-1.54 1.448-1.632h-.467z",
-      color: "#ffffff",
-    },
-    stripe: {
-      path: "M13.976 9.15c-2.172-.806-3.356-1.426-3.356-2.409 0-.831.683-1.305 1.901-1.305 2.227 0 4.515.858 6.09 1.631l.89-5.494C18.252.975 15.697 0 12.165 0 9.667 0 7.589.654 6.104 1.872 4.56 3.147 3.757 4.992 3.757 7.218c0 4.039 2.467 5.76 6.476 7.219 2.585.92 3.445 1.574 3.445 2.583 0 .98-.84 1.545-2.354 1.545-1.875 0-4.965-.921-7.076-2.19l-.893 5.575C4.746 22.72 7.311 24 11.326 24c2.588 0 4.737-.67 6.279-1.889 1.654-1.334 2.494-3.304 2.494-5.888 0-4.111-2.518-5.81-6.123-7.073z",
-      color: "#635BFF",
-    },
     vercel: {
       path: "M12 1L24 22H0z",
       color: "#ffffff",
-    },
-    posthog: {
-      path: "M0 0v2h2V0zm4 0v2h2V0zm-2 2v2h2V2zM0 4v2h2V4zm8-4v2h2V0zM6 2v2h2V2zm2 2v2h2V4zM6 6v2h2V6zm4-2v2h2V4zm0 4v2h2V8zm-2 2v2h2v-2zm2 2v2h2v-2zm2-2v2h2V10zM8 14v2h2v-2zm4 0v2h2v-2zm-2 2v2h2v-2zm2 2v2h2v-2zm2-2v2h2v-2zm0-4v2h2V12zm2-2v2h2v-2zm0-4v2h2V6zm-2-2v2h2V4zm2-2v2h2V2zm2 0v2h2V2zm-2-2v2h2V0zm2 4v2h2V4zm0 4v2h2V8zm-2 6v2h2v-2zm2 2v2h2v-2zm2-2v2h2v-2zm-2-2v2h2v-2zm2-2v2h2v-2zm2 0v2h2v-2zm-2-2v2h2V8zm2-2v2h2V6zm0-4v2h2V2zm-2 0v2h2V2zM14 18v2h2v-2zm2 2v2h2v-2zm2 2v2h2v-2zm-6 0v2h2v-2zm-2 2v2h2v-2zm8 0v2h2v-2zm-4 0v2h2v-2z",
-      color: "#F9BD2B",
-    },
-    resend: {
-      path: "M2 0h20v24H14.667V13.2H10l8 10.8H2V0z",
-      color: "#ffffff",
-    },
-    canva: {
-      path: "M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm3.8 8.1c-.7-.9-1.7-1.4-3-1.4-2.8 0-5.2 2.5-5.2 5.7 0 2.8 1.8 4.9 4.4 4.9 1.7 0 3.1-.8 4-2.2l-1.5-1c-.6.8-1.3 1.3-2.2 1.3-1.5 0-2.4-1.2-2.4-3 0-2.2 1.3-3.8 2.9-3.8.8 0 1.3.3 1.8 1l1.2-1.5z",
-      color: "#00C4CC",
     },
   };
 
@@ -414,24 +390,22 @@ function BrandIcon({ id, className = "h-4 w-4" }: { id: string; className?: stri
   );
 }
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
    Logo Bar / Social Proof
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
 
 function LogoBar() {
   const [revealRef, revealVisible] = useScrollReveal();
 
   const integrations = [
     { id: "gmail", name: "Gmail" },
+    { id: "google_calendar", name: "Google Calendar" },
     { id: "google_drive", name: "Google Drive" },
+    { id: "google_docs", name: "Google Docs" },
+    { id: "google_sheets", name: "Google Sheets" },
+    { id: "opencode", name: "OpenCode" },
     { id: "github", name: "GitHub" },
-    { id: "slack", name: "Slack" },
-    { id: "stripe", name: "Stripe" },
-    { id: "notion", name: "Notion" },
     { id: "vercel", name: "Vercel" },
-    { id: "google_calendar", name: "Calendar" },
-    { id: "posthog", name: "PostHog" },
-    { id: "canva", name: "Canva" },
   ];
 
   return (
@@ -469,8 +443,8 @@ function LogoBar() {
         {/* Stats */}
         <div className="mt-14 grid grid-cols-2 gap-8 sm:grid-cols-4">
           {[
-            { value: "11+", label: "Integrations" },
-            { value: "∞", label: "Tasks delegated" },
+            { value: "8", label: "Integrations" },
+            { value: "âˆž", label: "Tasks delegated" },
             { value: "24/7", label: "Always running" },
             { value: "< 1min", label: "Average response" },
           ].map((stat, i) => (
@@ -497,9 +471,9 @@ function LogoBar() {
   );
 }
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   Product Overview — Bento Grid
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+   Product Overview â€” Bento Grid
+   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
 
 function ProductOverview() {
   const [revealRef, revealVisible] = useScrollReveal();
@@ -508,7 +482,7 @@ function ProductOverview() {
     {
       icon: Home,
       title: "Home",
-      desc: "Your universal command surface. Ask questions, start tasks, and get AI-powered suggestions — all from one intelligent prompt.",
+      desc: "Your universal command surface. Ask questions, start tasks, and get AI-powered suggestions â€” all from one intelligent prompt.",
       image: "/marketing/hero-dashboard.png",
       span: "col-span-2 row-span-2",
       tag: "Command Center",
@@ -524,7 +498,7 @@ function ProductOverview() {
     {
       icon: Library,
       title: "Library",
-      desc: "Queryable business knowledge — search, summarize, and reuse everything your business knows.",
+      desc: "Queryable business knowledge â€” search, summarize, and reuse everything your business knows.",
       image: "/marketing/library-dashboard.png",
       span: "col-span-1 row-span-1",
       tag: "Knowledge Base",
@@ -532,7 +506,7 @@ function ProductOverview() {
     {
       icon: CalendarClock,
       title: "Schedules",
-      desc: "Recurring work in plain language. \"Send priorities every morning\" — that simple.",
+      desc: "Recurring work in plain language. \"Send priorities every morning\" â€” that simple.",
       image: "/marketing/schedules-dashboard.png",
       span: "col-span-1 row-span-1",
       tag: "Automation",
@@ -569,7 +543,7 @@ function ProductOverview() {
             <span className="text-zinc-500">Nothing it doesn&apos;t.</span>
           </h2>
           <p className="mt-4 text-base leading-relaxed text-zinc-400">
-            FounderOS organizes your AI workspace into five intuitive surfaces —
+            FounderOS organizes your AI workspace into five intuitive surfaces â€”
             each designed for a specific way of working with your business.
           </p>
         </div>
@@ -648,9 +622,9 @@ function ProductOverview() {
   );
 }
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
    Connectors Showcase
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
 
 function ConnectorsShowcase() {
   const [revealRef, revealVisible] = useScrollReveal();
@@ -671,32 +645,9 @@ function ConnectorsShowcase() {
       title: "Code & Hosting",
       icon: GitBranch,
       connectors: [
+        { id: "opencode", name: "OpenCode", desc: "Prepare product-building work privately on your computer.", active: true },
         { id: "github", name: "GitHub", desc: "Read repository context and prepare approved code changes.", active: true },
-        { id: "vercel", name: "Vercel", desc: "Create private review links and publish only after approval.", active: false },
-      ],
-    },
-    {
-      title: "Payments & Analytics",
-      icon: CreditCard,
-      connectors: [
-        { id: "stripe", name: "Stripe", desc: "Sync customers, subscriptions, invoices, and revenue context.", active: false },
-        { id: "posthog", name: "PostHog", desc: "Use product analytics as business context for decisions.", active: false },
-      ],
-    },
-    {
-      title: "Communication",
-      icon: Send,
-      connectors: [
-        { id: "slack", name: "Slack", desc: "Receive and respond to team messages with AI assistance.", active: false },
-        { id: "resend", name: "Resend", desc: "Prepare transactional email work with approval gates.", active: false },
-      ],
-    },
-    {
-      title: "Design & Knowledge",
-      icon: Palette,
-      connectors: [
-        { id: "canva", name: "Canva", desc: "Use design assets and prepare approved creative outputs.", active: false },
-        { id: "notion", name: "Notion", desc: "Import and sync knowledge base content.", active: false },
+        { id: "vercel", name: "Vercel", desc: "Create private review links and publish only after approval.", active: true },
       ],
     },
   ];
@@ -720,29 +671,9 @@ function ConnectorsShowcase() {
             <span className="text-zinc-500">Natively.</span>
           </h2>
           <p className="mx-auto mt-4 max-w-2xl text-base leading-relaxed text-zinc-400">
-            From email to analytics — FounderOS plugs into the tools you already use.
+            From Google Workspace to product work, FounderOS plugs into the tools you already use.
             Every connection is secure, scoped, and approval-protected.
           </p>
-        </div>
-
-        {/* Active / coming-soon legend */}
-        <div
-          className={`mb-12 flex items-center justify-center gap-6 transition-all duration-700 ${
-            revealVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-          }`}
-          style={{ transitionDelay: "100ms" }}
-        >
-          <div className="flex items-center gap-2">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-            </span>
-            <span className="text-xs font-semibold text-zinc-400">Available now</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="inline-flex h-2 w-2 rounded-full bg-zinc-600" />
-            <span className="text-xs font-semibold text-zinc-500">Coming soon</span>
-          </div>
         </div>
 
         {/* Connector groups */}
@@ -833,9 +764,9 @@ function ConnectorsShowcase() {
   );
 }
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
    How It Works
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
 
 function HowItWorks() {
   const [revealRef, revealVisible] = useScrollReveal();
@@ -844,16 +775,16 @@ function HowItWorks() {
     {
       step: "01",
       title: "Just ask",
-      desc: "Type what you need like you'd message an assistant. No setup, no workflow builders — just plain English.",
+      desc: "Type what you need like you'd message an assistant. No setup, no workflow builders â€” just plain English.",
       icon: MessageSquare,
       example: '"Prepare this week\'s investor update with revenue numbers"',
     },
     {
       step: "02",
       title: "FounderOS gets to work",
-      desc: "It connects to your tools, pulls the right data, and does the actual work — writing, researching, building. You can watch progress in real-time.",
+      desc: "It connects to your tools, pulls the right data, and does the actual work â€” writing, researching, building. You can watch progress in real-time.",
       icon: Zap,
-      example: "Pulls Stripe data, drafts the email, formats everything",
+      example: "Finds the right context, drafts the email, formats everything",
     },
     {
       step: "03",
@@ -941,9 +872,9 @@ function HowItWorks() {
   );
 }
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   Use Cases — Real Workflow Scenarios
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+   Use Cases â€” Real Workflow Scenarios
+   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
 
 function UseCasesSection() {
   const [revealRef, revealVisible] = useScrollReveal();
@@ -953,10 +884,10 @@ function UseCasesSection() {
     {
       title: "Weekly investor update",
       scenario: "\"Prepare this week's investor update\"",
-      outcome: "A polished investor email, drafted and ready to review in your inbox — in under 5 minutes.",
+      outcome: "A polished investor email, drafted and ready to review in your inbox â€” in under 5 minutes.",
       steps: [
         { actor: "You", action: "Ask FounderOS to prepare the weekly investor update", connectors: [] },
-        { actor: "FounderOS", action: "Pulls revenue data from Stripe and product metrics from PostHog", connectors: ["stripe", "posthog"] },
+        { actor: "FounderOS", action: "Pulls the right business context from Google Workspace", connectors: ["google_drive", "google_sheets"] },
         { actor: "FounderOS", action: "Analyzes week-over-week trends and highlights key wins", connectors: [] },
         { actor: "FounderOS", action: "Formats the update with charts and a clean layout", connectors: [] },
         { actor: "FounderOS", action: "Prepares a Gmail draft for your review", connectors: ["gmail"] },
@@ -965,7 +896,7 @@ function UseCasesSection() {
     {
       title: "Ship a website update",
       scenario: "\"Update the pricing page to add a new tier\"",
-      outcome: "A preview deployment ready to review — your live site untouched until you approve.",
+      outcome: "A preview deployment ready to review â€” your live site untouched until you approve.",
       steps: [
         { actor: "You", action: "Describe the change you want in plain English", connectors: [] },
         { actor: "FounderOS", action: "Pulls your current codebase from GitHub", connectors: ["github"] },
@@ -977,7 +908,7 @@ function UseCasesSection() {
     {
       title: "Research a competitor",
       scenario: "\"Create a competitive analysis of Acme Corp\"",
-      outcome: "A thorough competitor brief saved to your knowledge base — ready to reference anytime.",
+      outcome: "A thorough competitor brief saved to your knowledge base â€” ready to reference anytime.",
       steps: [
         { actor: "You", action: "Ask for a competitive analysis of a specific company", connectors: [] },
         { actor: "FounderOS", action: "Researches their product, pricing, and positioning", connectors: [] },
@@ -989,7 +920,7 @@ function UseCasesSection() {
     {
       title: "Reply to a customer email",
       scenario: "\"Draft a response to Jane's support email\"",
-      outcome: "A thoughtful, on-brand reply in your Gmail drafts — nothing sent without your approval.",
+      outcome: "A thoughtful, on-brand reply in your Gmail drafts â€” nothing sent without your approval.",
       steps: [
         { actor: "You", action: "Ask FounderOS to handle a specific customer email", connectors: [] },
         { actor: "FounderOS", action: "Reads the email thread and understands the question", connectors: ["gmail"] },
@@ -1026,7 +957,7 @@ function UseCasesSection() {
             <span className="text-zinc-500">Not just feature lists.</span>
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-base leading-relaxed text-zinc-400">
-            Real examples of how founders use FounderOS to get things done —
+            Real examples of how founders use FounderOS to get things done â€”
             from start to finish, with every step visible.
           </p>
         </div>
@@ -1143,9 +1074,9 @@ function UseCasesSection() {
   );
 }
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
    Features Deep Dive
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
 
 function FeatureRow({
   title,
@@ -1229,19 +1160,19 @@ function FeaturesDeepDive() {
       <div className="mx-auto max-w-7xl space-y-32 px-6 lg:px-8">
         <FeatureRow
           title="Chat naturally. Get things done."
-          desc="FounderOS doesn't just answer questions — it understands your business, searches your knowledge base, and takes real action. No prompts to memorize, no workflows to build."
+          desc="FounderOS doesn't just answer questions â€” it understands your business, searches your knowledge base, and takes real action. No prompts to memorize, no workflows to build."
           image="/marketing/ai-conversation.png"
           features={[
             { icon: Search, text: "Searches your entire business knowledge base automatically" },
             { icon: Brain, text: "Understands context from previous conversations and decisions" },
-            { icon: Zap, text: "Seamlessly transitions from asking to doing — no mode switching" },
+            { icon: Zap, text: "Seamlessly transitions from asking to doing â€” no mode switching" },
             { icon: FileText, text: "Creates documents, analyses, and reports from natural conversation" },
           ]}
         />
 
         <FeatureRow
           title="Task management that works for you"
-          desc="Delegate complex work in plain English. FounderOS breaks it down, executes step by step, and brings polished results back for your review — all visible in real-time."
+          desc="Delegate complex work in plain English. FounderOS breaks it down, executes step by step, and brings polished results back for your review â€” all visible in real-time."
           image="/marketing/work-dashboard.png"
           features={[
             { icon: Workflow, text: "Multi-step task execution with live progress updates" },
@@ -1254,13 +1185,13 @@ function FeaturesDeepDive() {
 
         <FeatureRow
           title="A memory for your entire business"
-          desc="Library isn't a file cabinet — it's a searchable knowledge base that grows with your business. Every document, decision, and insight is organized and connected."
+          desc="Library isn't a file cabinet â€” it's a searchable knowledge base that grows with your business. Every document, decision, and insight is organized and connected."
           image="/marketing/library-dashboard.png"
           features={[
             { icon: Search, text: "Search across everything your business knows" },
             { icon: Layers, text: "Automatic organization and relationship mapping" },
-            { icon: Globe, text: "Pulls in knowledge from Gmail, Drive, Slack, Notion, and more" },
-            { icon: Lock, text: "Completely private — your data stays in your workspace" },
+            { icon: Globe, text: "Pulls in knowledge from Gmail, Drive, Docs, and Sheets" },
+            { icon: Lock, text: "Completely private â€” your data stays in your workspace" },
           ]}
         />
       </div>
@@ -1268,9 +1199,9 @@ function FeaturesDeepDive() {
   );
 }
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
    Comparison Section
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
 
 function ComparisonSection() {
   const [revealRef, revealVisible] = useScrollReveal();
@@ -1279,7 +1210,7 @@ function ComparisonSection() {
     { name: "FounderOS", featured: true },
     { name: "Hiring an EA", featured: false },
     { name: "Zapier + ChatGPT", featured: false },
-    { name: "Notion AI", featured: false },
+    { name: "Single-purpose AI tools", featured: false },
   ];
 
   const features = [
@@ -1297,7 +1228,7 @@ function ComparisonSection() {
     },
     {
       label: "Connected integrations",
-      values: ["11+ native", "Manual", "5,000+ (no AI)", "Limited"],
+      values: ["8 native", "Manual", "5,000+ (no AI)", "Limited"],
     },
     {
       label: "Built-in approval gates",
@@ -1441,9 +1372,9 @@ function ComparisonSection() {
   );
 }
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
    Testimonials
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
 
 function TestimonialsSection() {
   const [revealRef, revealVisible] = useScrollReveal();
@@ -1465,7 +1396,7 @@ function TestimonialsSection() {
     },
     {
       quote:
-        "I was skeptical about AI replacing workflows. But FounderOS doesn't replace — it amplifies. I'm running a 10-person operation solo.",
+        "I was skeptical about AI replacing workflows. But FounderOS doesn't replace â€” it amplifies. I'm running a 10-person operation solo.",
       name: "Marcus Okonkwo",
       title: "Founder, Nexus Capital",
       initials: "MO",
@@ -1532,9 +1463,9 @@ function TestimonialsSection() {
   );
 }
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
    Pricing
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
 
 function PricingSection() {
   const [revealRef, revealVisible] = useScrollReveal();
@@ -1564,7 +1495,7 @@ function PricingSection() {
         "1 workspace",
         "Unlimited AI tasks",
         "Unlimited Library",
-        "All integrations (Gmail, Slack, etc.)",
+        "All integrations (Gmail, Drive, GitHub, Vercel)",
         "Scheduled automations",
         "Priority support",
         "Custom review rules",
@@ -1670,9 +1601,9 @@ function PricingSection() {
   );
 }
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
    CTA Section
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
 
 function CTASection() {
   const [revealRef, revealVisible] = useScrollReveal();
@@ -1715,9 +1646,9 @@ function CTASection() {
   );
 }
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
    Footer
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
 
 function Footer() {
   const columns = [
@@ -1798,7 +1729,7 @@ function Footer() {
 
         <div className="mt-16 flex flex-col items-center justify-between gap-4 border-t border-white/[0.04] pt-8 sm:flex-row">
           <p className="text-xs text-zinc-600">
-            © {new Date().getFullYear()} FounderOS. All rights reserved.
+            Â© {new Date().getFullYear()} FounderOS. All rights reserved.
           </p>
           <div className="flex items-center gap-6">
             <a href="#" className="text-xs text-zinc-600 transition hover:text-zinc-400">Twitter</a>

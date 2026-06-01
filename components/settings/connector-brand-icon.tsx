@@ -7,15 +7,9 @@ import {
   siGoogledocs,
   siGoogledrive,
   siGooglesheets,
-  siNotion,
-  siPosthog,
-  siResend,
-  siStripe,
   siVercel,
   type SimpleIcon,
 } from "simple-icons";
-
-import { SlackIcon as SlackIconComponent } from "./brand-icons";
 
 type ConnectorBrandIconProps = {
   id: string;
@@ -29,11 +23,7 @@ const brandIcons: Record<string, SimpleIcon> = {
   google_docs: siGoogledocs,
   google_sheets: siGooglesheets,
   github: siGithub,
-  stripe: siStripe,
   vercel: siVercel,
-  posthog: siPosthog,
-  resend: siResend,
-  notion: siNotion,
 };
 
 function SimpleBrandIcon({ icon, className }: { icon: SimpleIcon; className: string }) {
@@ -57,22 +47,8 @@ function OpenCodeIcon({ className }: { className: string }) {
   );
 }
 
-function CanvaIcon({ className }: { className: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" role="img">
-      <circle cx="12" cy="12" r="12" fill="#00C4CC" />
-      <path
-        fill="#fff"
-        d="M15.8 8.1c-.7-.9-1.7-1.4-3-1.4-2.8 0-5.2 2.5-5.2 5.7 0 2.8 1.8 4.9 4.4 4.9 1.7 0 3.1-.8 4-2.2l-1.5-1c-.6.8-1.3 1.3-2.2 1.3-1.5 0-2.4-1.2-2.4-3 0-2.2 1.3-3.8 2.9-3.8.8 0 1.3.3 1.8 1l1.2-1.5Z"
-      />
-    </svg>
-  );
-}
-
 export function ConnectorBrandIcon({ id, className = "h-6 w-6" }: ConnectorBrandIconProps) {
   if (id === "opencode") return <OpenCodeIcon className={className} />;
-  if (id === "canva") return <CanvaIcon className={className} />;
-  if (id === "slack") return <SlackIconComponent className={className} />;
 
   const icon = brandIcons[id];
   if (icon) return <SimpleBrandIcon icon={icon} className={className} />;

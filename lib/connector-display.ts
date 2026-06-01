@@ -5,25 +5,32 @@ export type ConnectorDisplayService = {
 const genericServiceReplacements: Record<string, string[]> = {
   email: ["gmail"],
   calendar: ["google_calendar"],
-  payments: ["stripe"],
   code_hosting: ["vercel"],
-  knowledge: ["google_drive", "google_docs", "posthog"],
+  knowledge: ["google_drive", "google_docs", "google_sheets"],
 };
 
+export const activeConnectorIds = [
+  "gmail",
+  "google_calendar",
+  "google_drive",
+  "google_docs",
+  "google_sheets",
+  "opencode",
+  "github",
+  "vercel",
+] as const;
+
+const activeConnectorIdSet = new Set<string>(activeConnectorIds);
+
 export const serviceGroups = [
-  { id: "google", title: "Google Workspace", ids: ["gmail", "google_calendar", "google_drive", "google_docs", "email", "calendar"] },
-  { id: "code", title: "Code", ids: ["github", "opencode"] },
-  { id: "analytics", title: "Analytics", ids: ["posthog"] },
-  { id: "communication", title: "Communication", ids: ["resend", "slack"] },
-  { id: "design", title: "Design", ids: ["canva"] },
-  { id: "knowledge", title: "Knowledge", ids: ["knowledge", "notion"] },
-  { id: "payments", title: "Payments", ids: ["stripe", "payments"] },
-  { id: "hosting", title: "Hosting", ids: ["vercel", "code_hosting"] },
+  { id: "google", title: "Google Workspace", ids: ["gmail", "google_calendar", "google_drive", "google_docs", "google_sheets"] },
+  { id: "code", title: "Product work", ids: ["opencode", "github"] },
+  { id: "hosting", title: "Website previews", ids: ["vercel"] },
 ];
 
 export function visibleConnectorServices<T extends ConnectorDisplayService>(services: T[]) {
   const serviceIds = new Set(services.map((service) => service.id));
-  return services.filter((service) => {
+  return services.filter((service) => activeConnectorIdSet.has(service.id)).filter((service) => {
     const replacements = genericServiceReplacements[service.id];
     return !replacements?.some((replacementId) => serviceIds.has(replacementId));
   });

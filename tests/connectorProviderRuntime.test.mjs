@@ -65,8 +65,8 @@ test("pagination helper collects items and exposes the next cursor", async () =>
 
 test("idempotency and auth helpers produce stable safe request metadata", () => {
   assert.equal(
-    providerRuntime.connectorIdempotencyKey(["resend", "workspace", "message"]),
-    providerRuntime.connectorIdempotencyKey(["resend", "workspace", "message"]),
+    providerRuntime.connectorIdempotencyKey(["gmail", "workspace", "message"]),
+    providerRuntime.connectorIdempotencyKey(["gmail", "workspace", "message"]),
   );
   assert.deepEqual(
     providerRuntime.providerAuthHeaders("bearer", " private_key "),

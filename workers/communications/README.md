@@ -8,7 +8,8 @@ Current behavior:
 - imports relevant email or availability context when available
 - prepares a draft or scheduling suggestion
 - marks the run ready for review and queues approval for requested external actions
-- resumes approved sends or event creation through the hidden connector runtime
+- resumes approved sends or event creation through the live connector action path
+- records sent/created history only after the provider action succeeds
 - saves the output to Library
 
 Run once:
@@ -28,4 +29,4 @@ Configuration:
 - `CONVEX_URL` or `NEXT_PUBLIC_CONVEX_URL`: Convex deployment URL. The worker also reads `.env.local`.
 - `COMMUNICATIONS_WORKER_POLL_INTERVAL_MS`: optional polling interval. Defaults to `5000`.
 
-External actions remain approval-gated. FounderOS may draft and suggest, but it must ask before sending, posting, or creating calendar events. Sent email and scheduled-event results are saved back to Library history and connector action history.
+External actions remain approval-gated. FounderOS may draft and suggest, but it must ask before sending, posting, or creating calendar events. Sent email and scheduled-event results are saved back to Library history and connector action history only after the connected service confirms the action.

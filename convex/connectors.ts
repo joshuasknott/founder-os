@@ -29,7 +29,6 @@ import {
   buildOAuthAuthorizationUrl,
   connectorIdsForOAuthSetup,
   createConnectorSetupState,
-  createPkcePair,
   exchangeOAuthCode,
   oauthProviderForConnector,
   parseOAuthTokenResult,
@@ -39,16 +38,17 @@ import {
   type OAuthConnectorId,
 } from "./connectorAuthRuntime";
 import {
-  fetchStripeReadOnlyDataset,
   prepareStripeSync,
   type PreparedStripeFact,
   type PreparedStripeItem,
 } from "./stripeConnector";
 import {
   connectorsForGoogleContext,
+  createGoogleCalendarEvent,
   fetchCalendarContext,
   fetchDriveContext,
   fetchGmailContext,
+  sendGmailMessage,
   summarizeGoogleWorkspaceContext,
   type GoogleWorkspaceContext,
 } from "./googleWorkspaceRuntime";
@@ -59,14 +59,11 @@ function storedStatus(status: ConnectorConnectionStatus): Exclude<ConnectorConne
 
 const STRIPE_CONNECTOR_ID = "stripe";
 const STRIPE_SYNC_ACTION = "sync_stripe_finance_context";
-const STRIPE_CONNECTION_SETUP_MESSAGE =
-  "Finish the private read-only Stripe connection setup before syncing finance context.";
 const CONNECTOR_SETUP_SESSION_MS = 15 * 60 * 1000;
 const CONNECTION_SYNC_ENTITY = "connection";
 
 function connectorStateSecret() {
   return process.env.CONNECTOR_OAUTH_STATE_SECRET
-    ?? process.env.BETTER_AUTH_SECRET
     ?? process.env.CONNECTOR_SECRET_ENCRYPTION_KEY
     ?? "founderos-local-dev-connector-state";
 }
@@ -74,7 +71,6 @@ function connectorStateSecret() {
 function connectorSiteUrl() {
   return (
     process.env.NEXT_PUBLIC_SITE_URL
-    ?? process.env.BETTER_AUTH_BASE_URL
     ?? "http://localhost:3000"
   ).replace(/\/+$/g, "");
 }
@@ -85,17 +81,10 @@ function oauthRedirectUri(providerId: OAuthConnectorId) {
   return url.toString();
 }
 
-function oauthClientCredentials(providerId: OAuthConnectorId) {
-  if (providerId === "google_workspace") {
-    return {
-      clientId: process.env.GOOGLE_CONNECTOR_CLIENT_ID ?? process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CONNECTOR_CLIENT_SECRET ?? process.env.GOOGLE_CLIENT_SECRET,
-    };
-  }
-
+function oauthClientCredentials() {
   return {
-    clientId: process.env.CANVA_CLIENT_ID,
-    clientSecret: process.env.CANVA_CLIENT_SECRET,
+    clientId: process.env.GOOGLE_CONNECTOR_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CONNECTOR_CLIENT_SECRET,
   };
 }
 
@@ -178,6 +167,9 @@ const internalConnectors = anyApi.connectors as unknown as {
     connectorId: string;
     actionType: string;
     requestedBy?: string;
+    directiveId?: string;
+    runId?: string;
+    approvalId?: string;
     status: "pending" | "completed" | "needs_attention" | "approval_required" | "failed";
     approvalRequired: boolean;
     safeSummary: string;
@@ -629,6 +621,9 @@ export const logConnectorAction = internalMutation({
     connectorId: v.string(),
     actionType: v.string(),
     requestedBy: v.optional(v.string()),
+    directiveId: v.optional(v.id("directives")),
+    runId: v.optional(v.id("workRuns")),
+    approvalId: v.optional(v.id("approvalQueue")),
     status: v.union(
       v.literal("pending"),
       v.literal("completed"),
@@ -649,6 +644,9 @@ export const logConnectorAction = internalMutation({
       connectorId: args.connectorId,
       actionType: args.actionType,
       requestedBy: args.requestedBy,
+      directiveId: args.directiveId,
+      runId: args.runId,
+      approvalId: args.approvalId,
       status: args.status,
       approvalRequired: args.approvalRequired,
       safeSummary: args.safeSummary,
@@ -857,125 +855,12 @@ export const syncStripeFinance = action({
     await ctx.runQuery(internalConnectors.authorizeWorkspaceForAction, {
       workspaceId: args.workspaceId,
     });
-    const connection = await ctx.runQuery(internalConnectors.getConnectorConnectionForSync, {
-      workspaceId: args.workspaceId,
-      connectorId: STRIPE_CONNECTOR_ID,
-    });
-    const evaluation = evaluateConnectorActionRequest({
-      connectorId: STRIPE_CONNECTOR_ID,
-      actionType: STRIPE_SYNC_ACTION,
-      connection,
-    });
-
-    if (!evaluation.allowed) {
-      await ctx.runMutation(internalConnectors.logConnectorAction, {
-        workspaceId: args.workspaceId,
-        connectionId: connection?._id,
-        connectorId: STRIPE_CONNECTOR_ID,
-        actionType: STRIPE_SYNC_ACTION,
-        requestedBy: args.requestedBy,
-        status: evaluation.approvalRequired ? "approval_required" : "needs_attention",
-        approvalRequired: evaluation.approvalRequired,
-        safeSummary: evaluation.safeMessage,
-      });
-      return evaluation;
-    }
-
-    const bundle = await ctx.runQuery(internalConnectors.getConnectorCredentialBundle, {
-      workspaceId: args.workspaceId,
-      connectorId: STRIPE_CONNECTOR_ID,
-    }) as {
-      credential?: {
-        encryptedSecret?: string;
-        encryptionNonce?: string;
-      } | null;
+    return {
+      allowed: false,
+      approvalRequired: false,
+      reason: "unknown_connector" as const,
+      safeMessage: "That service is not available.",
     };
-    const credentialDoc = bundle.credential;
-    if (!credentialDoc?.encryptedSecret || !credentialDoc.encryptionNonce) {
-      await ctx.runMutation(internalConnectors.logConnectorAction, {
-        workspaceId: args.workspaceId,
-        connectionId: connection?._id,
-        connectorId: STRIPE_CONNECTOR_ID,
-        actionType: STRIPE_SYNC_ACTION,
-        requestedBy: args.requestedBy,
-        status: "needs_attention",
-        approvalRequired: false,
-        safeSummary: STRIPE_CONNECTION_SETUP_MESSAGE,
-      });
-      await ctx.runMutation(internalConnectors.upsertConnectorSyncState, {
-        workspaceId: args.workspaceId,
-        connectorId: STRIPE_CONNECTOR_ID,
-        entityType: "finance_context",
-        status: "needs_attention",
-        lastSafeMessage: STRIPE_CONNECTION_SETUP_MESSAGE,
-      });
-      return {
-        allowed: false,
-        approvalRequired: false,
-        reason: "not_connected" as const,
-        safeMessage: STRIPE_CONNECTION_SETUP_MESSAGE,
-      };
-    }
-
-    try {
-      await ctx.runMutation(internalConnectors.upsertConnectorSyncState, {
-        workspaceId: args.workspaceId,
-        connectorId: STRIPE_CONNECTOR_ID,
-        entityType: "finance_context",
-        status: "syncing",
-        lastSafeMessage: "Stripe finance context is syncing.",
-      });
-      const credential = await connectorCredentialStorage.unseal({
-        encryptedSecret: credentialDoc.encryptedSecret,
-        encryptionNonce: credentialDoc.encryptionNonce,
-      });
-      const dataset = await fetchStripeReadOnlyDataset({
-        apiKey: credential,
-        fetchFn: async (input, init) => {
-          const response = await fetch(input, init);
-          return {
-            ok: response.ok,
-            status: response.status,
-            json: () => response.json() as Promise<unknown>,
-          };
-        },
-      });
-
-      return await ctx.runMutation(internalConnectors.persistStripeSync, {
-        workspaceId: args.workspaceId,
-        connectionId: connection?._id,
-        requestedBy: args.requestedBy,
-        dataset,
-      });
-    } catch (error) {
-      const safeError = safeConnectorError(error);
-      await ctx.runMutation(internalConnectors.logConnectorAction, {
-        workspaceId: args.workspaceId,
-        connectionId: connection?._id,
-        connectorId: STRIPE_CONNECTOR_ID,
-        actionType: STRIPE_SYNC_ACTION,
-        requestedBy: args.requestedBy,
-        status: "failed",
-        approvalRequired: false,
-        safeSummary: "Stripe finance context could not sync.",
-        safeError,
-        internalErrorCode: "STRIPE_SYNC_FAILED",
-      });
-      await ctx.runMutation(internalConnectors.upsertConnectorSyncState, {
-        workspaceId: args.workspaceId,
-        connectorId: STRIPE_CONNECTOR_ID,
-        entityType: "finance_context",
-        status: "failed",
-        lastSafeMessage: "Stripe finance context could not sync.",
-        lastSafeError: safeError,
-      });
-      return {
-        allowed: false,
-        approvalRequired: false,
-        reason: "not_connected" as const,
-        safeMessage: safeError,
-      };
-    }
   },
 });
 
@@ -1021,7 +906,7 @@ async function unsealOAuthAccessToken(ctx: ActionCtx, args: {
   }
 
   const providerId = oauthProviderForConnector(args.connectorId);
-  const client = providerId ? oauthClientCredentials(providerId) : null;
+  const client = providerId ? oauthClientCredentials() : null;
   const refreshCredential = args.bundle.refreshCredential;
   if (!providerId || !client?.clientId || !client.clientSecret || !refreshCredential?.encryptedSecret || !refreshCredential.encryptionNonce) {
     return await connectorCredentialStorage.unseal({
@@ -1209,7 +1094,7 @@ export const startOAuthConnection = action({
       return { ok: false, safeMessage: "That service is not available for sign-in setup." };
     }
 
-    const client = oauthClientCredentials(providerId);
+    const client = oauthClientCredentials();
     if (!client.clientId || !client.clientSecret) {
       return { ok: false, safeMessage: "Sign-in setup is not configured yet." };
     }
@@ -1232,14 +1117,11 @@ export const startOAuthConnection = action({
       },
       connectorStateSecret(),
     );
-    const pkce = providerId === "canva" ? await createPkcePair() : undefined;
-
     await ctx.runMutation(internalConnectors.createConnectorSetupSession, {
       workspaceId: args.workspaceId,
       providerId,
       connectorIds,
       state,
-      codeVerifier: pkce?.verifier,
       expiresAt: now + CONNECTOR_SETUP_SESSION_MS,
     });
 
@@ -1250,9 +1132,7 @@ export const startOAuthConnection = action({
         clientId: client.clientId,
         redirectUri: oauthRedirectUri(providerId),
         state,
-        prompt: providerId === "google_workspace" ? "consent" : undefined,
-        codeChallenge: pkce?.challenge,
-        codeChallengeMethod: pkce?.method,
+        prompt: "consent",
       }),
       safeMessage: "Continue in the service window to finish connecting.",
     };
@@ -1289,11 +1169,11 @@ export const completeOAuthConnection = action({
         workspaceId: session.workspaceId,
       });
 
-      if (payload.providerId !== "google_workspace" && payload.providerId !== "canva") {
+      if (payload.providerId !== "google_workspace") {
         throw new Error("Connection setup expired. Start again from Settings.");
       }
       const providerId = payload.providerId;
-      const client = oauthClientCredentials(providerId);
+      const client = oauthClientCredentials();
       if (!client.clientId || !client.clientSecret) {
         throw new Error("Sign-in setup is not configured yet.");
       }
@@ -1387,7 +1267,7 @@ export const refreshOAuthConnection = action({
         return { ok: false, safeMessage: "Reconnect this service from Settings." };
       }
 
-      const client = oauthClientCredentials(providerId);
+      const client = oauthClientCredentials();
       if (!client.clientId || !client.clientSecret) {
         return { ok: false, safeMessage: "Sign-in setup is not configured yet." };
       }
@@ -2457,6 +2337,163 @@ export const importContent = mutation({
   },
 });
 
+function actionPayloadRecord(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+async function executeGoogleWorkspaceConnectorAction(args: {
+  ctx: ActionCtx;
+  workspaceId: Id<"workspaces">;
+  connectorId: string;
+  actionType: string;
+  payload: unknown;
+  bundle: OAuthCredentialBundle;
+}) {
+  const payload = actionPayloadRecord(args.payload);
+  const accessToken = await unsealOAuthAccessToken(args.ctx, {
+    workspaceId: args.workspaceId,
+    connectorId: args.connectorId,
+    bundle: args.bundle,
+  });
+
+  if (args.connectorId === "gmail" && args.actionType === "send_email") {
+    return await sendGmailMessage({
+      accessToken,
+      draft: actionPayloadRecord(payload.draft),
+      request: connectorRequest,
+    });
+  }
+
+  if (args.connectorId === "google_calendar" && args.actionType === "create_calendar_event") {
+    return await createGoogleCalendarEvent({
+      accessToken,
+      event: actionPayloadRecord(payload.event),
+      request: connectorRequest,
+    });
+  }
+
+  return null;
+}
+
+export const executeConnectorAction = action({
+  args: {
+    workspaceId: v.id("workspaces"),
+    connectorId: v.string(),
+    actionType: v.string(),
+    actionPayload: v.optional(v.any()),
+    approvalGranted: v.optional(v.boolean()),
+    requestedBy: v.optional(v.string()),
+    directiveId: v.optional(v.id("directives")),
+    runId: v.optional(v.id("workRuns")),
+    approvalId: v.optional(v.id("approvalQueue")),
+    workerToken: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (!isAuthorizedWorkerToken(args.workerToken)) {
+      await ctx.runQuery(internalConnectors.authorizeWorkspaceForAction, {
+        workspaceId: args.workspaceId,
+      });
+    }
+
+    const definition = getConnectorDefinition(args.connectorId);
+    const connection = await ctx.runQuery(internalConnectors.getConnectorConnectionForSync, {
+      workspaceId: args.workspaceId,
+      connectorId: args.connectorId,
+    });
+    const evaluation = evaluateConnectorActionRequest({
+      connectorId: args.connectorId,
+      actionType: args.actionType,
+      connection,
+      approvalGranted: args.approvalGranted,
+    });
+    const logBase = {
+      workspaceId: args.workspaceId,
+      connectionId: connection?._id,
+      connectorId: args.connectorId,
+      actionType: args.actionType,
+      requestedBy: args.requestedBy,
+      directiveId: args.directiveId,
+      runId: args.runId,
+      approvalId: args.approvalId,
+    };
+
+    if (!evaluation.allowed || !definition) {
+      await ctx.runMutation(internalConnectors.logConnectorAction, {
+        ...logBase,
+        status: evaluation.approvalRequired ? "approval_required" : "needs_attention",
+        approvalRequired: evaluation.approvalRequired,
+        safeSummary: evaluation.safeMessage,
+      });
+      return evaluation;
+    }
+
+    try {
+      const bundle = await ctx.runQuery(internalConnectors.getConnectorCredentialBundle, {
+        workspaceId: args.workspaceId,
+        connectorId: args.connectorId,
+      }) as OAuthCredentialBundle;
+      const result = await executeGoogleWorkspaceConnectorAction({
+        ctx,
+        workspaceId: args.workspaceId,
+        connectorId: args.connectorId,
+        actionType: args.actionType,
+        payload: args.actionPayload,
+        bundle,
+      });
+
+      if (!result) {
+        const safeMessage = "That service action is not connected to a live provider yet.";
+        await ctx.runMutation(internalConnectors.logConnectorAction, {
+          ...logBase,
+          status: "needs_attention",
+          approvalRequired: evaluation.approvalRequired,
+          safeSummary: safeMessage,
+        });
+        return {
+          allowed: false,
+          approvalRequired: evaluation.approvalRequired,
+          reason: "unknown_action" as const,
+          safeMessage,
+          sensitiveActionKind: evaluation.sensitiveActionKind,
+        };
+      }
+
+      await ctx.runMutation(internalConnectors.logConnectorAction, {
+        ...logBase,
+        status: "completed",
+        approvalRequired: evaluation.approvalRequired,
+        safeSummary: result.safeSummary,
+      });
+      return {
+        ...evaluation,
+        safeMessage: result.safeSummary,
+        externalId: result.externalId,
+        providerUrl: result.providerUrl,
+        metadata: result.metadata,
+      };
+    } catch (error) {
+      const safeError = safeConnectorError(error);
+      await ctx.runMutation(internalConnectors.logConnectorAction, {
+        ...logBase,
+        status: "failed",
+        approvalRequired: evaluation.approvalRequired,
+        safeSummary: "The connection could not finish that step.",
+        safeError,
+        internalErrorCode: "CONNECTOR_EXECUTION_FAILED",
+      });
+      return {
+        allowed: false,
+        approvalRequired: evaluation.approvalRequired,
+        reason: "not_connected" as const,
+        safeMessage: safeError,
+        sensitiveActionKind: evaluation.sensitiveActionKind,
+      };
+    }
+  },
+});
+
 export const requestAction = mutation({
   args: {
     workspaceId: v.id("workspaces"),
@@ -2547,19 +2584,28 @@ export const requestAction = mutation({
         createdAt: now,
         completedAt: Date.now(),
       });
+      const completed = result.status === "completed";
       await recordAuditEvent(ctx, {
         ...actor,
         workspaceId: args.workspaceId,
-        action: "connector.action_completed",
+        action: completed ? "connector.action_completed" : "connector.action_not_ready",
         resourceType: "connectorAction",
         summary: result.safeSummary,
         metadata: { connectorId: args.connectorId, actionType: args.actionType },
       });
 
-      return {
-        ...evaluation,
-        safeMessage: result.safeSummary,
-      };
+      return completed
+        ? {
+            ...evaluation,
+            safeMessage: result.safeSummary,
+          }
+        : {
+            allowed: false,
+            approvalRequired: evaluation.approvalRequired,
+            reason: "unknown_action" as const,
+            safeMessage: result.safeSummary,
+            sensitiveActionKind: evaluation.sensitiveActionKind,
+          };
     } catch (error) {
       const safeError = safeConnectorError(error);
       await ctx.db.insert("connectorActionLogs", {

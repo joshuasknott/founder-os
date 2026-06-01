@@ -29,46 +29,45 @@ test("connector display hides generic duplicates when brand-specific services ex
     { id: "gmail" },
     { id: "calendar" },
     { id: "google_calendar" },
-    { id: "payments" },
-    { id: "stripe" },
+    { id: "code_hosting" },
+    { id: "vercel" },
   ]);
 
-  assert.deepEqual(visible.map((service) => service.id), ["gmail", "google_calendar", "stripe"]);
+  assert.deepEqual(visible.map((service) => service.id), ["gmail", "google_calendar", "vercel"]);
 });
 
-test("connector display keeps generic services when no specific service replaces them", () => {
+test("connector display filters unavailable legacy services", () => {
   const visible = display.visibleConnectorServices([
-    { id: "payments" },
-    { id: "code_hosting" },
-    { id: "knowledge" },
+    { id: "posthog" },
+    { id: "resend" },
+    { id: "slack" },
+    { id: "canva" },
+    { id: "notion" },
+    { id: "stripe" },
+    { id: "github" },
   ]);
 
-  assert.deepEqual(visible.map((service) => service.id), ["payments", "code_hosting", "knowledge"]);
+  assert.deepEqual(visible.map((service) => service.id), ["github"]);
 });
 
 test("connector display groups services by founder-facing area", () => {
   const groups = display.groupedConnectorServices([
     { id: "gmail" },
+    { id: "google_calendar" },
     { id: "google_drive" },
     { id: "google_docs" },
+    { id: "google_sheets" },
+    { id: "opencode" },
     { id: "github" },
-    { id: "posthog" },
-    { id: "resend" },
-    { id: "canva" },
-    { id: "stripe" },
     { id: "vercel" },
   ]);
 
   assert.deepEqual(
     groups.map((group) => [group.title, group.services.map((service) => service.id)]),
     [
-      ["Google Workspace", ["gmail", "google_drive", "google_docs"]],
-      ["Code", ["github"]],
-      ["Analytics", ["posthog"]],
-      ["Communication", ["resend"]],
-      ["Design", ["canva"]],
-      ["Payments", ["stripe"]],
-      ["Hosting", ["vercel"]],
+      ["Google Workspace", ["gmail", "google_calendar", "google_drive", "google_docs", "google_sheets"]],
+      ["Product work", ["opencode", "github"]],
+      ["Website previews", ["vercel"]],
     ],
   );
 });

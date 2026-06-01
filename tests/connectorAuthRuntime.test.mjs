@@ -40,19 +40,6 @@ test("oauth authorization URLs include connector scopes and state", () => {
   assert.equal(googleUrl.searchParams.get("state"), "state123");
   assert.equal(googleUrl.searchParams.get("access_type"), "offline");
   assert.equal(googleUrl.searchParams.get("scope").includes("gmail.readonly"), true);
-
-  const canvaUrl = new URL(authRuntime.buildOAuthAuthorizationUrl({
-    connectorId: "canva",
-    clientId: "canva-client",
-    redirectUri: "https://app.example.com/callback",
-    state: "state456",
-    codeChallenge: "challenge",
-    codeChallengeMethod: "S256",
-  }));
-  assert.equal(canvaUrl.origin, "https://www.canva.com");
-  assert.equal(canvaUrl.searchParams.get("scope").includes("design:content:write"), true);
-  assert.equal(canvaUrl.searchParams.get("code_challenge"), "challenge");
-  assert.equal(canvaUrl.searchParams.get("code_challenge_method"), "S256");
 });
 
 test("oauth token exchange and refresh use form encoded provider requests", async () => {
@@ -71,7 +58,7 @@ test("oauth token exchange and refresh use form encoded provider requests", asyn
     request,
   });
   await authRuntime.refreshOAuthToken({
-    connectorId: "canva",
+    connectorId: "google_workspace",
     clientId: "client",
     clientSecret: "secret",
     refreshToken: "refresh",
@@ -83,8 +70,7 @@ test("oauth token exchange and refresh use form encoded provider requests", asyn
   assert.equal(calls[0].init.body.includes("grant_type=authorization_code"), true);
   assert.equal(calls[0].init.body.includes("client_secret"), true);
   assert.equal(calls[1].init.body.includes("grant_type=refresh_token"), true);
-  assert.equal(calls[1].init.body.includes("client_secret"), false);
-  assert.equal(typeof calls[1].init.headers.Authorization, "string");
+  assert.equal(calls[1].init.body.includes("client_secret"), true);
 });
 
 test("connector setup state is signed and expires safely", async () => {
@@ -145,21 +131,6 @@ test("oauth callback token parsing maps provider scopes to safe connector scopes
     "google.gmail.send",
   ].sort());
   assert.equal(google.expiresAt, 3601000);
-
-  const canva = authRuntime.parseOAuthTokenResult({
-    connectorId: "canva",
-    now: 1000,
-    payload: {
-      access_token: "private_canva_access",
-      scope: "design:content:write design:meta:read asset:read",
-    },
-  });
-  assert.deepEqual(canva.grantedScopes.sort(), [
-    "canva.asset.read",
-    "canva.design.read",
-    "canva.design.write",
-  ].sort());
-  assert.equal(JSON.stringify(canva.grantedScopes).includes("private_canva_access"), false);
 });
 
 test("github app install url carries state without exposing secrets", () => {

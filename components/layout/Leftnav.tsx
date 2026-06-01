@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useClerk } from "@clerk/nextjs";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { authClient } from "@/lib/auth-client";
 import {
   CalendarClock,
   BriefcaseBusiness,
@@ -116,6 +116,7 @@ function hrefForSavedView(view: PinnedView) {
 export function Leftnav() {
   const pathname = usePathname();
   const router = useRouter();
+  const { signOut } = useClerk();
   const recentWork = useQuery(api.directives.getRecentDirectives);
   const recentChats = useQuery(api.chat.getSessions);
   const pinnedViews = useQuery(api.items.listSavedViews, { pinnedOnly: true }) as PinnedView[] | undefined;
@@ -342,11 +343,11 @@ export function Leftnav() {
                   onClick={async () => {
                     setPopoverOpen(false);
                     try {
-                      await authClient.signOut();
+                      await signOut({ redirectUrl: "/" });
                     } catch (e) {
                       console.error("Sign out error", e);
+                      router.replace("/");
                     }
-                    router.replace("/");
                   }}
                   className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-semibold text-red-600 hover:bg-red-50 transition duration-150"
                 >
