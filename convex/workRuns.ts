@@ -1274,6 +1274,7 @@ export const getWorkPage = query({
         taskId: run.directiveId,
         sessionId: directive?.sessionId,
         title: run.title,
+        kind: run.kind,
         objective: directive?.objective,
         summary: run.summary,
         latestUpdate: latestUpdate?.message ?? run.failureReason,

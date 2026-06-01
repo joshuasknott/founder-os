@@ -74,6 +74,7 @@ export const onboardingConnectorIds = [
   "google_sheets",
   "opencode",
   "github",
+  "vercel",
 ];
 
 export function copyForConnector(id: string) {

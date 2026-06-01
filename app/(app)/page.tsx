@@ -24,16 +24,6 @@ import {
 } from "lucide-react";
 
 type PromptMode = "chat" | "task";
-type OpenCodeSafeSettings = {
-  command?: string;
-  agent?: string;
-  attachUrl?: string;
-};
-type ConnectorService = {
-  id: string;
-  status: string;
-  safeSettings?: OpenCodeSafeSettings;
-};
 
 type ChatMessageCard = {
   type: "task_result" | "item_navigation";
@@ -59,6 +49,7 @@ type Message = {
 type WorkRun = {
   _id: Id<"workRuns">;
   title: string;
+  kind?: string;
   status: string;
   summary?: string;
   previewUrl?: string;
@@ -187,12 +178,6 @@ function HomePageContent() {
 
   const liveOverview = useQuery(api.commandCenter.getOverview);
   const overview = useStableDefined(liveOverview);
-  const workspaceId = overview?.workspace?._id as Id<"workspaces"> | undefined;
-  const liveConnectorServices = useQuery(
-    api.connectors.listForWorkspace,
-    workspaceId ? { workspaceId } : "skip",
-  ) as ConnectorService[] | undefined;
-  const connectorServices = useStableDefined(liveConnectorServices) as ConnectorService[] | undefined;
   const liveIsSeeded = useQuery(api.init.isSeeded);
   const isSeeded = useStableDefined(liveIsSeeded);
   const liveAgents = useQuery(api.swarm.getAllAgents);
@@ -209,8 +194,6 @@ function HomePageContent() {
 
   const createSession = useMutation(api.chat.createSession);
   const sendMessage = useAction(api.chat.sendMessage);
-  const prepareLocalOpenCodeChat = useAction(api.chat.prepareLocalOpenCodeChat);
-  const completeLocalOpenCodeChat = useMutation(api.chat.completeLocalOpenCodeChat);
   const createTask = useMutation(api.directives.createDirective);
   const addClarification = useMutation(api.directives.addClarification);
   const approve = useMutation(api.approvals.approve);
@@ -223,13 +206,12 @@ function HomePageContent() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const trimmedInput = input.trim();
-  const openCodeService = connectorServices?.find((service) => service.id === "opencode");
   const searchPreview = useQuery(
     api.search.globalSearch,
     trimmedInput.length >= 2 ? { query: trimmedInput, limit: 12 } : "skip",
   ) as GlobalSearchData | undefined;
 
-  const hasConversation = Boolean(messages?.length) || Boolean(taskParam && workRuns?.length);
+  const hasConversation = Boolean(sessionParam) || Boolean(taskParam && workRuns?.length);
 
   useEffect(() => {
     if (!sessionParam && !taskParam) {
@@ -358,36 +340,6 @@ function HomePageContent() {
 
       if (mode === "chat") {
         if (!defaultWorker) throw new Error("FounderOS is still preparing your AI workers.");
-        if (openCodeService?.status === "connected") {
-          const prepared = await prepareLocalOpenCodeChat({
-            sessionId,
-            agentId: defaultWorker._id,
-            content: trimmed,
-          });
-          const response = await fetch("/api/local/opencode/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              command: openCodeService.safeSettings?.command ?? "opencode",
-              agent: openCodeService.safeSettings?.agent,
-              attachUrl: openCodeService.safeSettings?.attachUrl,
-              systemPrompt: prepared.systemPrompt,
-              userPrompt: prepared.userPrompt,
-            }),
-          });
-          const result = await response.json() as { ok?: boolean; content?: string; safeMessage?: string };
-          if (!result.ok || !result.content) {
-            throw new Error(result.safeMessage ?? "OpenCode is not responding locally.");
-          }
-          await completeLocalOpenCodeChat({
-            sessionId,
-            agentId: defaultWorker._id,
-            userContent: trimmed,
-            assistantContent: result.content,
-          });
-          router.replace(`/?session=${sessionId}`);
-          return;
-        }
         await sendMessage({
           sessionId,
           agentId: defaultWorker._id,
@@ -416,13 +368,10 @@ function HomePageContent() {
   }, [
     createTask,
     defaultWorker,
-    completeLocalOpenCodeChat,
     ensureConversation,
     input,
     isSending,
     mode,
-    openCodeService,
-    prepareLocalOpenCodeChat,
     router,
     sendMessage,
   ]);
@@ -440,8 +389,7 @@ function HomePageContent() {
   const isLoading =
     overview === undefined ||
     isSeeded === undefined ||
-    agents === undefined ||
-    Boolean(workspaceId && connectorServices === undefined);
+    agents === undefined;
 
   if (isLoading) {
     return <HomeLoader />;
@@ -513,7 +461,16 @@ function HomePageContent() {
             </button>
           </div>
 
-          <ConversationPanel messages={messages ?? []} />
+          {sessionParam && messages === undefined ? (
+            <div className="rounded-xl border border-black/[0.06] bg-white p-4 shadow-sm">
+              <div className="flex items-center gap-3">
+                <Loader2 size={15} className="animate-spin text-text-muted" />
+                <p className="text-sm font-medium text-text-secondary">Opening conversation</p>
+              </div>
+            </div>
+          ) : (
+            <ConversationPanel messages={messages ?? []} />
+          )}
 
           {taskParam && workRuns === undefined && (
             <div className="mt-4 rounded-xl border border-black/[0.06] bg-white p-4 shadow-sm">
@@ -966,6 +923,7 @@ function WorkRunPanel({
     <div className="mt-4 space-y-3">
       {runs.map((run) => {
         const recentUpdates = run.updates.slice(-5);
+        const waitingForBuilder = run.status === "queued" && run.kind === "code_preview";
         const libraryArtifact = run.artifacts?.find((artifact) => artifact.libraryItemId);
         const libraryHref = run.outputItemId
           ? `/library/${run.outputItemId}`
@@ -996,7 +954,7 @@ function WorkRunPanel({
                   <span
                     className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold leading-none ${runStatusClasses(run.status)}`}
                   >
-                    {runStatusLabel(run.status)}
+                    {waitingForBuilder ? "Waiting for builder" : runStatusLabel(run.status)}
                   </span>
                 </div>
                 {run.summary && (
@@ -1013,6 +971,12 @@ function WorkRunPanel({
                     <p className="text-xs leading-5 text-text-secondary">{update.message}</p>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {waitingForBuilder && (
+              <div className="ml-10 mt-3 rounded-lg border border-amber-500/15 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                The product builder has not started on this computer yet. This work will move forward when the local builder is running.
               </div>
             )}
 

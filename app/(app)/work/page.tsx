@@ -30,6 +30,7 @@ type WorkItem = {
   taskId: Id<"directives">;
   sessionId?: Id<"chatSessions">;
   title: string;
+  kind?: string;
   objective?: string;
   summary?: string;
   latestUpdate?: string;
@@ -312,6 +313,9 @@ function WorkRow({
   onDecline?: (approvalId: Id<"approvalQueue">) => Promise<void>;
 }) {
   const description =
+    item.status === "preparing" && item.kind === "code_preview"
+      ? "The product builder has not started on this computer yet. This work will move forward when the local builder is running."
+      :
     cleanDisplayText(item.approval?.description) ||
     cleanDisplayText(item.summary) ||
     cleanDisplayText(item.latestUpdate) ||
@@ -330,7 +334,7 @@ function WorkRow({
               {cleanDisplayText(item.title)}
             </h3>
             <span className={`shrink-0 rounded-md px-2 py-1 text-[10px] font-semibold leading-none ${statusClasses(item.status)}`}>
-              {item.statusLabel}
+              {item.status === "preparing" && item.kind === "code_preview" ? "Waiting for builder" : item.statusLabel}
             </span>
           </div>
           {item.approval?.title && (

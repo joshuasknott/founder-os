@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   ExternalLink,
   Github,
+  KeyRound,
   Loader2,
   Plug,
   RefreshCw,
@@ -66,12 +67,17 @@ function isOAuthService(id: string) {
   return isGoogleWorkspaceConnector(id);
 }
 
+function isApiKeyService(id: string) {
+  return id === "vercel";
+}
+
 function primaryActionLabel(service?: ServiceCard) {
   if (!service) return "Connect";
   if (service.status === "connected") return "Connected";
   if (service.id === "github" && service.connectionId) return "Save repository";
   if (service.id === "github") return "Install GitHub App";
   if (service.id === "opencode") return "Check local setup";
+  if (service.id === "vercel") return "Save preview setup";
   return service.status === "needs_attention" ? "Reconnect" : "Connect";
 }
 
@@ -90,6 +96,7 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
   const completeOnboarding = useMutation(api.workspaces.completeOnboarding);
   const startOAuthConnection = useAction(api.connectors.startOAuthConnection);
   const startGitHubAppConnection = useAction(api.connectors.startGitHubAppConnection);
+  const setupApiKeyConnection = useMutation(api.connectors.setupApiKeyConnection);
   const setupManagedConnection = useMutation(api.connectors.setupManagedConnection);
   const selectGitHubRepository = useMutation(api.connectors.selectGitHubRepository);
   const services = useQuery(api.connectors.listForWorkspace, { workspaceId: workspace._id }) as ServiceCard[] | undefined;
@@ -237,6 +244,35 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
       event.currentTarget.reset();
     } catch (repositoryError) {
       setError(repositoryError instanceof Error ? repositoryError.message : "The repository could not be saved.");
+    } finally {
+      setBusyServiceId(null);
+    }
+  };
+
+  const handleApiKeySetupSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!focusedService || !isApiKeyService(focusedService.id)) return;
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const settings: Record<string, string> = {};
+    for (const [key, value] of formData.entries()) {
+      if (key === "apiKey" || typeof value !== "string") continue;
+      if (value.trim()) settings[key] = value.trim();
+    }
+
+    setBusyServiceId(focusedService.id);
+    setError("");
+    try {
+      await saveBasics();
+      await setupApiKeyConnection({
+        workspaceId: workspace._id,
+        connectorId: focusedService.id,
+        apiKey: String(formData.get("apiKey") ?? ""),
+        settings,
+      });
+      form.reset();
+    } catch (setupError) {
+      setError(setupError instanceof Error ? setupError.message : "That connection could not be saved.");
     } finally {
       setBusyServiceId(null);
     }
@@ -427,6 +463,46 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
                         >
                           {busyServiceId === focusedService.id ? <Loader2 size={14} className="animate-spin" /> : <Github size={14} />}
                           Save repository
+                        </button>
+                      </form>
+                    ) : focusedService.id === "vercel" && focusedService.status !== "connected" ? (
+                      <form onSubmit={handleApiKeySetupSubmit} className="mt-4 space-y-3">
+                        <label className="block text-xs font-semibold text-text-secondary">
+                          Private key
+                          <input
+                            name="apiKey"
+                            type="password"
+                            required
+                            autoComplete="off"
+                            placeholder="Vercel token"
+                            className="mt-1 h-9 w-full rounded-lg border border-black/[0.08] bg-white px-3 text-sm text-text-primary outline-none focus:border-black/25"
+                          />
+                        </label>
+                        <label className="block text-xs font-semibold text-text-secondary">
+                          Project ID
+                          <input name="projectId" required placeholder="Required" className="mt-1 h-9 w-full rounded-lg border border-black/[0.08] bg-white px-3 text-sm text-text-primary outline-none focus:border-black/25" />
+                        </label>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <label className="block text-xs font-semibold text-text-secondary">
+                            Project name
+                            <input name="projectName" placeholder="Optional" className="mt-1 h-9 w-full rounded-lg border border-black/[0.08] bg-white px-3 text-sm text-text-primary outline-none focus:border-black/25" />
+                          </label>
+                          <label className="block text-xs font-semibold text-text-secondary">
+                            Team ID
+                            <input name="teamId" placeholder="Optional" className="mt-1 h-9 w-full rounded-lg border border-black/[0.08] bg-white px-3 text-sm text-text-primary outline-none focus:border-black/25" />
+                          </label>
+                        </div>
+                        <label className="block text-xs font-semibold text-text-secondary">
+                          Production domain
+                          <input name="productionDomain" placeholder="Optional" className="mt-1 h-9 w-full rounded-lg border border-black/[0.08] bg-white px-3 text-sm text-text-primary outline-none focus:border-black/25" />
+                        </label>
+                        <button
+                          type="submit"
+                          disabled={busyServiceId === focusedService.id}
+                          className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-black px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {busyServiceId === focusedService.id ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
+                          Save preview setup
                         </button>
                       </form>
                     ) : (
