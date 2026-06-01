@@ -129,7 +129,6 @@ function isOAuthService(id: string) {
     || id === "google_calendar"
     || id === "google_drive"
     || id === "google_docs"
-    || id === "google_sheets"
     || id === "canva";
 }
 
@@ -414,8 +413,9 @@ export function ConnectedServicesSettings() {
                         <button
                           key={service.id}
                           type="button"
-                          onClick={() => setSetupServiceId(service.id)}
-                          className="group flex min-h-[172px] flex-col justify-between rounded-lg border border-black/[0.06] bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-black/15 hover:shadow-md"
+                          disabled={details.comingSoon}
+                          onClick={details.comingSoon ? undefined : () => setSetupServiceId(service.id)}
+                          className={`group flex min-h-[172px] flex-col justify-between rounded-lg border border-black/[0.06] bg-white p-4 text-left shadow-sm transition ${details.comingSoon ? "cursor-default" : "hover:-translate-y-0.5 hover:border-black/15 hover:shadow-md"}`}
                         >
                           <span>
                             <span className="flex items-start justify-between gap-3">
@@ -438,6 +438,11 @@ export function ConnectedServicesSettings() {
                             <span className="rounded-full bg-black/[0.035] px-2 py-0.5 text-[11px] font-medium text-text-muted">
                               {details.setup}
                             </span>
+                            {details.comingSoon && (
+                              <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
+                                Coming soon
+                              </span>
+                            )}
                             {onboardingConnectorIds.has(service.id) && (
                               <span className="rounded-full border border-emerald-500/15 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                                 Picked in setup

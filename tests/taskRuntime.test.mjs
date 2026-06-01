@@ -127,7 +127,7 @@ test("approval requests pause leased work and approval queues the run for resume
 
   const deniedPatch = runtime.approvalDecisionRunPatch("denied", 5000);
   assert.equal(deniedPatch.status, "needs_review");
-  assert.equal(runtime.approvalDecisionTaskStatus("denied"), "shadow_pending");
+  assert.equal(runtime.approvalDecisionTaskStatus("denied"), "blocked");
 });
 
 test("approval decisions append immutable audit events", () => {

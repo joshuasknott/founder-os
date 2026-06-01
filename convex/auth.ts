@@ -17,6 +17,8 @@ export const createAuth = (ctx: GenericCtx<DataModel>) => {
     process.env.NEXT_PUBLIC_SITE_URL,
     "http://localhost:3000",
     "http://localhost:3001",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
   ].filter((origin): origin is string => Boolean(origin));
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
 

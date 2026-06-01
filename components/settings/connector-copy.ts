@@ -4,6 +4,7 @@ export type ConnectorCopy = {
   setup: string;
   useCase: string;
   detail: string;
+  comingSoon?: boolean;
 };
 
 export const connectorCopy: Record<string, ConnectorCopy> = {
@@ -35,13 +36,6 @@ export const connectorCopy: Record<string, ConnectorCopy> = {
     useCase: "Import documents and export approved drafts.",
     detail: "FounderOS can use Docs as source material and prepare document updates for review.",
   },
-  google_sheets: {
-    label: "Google Sheets",
-    group: "Google Workspace",
-    setup: "Sign in with Google",
-    useCase: "Use spreadsheet context and prepare approved table updates.",
-    detail: "FounderOS can import sheet data and prepare structured outputs without changing sheets silently.",
-  },
   github: {
     label: "GitHub",
     group: "Code",
@@ -62,6 +56,7 @@ export const connectorCopy: Record<string, ConnectorCopy> = {
     setup: "Restricted read-only key",
     useCase: "Sync customers, subscriptions, invoices, products, and revenue context.",
     detail: "FounderOS only accepts restricted read-only Stripe keys and blocks money-moving actions.",
+    comingSoon: true,
   },
   vercel: {
     label: "Vercel",
@@ -69,6 +64,7 @@ export const connectorCopy: Record<string, ConnectorCopy> = {
     setup: "Access token and project",
     useCase: "Create private review links and publish only after approval.",
     detail: "FounderOS can prepare preview deployments and wait before touching live sites.",
+    comingSoon: true,
   },
   posthog: {
     label: "PostHog",
@@ -76,6 +72,7 @@ export const connectorCopy: Record<string, ConnectorCopy> = {
     setup: "Project key",
     useCase: "Use product analytics as business context.",
     detail: "FounderOS can query analytics signals to inform decisions, reports, and product work.",
+    comingSoon: true,
   },
   resend: {
     label: "Resend",
@@ -83,6 +80,7 @@ export const connectorCopy: Record<string, ConnectorCopy> = {
     setup: "API key and sender",
     useCase: "Prepare transactional email work.",
     detail: "FounderOS can prepare email sends and keep approval gates around outbound messages.",
+    comingSoon: true,
   },
   canva: {
     label: "Canva",
@@ -90,6 +88,7 @@ export const connectorCopy: Record<string, ConnectorCopy> = {
     setup: "Sign in with Canva",
     useCase: "Use design assets and prepare approved creative outputs.",
     detail: "FounderOS can read design context and prepare brand-safe assets for review.",
+    comingSoon: true,
   },
 };
 
@@ -101,11 +100,6 @@ export const onboardingConnectorIds = [
   "google_sheets",
   "github",
   "opencode",
-  "stripe",
-  "vercel",
-  "posthog",
-  "resend",
-  "canva",
 ];
 
 export function copyForConnector(id: string) {

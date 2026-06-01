@@ -177,10 +177,14 @@ export const addClarification = mutation({
     if (!directive) throw new Error("Task not found.");
     ensureDocWorkspace(directive, current.workspaceId, "Task");
 
-    const sessionId = args.sessionId ?? directive.sessionId;
+    let sessionId = args.sessionId ?? directive.sessionId;
     if (sessionId) {
       const session = await ctx.db.get(sessionId);
-      ensureDocWorkspace(session, current.workspaceId, "Chat");
+      if (!session) {
+        sessionId = undefined;
+      } else {
+        ensureDocWorkspace(session, current.workspaceId, "Chat");
+      }
     }
     const classification = classifyTaskObjective({
       title: directive.title,
@@ -208,7 +212,7 @@ export const addClarification = mutation({
     await ctx.db.patch(args.directiveId, {
       objective: refinement.updatedObjective,
       status: "pending_spec",
-      ...(sessionId ? { sessionId } : {}),
+      ...(sessionId ? { sessionId } : { sessionId: undefined }),
     });
 
     const taskId = await ctx.db.insert("tasks", {

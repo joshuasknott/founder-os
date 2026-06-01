@@ -505,4 +505,150 @@
     background-size: 200% 100%;
     animation: btn-shimmer 3s ease-in-out infinite;
   }
+
+  /* ── Connector card icon glow ── */
+  .connector-icon-glow {
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .connector-icon-glow:hover {
+    box-shadow: 0 0 20px rgba(255, 255, 255, 0.08), 0 0 40px rgba(255, 255, 255, 0.04);
+  }
+
+  /* ── Category pill ── */
+  .category-pill {
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .category-pill:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+
+  .category-pill.active {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: #ffffff;
+  }
+
+  /* ── Use-case flow timeline ── */
+  @keyframes timeline-draw {
+    0% { height: 0; }
+    100% { height: 100%; }
+  }
+
+  .timeline-line {
+    position: relative;
+  }
+
+  .timeline-line::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 0;
+    transform: translateX(-50%);
+    width: 1px;
+    height: 100%;
+    background: linear-gradient(
+      to bottom,
+      rgba(255, 255, 255, 0.15) 0%,
+      rgba(255, 255, 255, 0.06) 50%,
+      transparent 100%
+    );
+  }
+
+  .timeline-dot {
+    position: relative;
+    z-index: 2;
+  }
+
+  .timeline-dot::after {
+    content: "";
+    position: absolute;
+    inset: -4px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    animation: pulse-ring 3s ease-out infinite;
+  }
+
+  /* ── Flow step connector line ── */
+  @keyframes flow-dash {
+    0% { stroke-dashoffset: 12; }
+    100% { stroke-dashoffset: 0; }
+  }
+
+  .flow-connector {
+    stroke-dasharray: 6 3;
+    animation: flow-dash 1s linear infinite;
+  }
+
+  /* ── Comparison table featured column ── */
+  .comparison-featured {
+    position: relative;
+  }
+
+  .comparison-featured::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.2) 0%,
+      rgba(255, 255, 255, 0.05) 100%
+    );
+    -webkit-mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* ── Horizontal scroll container (mobile) ── */
+  .scroll-x-snap {
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .scroll-x-snap > * {
+    scroll-snap-align: start;
+  }
+
+  /* ── Use case card expand transition ── */
+  .use-case-card {
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .use-case-card:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  /* ── Connector card subtle brand glow on hover ── */
+  .connector-card {
+    transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .connector-card:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.12);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  }
+
+  /* ── Animated check icon ── */
+  @keyframes check-pop {
+    0% { transform: scale(0); opacity: 0; }
+    60% { transform: scale(1.2); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  .check-animated {
+    animation: check-pop 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
 }

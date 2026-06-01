@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -115,6 +115,7 @@ function hrefForSavedView(view: PinnedView) {
 
 export function Leftnav() {
   const pathname = usePathname();
+  const router = useRouter();
   const recentWork = useQuery(api.directives.getRecentDirectives);
   const recentChats = useQuery(api.chat.getSessions);
   const pinnedViews = useQuery(api.items.listSavedViews, { pinnedOnly: true }) as PinnedView[] | undefined;
@@ -147,28 +148,37 @@ export function Leftnav() {
   const recents: RecentItem[] | undefined =
     recentWork === undefined || recentChats === undefined
       ? undefined
-      : [
-          ...recentChats.map((chat) => ({
-            id: chat._id,
-            title: chat.title,
-            href: `/?session=${chat._id}`,
-            kind: "Chat" as const,
-            timestamp: chat.lastMessageAt,
-          })),
-          ...recentWork.map((work) => {
-            const sessionId = work.sessionId as Id<"chatSessions"> | undefined;
-            return {
-              id: work._id,
-              title: work.title,
-              href: sessionId ? `/?session=${sessionId}&task=${work._id}` : `/?task=${work._id}`,
-              kind: "Task" as const,
-              timestamp: work._creationTime,
-              status: work.status,
-            };
-          }),
-        ]
-          .sort((a, b) => b.timestamp - a.timestamp)
-          .slice(0, 12);
+      : (() => {
+          const taskSessionIds = new Set(
+            recentWork
+              .filter((work) => work.sessionId)
+              .map((work) => work.sessionId as string)
+          );
+          return [
+            ...recentChats
+              .filter((chat) => !taskSessionIds.has(chat._id))
+              .map((chat) => ({
+                id: chat._id,
+                title: displayTitle(chat.title),
+                href: `/?session=${chat._id}`,
+                kind: "Chat" as const,
+                timestamp: chat.lastMessageAt,
+              })),
+            ...recentWork.map((work) => {
+              const sessionId = work.sessionId as Id<"chatSessions"> | undefined;
+              return {
+                id: work._id,
+                title: work.title,
+                href: sessionId ? `/?session=${sessionId}&task=${work._id}` : `/?task=${work._id}`,
+                kind: "Task" as const,
+                timestamp: work._creationTime,
+                status: work.status,
+              };
+            }),
+          ]
+            .sort((a, b) => b.timestamp - a.timestamp)
+            .slice(0, 12);
+        })();
 
   return (
     <nav className="z-20 flex w-full shrink-0 flex-col border-b border-black/[0.06] bg-white py-3 lg:h-full lg:w-64 lg:border-b-0 lg:border-r lg:py-6">
@@ -268,7 +278,13 @@ export function Leftnav() {
                     {item.kind === "Task" && canStopTask(item.status) && (
                       <button
                         type="button"
-                        onClick={() => void stopTask({ directiveId: item.id as Id<"directives"> })}
+                        onClick={() => {
+                          void stopTask({ directiveId: item.id as Id<"directives"> }).catch(() => {});
+                          const currentPath = window.location.pathname + window.location.search;
+                          if (currentPath.includes(item.id)) {
+                            router.replace("/");
+                          }
+                        }}
                         className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted hover:bg-black/[0.05] hover:text-text-primary"
                         aria-label="Stop task"
                       >
@@ -279,9 +295,13 @@ export function Leftnav() {
                       type="button"
                       onClick={() => {
                         if (item.kind === "Chat") {
-                          void deleteChat({ sessionId: item.id as Id<"chatSessions"> });
+                          void deleteChat({ sessionId: item.id as Id<"chatSessions"> }).catch(() => {});
                         } else {
-                          void deleteTask({ directiveId: item.id as Id<"directives"> });
+                          void deleteTask({ directiveId: item.id as Id<"directives"> }).catch(() => {});
+                        }
+                        const currentPath = window.location.pathname + window.location.search;
+                        if (currentPath.includes(item.id)) {
+                          router.replace("/");
                         }
                       }}
                       className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted hover:bg-red-50 hover:text-red-600"
@@ -326,7 +346,7 @@ export function Leftnav() {
                     } catch (e) {
                       console.error("Sign out error", e);
                     }
-                    window.location.reload();
+                    router.replace("/");
                   }}
                   className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-semibold text-red-600 hover:bg-red-50 transition duration-150"
                 >

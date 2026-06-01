@@ -83,6 +83,22 @@ export const remove = mutation({
   },
 });
 
+export const deleteAccount = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const current = await requireCurrentUser(ctx);
+    await ctx.db.delete(current.user._id);
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "user.deleted_account",
+      resourceType: "user",
+      resourceId: String(current.user._id),
+      summary: "Account deleted.",
+    });
+  },
+});
+
 export const updateProfile = mutation({
   args: {
     name: v.string(),

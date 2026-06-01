@@ -4,13 +4,17 @@ import { useState, useEffect } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { ConnectedServicesSettings } from "@/components/settings/connected-services-settings";
-import { Mail, Save, User, Camera, Building } from "lucide-react";
+import { Mail, Save, User, Camera, Building, Trash2, X } from "lucide-react";
+import { authClient } from "@/lib/auth-client";
+import { useRouter } from "next/navigation";
 
 export default function SettingsPage() {
   const user = useQuery(api.users.current);
   const workspaces = useQuery(api.workspaces.get);
   const updateProfile = useMutation(api.users.updateProfile);
   const updateWorkspace = useMutation(api.workspaces.updateDetails);
+  const deleteAccount = useMutation(api.users.deleteAccount);
+  const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
@@ -18,6 +22,8 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const workspace = workspaces?.[0];
   const loading = user === undefined || workspaces === undefined;
 
@@ -80,6 +86,19 @@ export default function SettingsPage() {
       </div>
     );
   }
+
+  const handleDeleteAccount = async () => {
+    setDeleting(true);
+    try {
+      await deleteAccount({});
+      await authClient.signOut();
+      router.replace("/");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete account.");
+      setShowDeleteModal(false);
+      setDeleting(false);
+    }
+  };
 
   return (
     <div className="min-h-full px-8 py-7">
@@ -222,6 +241,60 @@ export default function SettingsPage() {
         </div>
 
         <ConnectedServicesSettings />
+
+        <div className="max-w-2xl mt-12">
+          <div className="rounded-lg border border-red-200 bg-red-50/50 p-6">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-red-700">Danger Zone</h3>
+            <p className="mt-1 text-sm text-red-600/80">
+              This removes your FounderOS profile from the current workspace. Workspace history may remain for audit and team continuity.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowDeleteModal(true)}
+              className="mt-4 inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-4 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50 active:scale-[0.98] transition cursor-pointer"
+            >
+              <Trash2 size={15} />
+              Delete Account
+            </button>
+          </div>
+        </div>
+
+        {showDeleteModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-zinc-950/30 backdrop-blur-sm p-4">
+            <div className="w-full max-w-md rounded-lg border border-red-200 bg-white shadow-xl">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200">
+                <h2 className="text-lg font-semibold tracking-tight text-black">Delete Account</h2>
+                <button
+                  onClick={() => setShowDeleteModal(false)}
+                  className="p-1.5 text-zinc-400 rounded-sm hover:text-black hover:bg-zinc-100 transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="px-6 py-5">
+                <p className="text-sm text-zinc-600 leading-relaxed">
+                  This will remove your FounderOS profile from this workspace. Existing workspace records may remain for audit and team continuity.
+                </p>
+              </div>
+              <div className="px-6 py-4 border-t border-zinc-200 flex justify-end gap-3">
+                <button
+                  onClick={() => setShowDeleteModal(false)}
+                  disabled={deleting}
+                  className="px-5 py-2.5 text-sm font-semibold text-zinc-600 bg-white border border-zinc-200 hover:text-black hover:bg-zinc-50 transition-colors rounded-lg disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteAccount}
+                  disabled={deleting}
+                  className="px-5 py-2.5 text-sm font-semibold text-white bg-red-600 hover:bg-red-700 transition-colors rounded-lg shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {deleting ? "Deleting..." : "Delete Account"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

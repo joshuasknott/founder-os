@@ -1139,6 +1139,22 @@ function cleanHostSetting(value: unknown) {
   }
 }
 
+function cleanOpenCodeAttachUrl(value: unknown) {
+  const cleaned = cleanSettingString(value, 240);
+  if (!cleaned) return undefined;
+  try {
+    const url = new URL(/^https?:\/\//i.test(cleaned) ? cleaned : `http://${cleaned}`);
+    const hostname = url.hostname.toLowerCase();
+    const isLocalHttp =
+      url.protocol === "http:" &&
+      (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1");
+    if (url.protocol !== "https:" && !isLocalHttp) return undefined;
+    return url.origin.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
 function cleanIdSetting(value: unknown, maxLength = 120) {
   const cleaned = cleanSettingString(value, maxLength);
   if (!cleaned) return undefined;
@@ -1254,7 +1270,7 @@ export function sanitizeOpenCodeConnectionSettings(settings?: unknown): OpenCode
     modelMedium: cleanSettingString(source.modelMedium, 120),
     modelHigh: cleanSettingString(source.modelHigh, 120),
     agent: cleanSettingString(source.agent, 120),
-    attachUrl: cleanHostSetting(source.attachUrl),
+    attachUrl: cleanOpenCodeAttachUrl(source.attachUrl),
   };
 }
 
@@ -1660,7 +1676,10 @@ function base64ToBytes(value: string) {
 
 async function connectorEncryptionKey(keyMaterial?: string) {
   const encoder = new TextEncoder();
-  const material = keyMaterial ?? process.env.CONNECTOR_SECRET_ENCRYPTION_KEY ?? "founderos-local-dev-connector-key";
+  const material = keyMaterial ?? process.env.CONNECTOR_SECRET_ENCRYPTION_KEY;
+  if (!material) {
+    throw new Error("CONNECTOR_SECRET_ENCRYPTION_KEY must be set. Add it to your environment variables.");
+  }
   const digest = await crypto.subtle.digest("SHA-256", encoder.encode(material));
   return crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
 }

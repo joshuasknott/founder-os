@@ -25,6 +25,20 @@ import {
 
 type PromptMode = "chat" | "task";
 type ModelProfile = "auto" | "low" | "medium" | "high";
+type OpenCodeSafeSettings = {
+  command?: string;
+  model?: string;
+  modelLow?: string;
+  modelMedium?: string;
+  modelHigh?: string;
+  agent?: string;
+  attachUrl?: string;
+};
+type ConnectorService = {
+  id: string;
+  status: string;
+  safeSettings?: OpenCodeSafeSettings;
+};
 
 const modelProfileOptions: Array<{ id: ModelProfile; label: string; helper: string }> = [
   { id: "auto", label: "Auto", helper: "FounderOS routes this for you" },
@@ -32,6 +46,15 @@ const modelProfileOptions: Array<{ id: ModelProfile; label: string; helper: stri
   { id: "medium", label: "Medium", helper: "Balanced planning and drafting" },
   { id: "high", label: "High", helper: "Harder reasoning or build work" },
 ];
+
+function openCodeModelForProfile(settings: OpenCodeSafeSettings | undefined, profile: ModelProfile) {
+  if (profile === "auto") return undefined;
+  const profileModel =
+    profile === "low" ? settings?.modelLow :
+    profile === "medium" ? settings?.modelMedium :
+    settings?.modelHigh;
+  return profileModel || settings?.model || undefined;
+}
 
 type ChatMessageCard = {
   type: "task_result" | "item_navigation";
@@ -174,6 +197,11 @@ function HomePageContent() {
   const taskParam = searchParams.get("task") as Id<"directives"> | null;
 
   const overview = useQuery(api.commandCenter.getOverview);
+  const workspaceId = overview?.workspace?._id as Id<"workspaces"> | undefined;
+  const connectorServices = useQuery(
+    api.connectors.listForWorkspace,
+    workspaceId ? { workspaceId } : "skip",
+  ) as ConnectorService[] | undefined;
   const isSeeded = useQuery(api.init.isSeeded);
   const agents = useQuery(api.swarm.getAllAgents);
   const messages = useQuery(
@@ -188,6 +216,8 @@ function HomePageContent() {
 
   const createSession = useMutation(api.chat.createSession);
   const sendMessage = useAction(api.chat.sendMessage);
+  const prepareLocalOpenCodeChat = useAction(api.chat.prepareLocalOpenCodeChat);
+  const completeLocalOpenCodeChat = useMutation(api.chat.completeLocalOpenCodeChat);
   const createTask = useMutation(api.directives.createDirective);
   const addClarification = useMutation(api.directives.addClarification);
   const approve = useMutation(api.approvals.approve);
@@ -201,12 +231,13 @@ function HomePageContent() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const trimmedInput = input.trim();
+  const openCodeService = connectorServices?.find((service) => service.id === "opencode");
   const searchPreview = useQuery(
     api.search.globalSearch,
     trimmedInput.length >= 2 ? { query: trimmedInput, limit: 12 } : "skip",
   ) as GlobalSearchData | undefined;
 
-  const hasConversation = Boolean(messages?.length);
+  const hasConversation = Boolean(messages?.length) || Boolean(taskParam && workRuns?.length);
 
   useEffect(() => {
     if (!sessionParam && !taskParam) {
@@ -335,6 +366,38 @@ function HomePageContent() {
 
       if (mode === "chat") {
         if (!defaultWorker) throw new Error("FounderOS is still preparing your AI workers.");
+        if (openCodeService?.status === "connected") {
+          const prepared = await prepareLocalOpenCodeChat({
+            sessionId,
+            agentId: defaultWorker._id,
+            content: trimmed,
+            modelProfile,
+          });
+          const response = await fetch("/api/local/opencode/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              command: openCodeService.safeSettings?.command ?? "opencode",
+              model: openCodeModelForProfile(openCodeService.safeSettings, modelProfile),
+              agent: openCodeService.safeSettings?.agent,
+              attachUrl: openCodeService.safeSettings?.attachUrl,
+              systemPrompt: prepared.systemPrompt,
+              userPrompt: prepared.userPrompt,
+            }),
+          });
+          const result = await response.json() as { ok?: boolean; content?: string; safeMessage?: string };
+          if (!result.ok || !result.content) {
+            throw new Error(result.safeMessage ?? "OpenCode is not responding locally.");
+          }
+          await completeLocalOpenCodeChat({
+            sessionId,
+            agentId: defaultWorker._id,
+            userContent: trimmed,
+            assistantContent: result.content,
+          });
+          router.replace(`/?session=${sessionId}`);
+          return;
+        }
         await sendMessage({
           sessionId,
           agentId: defaultWorker._id,
@@ -365,11 +428,14 @@ function HomePageContent() {
   }, [
     createTask,
     defaultWorker,
+    completeLocalOpenCodeChat,
     ensureConversation,
     input,
     isSending,
     modelProfile,
     mode,
+    openCodeService,
+    prepareLocalOpenCodeChat,
     router,
     sendMessage,
   ]);
@@ -384,14 +450,18 @@ function HomePageContent() {
     setNotice("Changes requested. FounderOS will prepare a new review version.");
   }, [addClarification, sessionParam, taskParam]);
 
-  const isLoading = overview === undefined || isSeeded === undefined || agents === undefined;
+  const isLoading =
+    overview === undefined ||
+    isSeeded === undefined ||
+    agents === undefined ||
+    Boolean(workspaceId && connectorServices === undefined);
 
   if (isLoading) {
     return <HomeLoader />;
   }
 
   /* ── Empty state: prompt centered vertically ── */
-  if (!hasConversation) {
+  if (!hasConversation && !(taskParam && workRuns?.length)) {
     return (
       <div className="flex min-h-full flex-col items-center justify-center px-4 sm:px-8">
         <div className="w-full max-w-3xl">
@@ -835,7 +905,7 @@ function ConversationPanel({ messages }: { messages: Message[] }) {
                   {message.agentName ?? "FounderOS"}
                 </p>
               )}
-              <div className="whitespace-pre-wrap">{cleanDisplayText(message.content)}</div>
+              <div className="whitespace-pre-wrap">{isUser ? message.content : cleanDisplayText(message.content)}</div>
               {!isUser && message.card && <MessageCard card={message.card} />}
             </div>
             {isUser && (

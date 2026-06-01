@@ -7,12 +7,15 @@ import {
   siGoogledocs,
   siGoogledrive,
   siGooglesheets,
+  siNotion,
   siPosthog,
   siResend,
   siStripe,
   siVercel,
   type SimpleIcon,
 } from "simple-icons";
+
+import { SlackIcon as SlackIconComponent } from "./brand-icons";
 
 type ConnectorBrandIconProps = {
   id: string;
@@ -30,6 +33,7 @@ const brandIcons: Record<string, SimpleIcon> = {
   vercel: siVercel,
   posthog: siPosthog,
   resend: siResend,
+  notion: siNotion,
 };
 
 function SimpleBrandIcon({ icon, className }: { icon: SimpleIcon; className: string }) {
@@ -68,6 +72,7 @@ function CanvaIcon({ className }: { className: string }) {
 export function ConnectorBrandIcon({ id, className = "h-6 w-6" }: ConnectorBrandIconProps) {
   if (id === "opencode") return <OpenCodeIcon className={className} />;
   if (id === "canva") return <CanvaIcon className={className} />;
+  if (id === "slack") return <SlackIconComponent className={className} />;
 
   const icon = brandIcons[id];
   if (icon) return <SimpleBrandIcon icon={icon} className={className} />;

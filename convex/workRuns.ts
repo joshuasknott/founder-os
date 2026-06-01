@@ -638,6 +638,11 @@ export const leaseNext = mutation({
       });
     }
 
+    const directive = await ctx.db.get(candidate.directiveId);
+    if (directive && directive.status === "pending_spec") {
+      await ctx.db.patch(candidate.directiveId, { status: "in_progress" });
+    }
+
     await ctx.db.insert("workRunUpdates", {
       runId: candidate._id,
       message:
@@ -719,10 +724,10 @@ export const markWorking = mutation({
     await recordAuditEvent(ctx, {
       ...workerActor(run.leaseOwner),
       workspaceId: run.workspaceId,
-      action: "work_run.needs_review",
+      action: "work_run.working",
       resourceType: "workRun",
       resourceId: String(args.runId),
-      summary: `Ready for review: ${run.title}.`,
+      summary: `Working on: ${run.title}.`,
     });
 
     return args.runId;
@@ -747,7 +752,7 @@ export const markNeedsReview = mutation({
     await ctx.db.patch(args.runId, finishRunPatch("needs_review", now));
     if (run.taskId) {
       await ctx.db.patch(run.taskId, {
-        status: "shadow_pending",
+        status: "blocked",
         updatedAt: now,
       });
     }
@@ -804,7 +809,7 @@ export const markNeedsReviewWithResult = mutation({
     });
     if (run.taskId) {
       await ctx.db.patch(run.taskId, {
-        status: "shadow_pending",
+        status: "blocked",
         outputItemId: output?.itemId,
         outputDocumentId: output?.documentId,
         updatedAt: now,
@@ -896,6 +901,18 @@ export const markCompleted = mutation({
       });
     }
 
+    const directive = await ctx.db.get(run.directiveId);
+    if (directive && directive.status !== "completed") {
+      const allTasks = await ctx.db
+        .query("tasks")
+        .withIndex("by_directive", (q) => q.eq("directiveId", run.directiveId))
+        .collect();
+      const allDone = allTasks.every(t => t.status === "completed" || t.status === "failed");
+      if (allDone) {
+        await ctx.db.patch(run.directiveId, { status: "completed" });
+      }
+    }
+
     await recordAuditEvent(ctx, {
       ...workerActor(run.leaseOwner),
       workspaceId: run.workspaceId,
@@ -961,6 +978,18 @@ export const completeWithResult = mutation({
       });
     }
 
+    const directive = await ctx.db.get(run.directiveId);
+    if (directive && directive.status !== "completed") {
+      const allTasks = await ctx.db
+        .query("tasks")
+        .withIndex("by_directive", (q) => q.eq("directiveId", run.directiveId))
+        .collect();
+      const allDone = allTasks.every(t => t.status === "completed" || t.status === "failed");
+      if (allDone) {
+        await ctx.db.patch(run.directiveId, { status: "completed" });
+      }
+    }
+
     await recordAuditEvent(ctx, {
       ...workerActor(run.leaseOwner),
       workspaceId: run.workspaceId,
@@ -1012,6 +1041,21 @@ export const markFailed = mutation({
         updatedAt: now,
       });
     }
+
+    if (!failure.retryScheduled) {
+      const directive = await ctx.db.get(run.directiveId);
+      if (directive && directive.status !== "completed" && directive.status !== "blocked") {
+        const allTasks = await ctx.db
+          .query("tasks")
+          .withIndex("by_directive", (q) => q.eq("directiveId", run.directiveId))
+          .collect();
+        const allTerminal = allTasks.every(t => t.status === "completed" || t.status === "failed");
+        if (allTerminal) {
+          await ctx.db.patch(run.directiveId, { status: "blocked" });
+        }
+      }
+    }
+
     await ctx.db.insert("workRunUpdates", {
       runId: args.runId,
       message: failure.updateMessage,
@@ -1057,6 +1101,10 @@ export const stop = mutation({
         status: "blocked",
         updatedAt: now,
       });
+    }
+    const directive = await ctx.db.get(run.directiveId);
+    if (directive && (directive.status === "in_progress" || directive.status === "pending_spec")) {
+      await ctx.db.patch(run.directiveId, { status: "blocked" });
     }
     await ctx.db.insert("workRunUpdates", {
       runId: args.runId,

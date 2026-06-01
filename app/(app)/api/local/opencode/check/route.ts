@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { NextRequest, NextResponse } from "next/server";
+import { serverAuth } from "@/lib/auth-server";
 
 export const runtime = "nodejs";
 
@@ -24,6 +25,12 @@ function commandParts(commandValue: unknown) {
   }
 
   const parts = raw.match(/"[^"]+"|\S+/g)?.map((part) => part.replace(/^"|"$/g, "")) ?? [];
+  const executableName = (parts[0] || "opencode").split(/[\\/]/).pop()?.toLowerCase();
+  const allowedExecutables = new Set(["opencode", "opencode.exe", "opencode.cmd", "opencode.ps1"]);
+  if (!executableName || !allowedExecutables.has(executableName)) {
+    throw new Error("Use the OpenCode command for this local connector.");
+  }
+
   return {
     command: parts[0] || "opencode",
     args: [...parts.slice(1), "--version"],
@@ -55,6 +62,10 @@ function checkOpenCode(commandValue: unknown) {
 }
 
 export async function POST(request: NextRequest) {
+  if (!(await serverAuth.isAuthenticated())) {
+    return NextResponse.json({ ok: false, safeMessage: "Sign in to continue." }, { status: 401 });
+  }
+
   let body: { command?: unknown } = {};
   try {
     body = await request.json();

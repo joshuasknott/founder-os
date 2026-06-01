@@ -450,7 +450,7 @@ export function approvalDecisionRunPatch(decision: ApprovalDecision, now: number
 }
 
 export function approvalDecisionTaskStatus(decision: ApprovalDecision) {
-  return decision === "approved" ? ("queued" as const) : ("shadow_pending" as const);
+  return decision === "approved" ? ("queued" as const) : ("blocked" as const);
 }
 
 export function approvalDecisionPatch(args: {
@@ -535,7 +535,9 @@ export function leaseIsValid(
     now: number;
   },
 ) {
-  if (!args.leaseId) return true;
+  if (!args.leaseId) {
+    return typeof run.leaseId !== "string";
+  }
   return run.leaseId === args.leaseId && typeof run.leaseExpiresAt === "number" && run.leaseExpiresAt > args.now;
 }
 

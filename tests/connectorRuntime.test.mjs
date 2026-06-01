@@ -420,6 +420,16 @@ test("opencode managed setup runs builder work without storing provider keys", (
     grantedScopes: ["opencode.run"],
     settings: { command: "opencode", model: "openrouter/deepseek/deepseek-chat" },
   };
+  const localSettings = runtime.sanitizeOpenCodeConnectionSettings({
+    command: "opencode",
+    attachUrl: "http://localhost:4096",
+  });
+  assert.equal(localSettings.attachUrl, "http://localhost:4096");
+  assert.equal(
+    runtime.sanitizeOpenCodeConnectionSettings({ attachUrl: "http://example.com" }).attachUrl,
+    undefined,
+  );
+
   const status = runtime.testConnectorConnection(runtime.getConnectorDefinition("opencode"), connection);
   assert.equal(status.status, "connected");
   assert.equal(status.healthy, true);

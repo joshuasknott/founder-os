@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { Loader2, ShieldAlert } from "lucide-react";
 
 export function LoginCard() {
+  const router = useRouter();
   const [mode, setMode] = useState<"signIn" | "signUp">("signIn");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -32,7 +34,7 @@ export function LoginCard() {
 
       if (error) throw error;
 
-      window.location.reload();
+      router.replace("/");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to sign in.";
       setErrorStatus(message);

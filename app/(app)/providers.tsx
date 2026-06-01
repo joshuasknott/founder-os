@@ -31,7 +31,7 @@ function AuthGate({ children }: { children: ReactNode }) {
   const [authTimedOut, setAuthTimedOut] = useState(false);
   const seedingSessionRef = useRef<string | null>(null);
   const session = liveSession?.session ? liveSession : stableSession;
-  const sessionId = session?.session.id;
+  const sessionId = liveSession?.session?.id ?? stableSession?.session?.id;
   const shouldLoadWorkspace = Boolean(sessionId && seededSessionId === sessionId);
   const currentUser = useQuery(api.users.current, shouldLoadWorkspace ? {} : "skip");
   const workspaces = useQuery(api.workspaces.get, shouldLoadWorkspace ? {} : "skip");
@@ -40,13 +40,17 @@ function AuthGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       if (liveSession?.session) {
-        setStableSession(liveSession);
+        const liveId = liveSession.session.id;
+        const stableId = stableSession?.session?.id;
+        if (liveId !== stableId) {
+          setStableSession(liveSession);
+        }
         return;
       }
       if (!isPending) setStableSession(null);
     }, 0);
     return () => window.clearTimeout(timeout);
-  }, [isPending, liveSession]);
+  }, [isPending, liveSession, liveSession?.session?.id, stableSession?.session?.id]);
 
   useEffect(() => {
     if (!isPending) {

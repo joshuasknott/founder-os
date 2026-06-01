@@ -1,9 +1,82 @@
 import { query, mutation, action, internalMutation, internalQuery } from "./_generated/server";
+import type { ActionCtx } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
 import { api, internal } from "./_generated/api";
 import { v } from "convex/values";
 import { actorFromIdentity, ensureDocWorkspace, requireCurrentUser } from "./authz";
 import { recordAuditEvent } from "./audit";
 import { tierForModelProfile } from "./modelProfiles";
+
+type ReadOnlyChatPrompt = {
+  agent: Doc<"agents">;
+  systemPrompt: string;
+  tier: number;
+};
+
+async function buildReadOnlyChatPrompt(ctx: ActionCtx, args: {
+  sessionId: Id<"chatSessions">;
+  agentId: Id<"agents">;
+  content: string;
+  modelProfile?: string;
+}): Promise<ReadOnlyChatPrompt> {
+  const authorization = await ctx.runQuery(internal.chat.authorizeSessionForAction, {
+    sessionId: args.sessionId,
+    agentId: args.agentId,
+  }) as { workspaceId: Id<"workspaces"> };
+
+  const agent = await ctx.runQuery(internal.chat.getAgentById, {
+    agentId: args.agentId,
+  }) as Doc<"agents"> | null;
+
+  if (!agent) throw new Error("Agent not found.");
+
+  const history = await ctx.runQuery(internal.chat.getRecentHistory, {
+    sessionId: args.sessionId,
+  }) as Array<{ role: "user" | "assistant"; content: string }>;
+
+  const historyContext = history
+    .map((message) => `${message.role === "user" ? "Human" : agent.name}: ${message.content}`)
+    .join("\n");
+
+  let libraryContext = "No relevant workspace context found.";
+  try {
+    const context = await ctx.runAction(internal.search.retrieveContext, {
+      queryText: args.content,
+      limit: 8,
+      workspaceId: authorization.workspaceId,
+    });
+    libraryContext = context.text;
+  } catch {
+    libraryContext = "Workspace context is unavailable right now.";
+  }
+
+  let connectorContext = "";
+  try {
+    const context = await ctx.runAction(api.connectors.readGoogleWorkspaceContext, {
+      workspaceId: authorization.workspaceId,
+      queryText: args.content,
+      requestedBy: `chat:${agent.name}`,
+    });
+    connectorContext = context.text && !context.text.startsWith("No matching")
+      ? `\n\n${context.text}`
+      : "";
+  } catch {
+    connectorContext = "";
+  }
+
+  const capabilityToTier: Record<string, number> = {
+    triage: 1, coding: 3, reasoning: 4, "long-context": 3, creative: 2,
+  };
+  const autoTier = capabilityToTier[agent.routingRequest] ?? 1;
+  const tier = tierForModelProfile(args.modelProfile, autoTier);
+  const systemPrompt = `${agent.systemPrompt}\n\nYou are in CHAT MODE. This is a read-only conversation with the founder. Help them understand, plan, and think through problems. You may use read-only connected service context when it is provided, but you cannot execute tasks, create outputs, schedule work, publish, send messages, or make changes in this mode. If the founder wants work performed, help them shape a clear task instead.\n\nRelevant workspace context:\n${libraryContext}${connectorContext}\n\nConversation so far:\n${historyContext}`;
+
+  return {
+    agent,
+    systemPrompt,
+    tier,
+  };
+}
 
 export const createSession = mutation({
   args: {
@@ -67,71 +140,14 @@ export const sendMessage = action({
     modelProfile: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const authorization = await ctx.runQuery(internal.chat.authorizeSessionForAction, {
-      sessionId: args.sessionId,
-      agentId: args.agentId,
-    });
+    const prepared = await buildReadOnlyChatPrompt(ctx, args);
+    const { agent, systemPrompt, tier } = prepared;
 
     await ctx.runMutation(internal.chat.storeMessage, {
       sessionId: args.sessionId,
       role: "user",
       content: args.content,
     });
-
-    const agent = await ctx.runQuery(internal.chat.getAgentById, {
-      agentId: args.agentId,
-    });
-
-    if (!agent) {
-      await ctx.runMutation(internal.chat.storeMessage, {
-        sessionId: args.sessionId,
-        role: "assistant",
-        content: "[Error] Agent not found.",
-        agentName: "System",
-      });
-      return;
-    }
-
-    const history = await ctx.runQuery(internal.chat.getRecentHistory, {
-      sessionId: args.sessionId,
-    });
-
-    const historyContext = history
-      .map((message) => `${message.role === "user" ? "Human" : agent.name}: ${message.content}`)
-      .join("\n");
-
-    let libraryContext = "No relevant workspace context found.";
-    try {
-      const context = await ctx.runAction(internal.search.retrieveContext, {
-        queryText: args.content,
-        limit: 8,
-        workspaceId: authorization.workspaceId,
-      });
-      libraryContext = context.text;
-    } catch {
-      libraryContext = "Workspace context is unavailable right now.";
-    }
-    let connectorContext = "";
-    try {
-      const context = await ctx.runAction(api.connectors.readGoogleWorkspaceContext, {
-        workspaceId: authorization.workspaceId,
-        queryText: args.content,
-        requestedBy: `chat:${agent.name}`,
-      });
-      connectorContext = context.text && !context.text.startsWith("No matching")
-        ? `\n\n${context.text}`
-        : "";
-    } catch {
-      connectorContext = "";
-    }
-
-    const capabilityToTier: Record<string, number> = {
-      triage: 1, coding: 3, reasoning: 4, "long-context": 3, creative: 2,
-    };
-    const autoTier = capabilityToTier[agent.routingRequest] ?? 1;
-    const tier = tierForModelProfile(args.modelProfile, autoTier);
-
-    const systemPrompt = `${agent.systemPrompt}\n\nYou are in CHAT MODE. This is a read-only conversation with the founder. Help them understand, plan, and think through problems. You may use read-only connected service context when it is provided, but you cannot execute tasks, create outputs, schedule work, publish, send messages, or make changes in this mode. If the founder wants work performed, help them shape a clear task instead.\n\nRelevant workspace context:\n${libraryContext}${connectorContext}\n\nConversation so far:\n${historyContext}`;
 
     const { executeChat, safeAIErrorMessage } = await import("./ai");
     let response: string;
@@ -178,6 +194,55 @@ export const sendMessage = action({
     await ctx.runMutation(internal.chat.updateSessionTimestamp, {
       sessionId: args.sessionId,
     });
+  },
+});
+
+export const prepareLocalOpenCodeChat = action({
+  args: {
+    sessionId: v.id("chatSessions"),
+    agentId: v.id("agents"),
+    content: v.string(),
+    modelProfile: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const prepared = await buildReadOnlyChatPrompt(ctx, args);
+    return {
+      systemPrompt: prepared.systemPrompt,
+      userPrompt: args.content,
+      modelProfile: args.modelProfile ?? "auto",
+      agentName: prepared.agent.name,
+      tier: prepared.tier,
+    };
+  },
+});
+
+export const completeLocalOpenCodeChat = mutation({
+  args: {
+    sessionId: v.id("chatSessions"),
+    agentId: v.id("agents"),
+    userContent: v.string(),
+    assistantContent: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
+    const session = ensureDocWorkspace(await ctx.db.get(args.sessionId), current.workspaceId, "Chat");
+    const agent = await ctx.db.get(args.agentId);
+    if (!agent) throw new Error("Agent not found.");
+    const department = await ctx.db.get(agent.departmentId);
+    ensureDocWorkspace(department, current.workspaceId, "Department");
+
+    await ctx.db.insert("chatMessages", {
+      sessionId: session._id,
+      role: "user",
+      content: args.userContent,
+    });
+    await ctx.db.insert("chatMessages", {
+      sessionId: session._id,
+      role: "assistant",
+      content: args.assistantContent,
+      agentName: agent.name,
+    });
+    await ctx.db.patch(session._id, { lastMessageAt: Date.now() });
   },
 });
 
