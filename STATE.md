@@ -10,22 +10,23 @@ Make every visible connector work standalone before combining connectors into la
 
 - Gmail: Google OAuth setup, read-only email context for chat/task context, draft preparation, and approved send through the Gmail API.
 - Google Calendar: Google OAuth setup, read-only calendar context, scheduling suggestions, and approved event creation when the event has an exact date/time.
-- Google Drive: Google OAuth setup and relevant file lookup for chat/task context; Google Docs and Sheets found through Drive include safe content previews when available.
-- Google Docs: Google OAuth setup and safe document preview reads for chat/task context.
-- Google Sheets: Google OAuth setup and safe spreadsheet preview reads for chat/task context.
+- Google Drive: Google OAuth setup and relevant file lookup for chat/task context; Docs and Sheets found through Drive include safe content previews when available.
+- Google Docs: Google OAuth setup, document lookup through Drive, and safe document preview reads for chat/task context.
+- Google Sheets: Google OAuth setup, spreadsheet lookup through Drive, and safe spreadsheet preview reads for chat/task context.
+- GitHub: GitHub App install, repository selection, and provider-backed repository context import into Library when `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` are configured.
 - Stripe: restricted read-only key setup and finance sync into Library/facts. Money-moving actions are blocked by policy.
 - OpenCode: local command setup for product-building work when the local OpenCode environment is configured.
 
 ## Not Live Yet
 
-- GitHub: connection surface exists, but repository import, issue creation, and pull-request creation are not wired to live provider actions yet.
-- Vercel connector card: Settings setup is not the active live path. Builder preview publishing currently uses worker environment variables.
+- GitHub issue creation and pull-request creation: not live yet and explicitly blocked by connector action evaluation.
+- Vercel connector card: Settings setup stores project details only. Builder preview publishing currently uses worker environment variables; Settings connector actions are explicitly not live yet.
 - PostHog, Resend, Canva, Slack, Notion: not exposed as live standalone connectors.
-- Google Drive/Docs/Sheets write/export actions: not live.
+- Google Drive/Docs/Sheets write/export actions: not live and explicitly blocked by connector action evaluation.
 
 ## Agent To-Dos
 
-- Add provider-backed GitHub repository import before making GitHub available in Settings.
+- Add approved GitHub issue and pull-request creation only when they call the GitHub provider end to end.
 - Add a real Google Drive/Docs/Sheets Library import path if full file contents should be saved permanently, not only used as read-only context previews.
 - Add a Settings-driven Vercel path or keep Vercel marked unavailable outside builder environment setup.
 - Add integration tests around `executeConnectorAction` with mocked Google provider calls.
@@ -36,6 +37,7 @@ Make every visible connector work standalone before combining connectors into la
 - Google Workspace connectors require Google OAuth credentials in the environment: `GOOGLE_CONNECTOR_CLIENT_ID` and `GOOGLE_CONNECTOR_CLIENT_SECRET`, or the fallback Google sign-in client variables.
 - Approved Gmail sends require the Google OAuth app to have Gmail send scope and the user to grant it.
 - Approved calendar event creation requires Calendar write scope and an exact event date/time.
+- GitHub repository context import requires a GitHub App installation, chosen repository, `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, and the app to have repository metadata and contents read access.
 - Stripe sync requires `CONNECTOR_SECRET_ENCRYPTION_KEY` and a restricted Stripe key beginning with `rk_test_` or `rk_live_`.
 - OpenCode work requires OpenCode installed/authenticated locally and the builder worker running with the expected local command.
 - Background work requires `CONVEX_URL` or `NEXT_PUBLIC_CONVEX_URL` plus `FOUNDEROS_WORKER_TOKEN` for the relevant worker process.

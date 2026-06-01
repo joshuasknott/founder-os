@@ -119,6 +119,17 @@ Approving should resume the paused work. Denying should decline that step withou
 
 Connectors are implementation details. They are selected by the runtime based on the requested work, available credentials, and approval rules. Settings may show connected services in plain language, but there is no connector marketplace or technical connector-control surface in the founder experience.
 
+Visible connector actions must be honest. A visible action may complete only when it calls the real provider or writes a real local/Library result. If the runtime cannot do that yet, the action should return a plain "not live yet" message or be blocked by connector action evaluation. It must not return a placeholder success.
+
+Current live connector boundary:
+
+- Gmail can read context, prepare drafts, and send only after approval.
+- Google Calendar can read context and create exact approved events.
+- Google Drive, Docs, and Sheets can find relevant files and read safe previews for context. Export and update actions are not live yet and are blocked.
+- GitHub can import selected repository context into Library when the GitHub App installation and app credentials are configured. Issue and pull-request creation are not live yet and are blocked.
+- OpenCode can run private product-building work when local setup is configured.
+- Vercel preview publishing is live through the builder worker environment, not through the Settings connector card. Settings Vercel actions are blocked until wired end to end.
+
 The UI may show:
 
 - task title

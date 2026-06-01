@@ -131,6 +131,16 @@ test("google workspace connectors draft/import freely and gate external actions"
       definition.actions.map((action) => action.type),
       ["import_content", "export_content", "update_external_record"],
     );
+    assert.equal(runtime.evaluateConnectorActionRequest({
+      connectorId,
+      actionType: "export_content",
+      connection: {
+        status: "connected",
+        credentialRef: `vault:${connectorId}`,
+        grantedScopes: definition.requiredScopes,
+      },
+      approvalGranted: true,
+    }).reason, "blocked_by_policy");
   }
 });
 
@@ -138,7 +148,7 @@ test("github and website preview connections keep approval boundaries", () => {
   const githubConnection = {
     status: "connected",
     credentialRef: "vault:github",
-    grantedScopes: ["github.metadata", "github.contents.read", "github.pull_requests.write", "github.issues.write"],
+    grantedScopes: ["github.metadata", "github.contents.read"],
     settings: { installationId: "123", repositoryOwner: "founder", repositoryName: "os" },
   };
   assert.equal(runtime.evaluateConnectorActionRequest({
@@ -153,8 +163,9 @@ test("github and website preview connections keep approval boundaries", () => {
     connection: githubConnection,
     approvalGranted: true,
   });
-  assert.equal(pullRequest.allowed, true);
-  assert.equal(pullRequest.approvalRequired, true);
+  assert.equal(pullRequest.allowed, false);
+  assert.equal(pullRequest.reason, "blocked_by_policy");
+  assert.equal(pullRequest.safeMessage, "GitHub pull requests are not live yet.");
 
   const vercel = runtime.getConnectorDefinition("vercel");
   const vercelSettings = runtime.sanitizeConnectorConnectionSettings("vercel", {
@@ -177,12 +188,13 @@ test("github and website preview connections keep approval boundaries", () => {
     connectorId: "vercel",
     actionType: "create_preview_deployment",
     connection: vercelConnection,
-  }).allowed, true);
+  }).reason, "blocked_by_policy");
   assert.equal(runtime.evaluateConnectorActionRequest({
     connectorId: "vercel",
     actionType: "publish_live_deployment",
     connection: vercelConnection,
-  }).reason, "approval_required");
+    approvalGranted: true,
+  }).reason, "blocked_by_policy");
 });
 
 test("opencode managed setup defaults to local command and hides advanced details", () => {
@@ -279,4 +291,21 @@ test("safe errors strip secrets, responses, URLs, and technical logs", () => {
     runtime.safeConnectorError(new Error("Please reconnect this service.")),
     "Please reconnect this service.",
   );
+});
+
+test("registered connector handlers do not fake unsupported success", async () => {
+  for (const definition of runtime.listConnectorDefinitions()) {
+    for (const action of definition.actions) {
+      if (action.approval === "blocked") continue;
+      const handler = runtime.getConnectorActionHandler(action.handlerKey);
+      assert.equal(typeof handler, "function", `${definition.id}:${action.type} has a handler`);
+      const result = await handler({
+        connectorId: definition.id,
+        actionType: action.type,
+        approved: true,
+      });
+      assert.notEqual(result.status, "completed", `${definition.id}:${action.type} should not report live success from the placeholder handler`);
+      assert.match(result.safeSummary, /not connected to a live provider yet|blocked by policy/);
+    }
+  }
 });

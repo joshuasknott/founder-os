@@ -16,7 +16,6 @@ import {
   listConnectorDefinitions,
   publicConnectionCard,
   publicConnectorDefinition,
-  safeActionSummary,
   safeConnectorError,
   sanitizeConnectorConnectionSettings,
   testConnectorConnection,
@@ -52,6 +51,11 @@ import {
   summarizeGoogleWorkspaceContext,
   type GoogleWorkspaceContext,
 } from "./googleWorkspaceRuntime";
+import {
+  fetchGitHubRepositoryContext,
+  normalizeGitHubRepositorySettings,
+  type GitHubRepositoryImport,
+} from "./githubRuntime";
 
 function storedStatus(status: ConnectorConnectionStatus): Exclude<ConnectorConnectionStatus, "not_connected"> {
   return status === "not_connected" ? "needs_attention" : status;
@@ -181,6 +185,14 @@ const internalConnectors = anyApi.connectors as unknown as {
     connectionId?: string;
     requestedBy?: string;
     dataset: unknown;
+  }, unknown>;
+  persistGitHubRepositoryContext: FunctionReference<"mutation", "internal", {
+    workspaceId: string;
+    connectionId?: string;
+    requestedBy?: string;
+    directiveId?: string;
+    runId?: string;
+    repository: unknown;
   }, unknown>;
   authorizeWorkspaceForAction: FunctionReference<"query", "internal", {
     workspaceId: string;
@@ -381,6 +393,140 @@ async function replaceStripeFactsForItem(
     });
   }
 }
+
+function isGitHubRepositoryImport(value: unknown): value is GitHubRepositoryImport {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const source = value as Record<string, unknown>;
+  return (
+    typeof source.externalId === "string" &&
+    source.externalType === "repository" &&
+    typeof source.title === "string" &&
+    typeof source.summary === "string" &&
+    typeof source.content === "string" &&
+    Array.isArray(source.tags)
+  );
+}
+
+export const persistGitHubRepositoryContext = internalMutation({
+  args: {
+    workspaceId: v.id("workspaces"),
+    connectionId: v.optional(v.id("connectorConnections")),
+    requestedBy: v.optional(v.string()),
+    directiveId: v.optional(v.id("directives")),
+    runId: v.optional(v.id("workRuns")),
+    repository: v.any(),
+  },
+  handler: async (ctx, args) => {
+    if (!isGitHubRepositoryImport(args.repository)) {
+      throw new Error("GitHub did not return repository context.");
+    }
+
+    const now = Date.now();
+    const imported = buildConnectorImport({
+      connectorId: "github",
+      connectorName: "GitHub",
+      externalId: args.repository.externalId,
+      externalType: args.repository.externalType,
+      title: args.repository.title,
+      content: args.repository.content,
+      summary: args.repository.summary,
+      sourceUrl: args.repository.sourceUrl,
+      authorName: args.repository.authorName,
+      kind: "record",
+      format: "markdown",
+      tags: args.repository.tags,
+      sourceName: args.repository.sourceName,
+      externalUpdatedAt: args.repository.externalUpdatedAt,
+      importedAt: now,
+    });
+
+    const metadata = {
+      ...imported.metadata,
+      github: args.repository.metadata,
+    };
+    const existing = (
+      await ctx.db
+        .query("items")
+        .withIndex("by_external", (q) =>
+          q.eq("source", "connector").eq("externalId", imported.externalId),
+        )
+        .collect()
+    ).find((item) => item.workspaceId === args.workspaceId);
+
+    let itemId;
+    let versionId;
+    if (existing) {
+      itemId = existing._id;
+      versionId = await appendItemVersion(ctx, {
+        itemId,
+        title: imported.title,
+        summary: imported.summary,
+        content: imported.content,
+        format: imported.format,
+        sourceUrl: imported.sourceUrl,
+        mimeType: imported.mimeType,
+        createdBy: imported.author,
+        createdAt: now,
+        metadata,
+      });
+      await ctx.db.patch(itemId, {
+        title: imported.title,
+        kind: imported.kind,
+        status: "active",
+        author: imported.author,
+        summary: imported.summary,
+        sourceUrl: imported.sourceUrl,
+        mimeType: imported.mimeType,
+        tags: imported.tags,
+        metadata,
+        traceId: args.directiveId ?? existing.traceId,
+        runId: args.runId ?? existing.runId,
+        updatedAt: now,
+      });
+    } else {
+      const created = await createItemWithVersion(ctx, {
+        workspaceId: args.workspaceId,
+        title: imported.title,
+        kind: imported.kind,
+        status: imported.status,
+        source: imported.source,
+        author: imported.author,
+        summary: imported.summary,
+        content: imported.content,
+        format: imported.format,
+        traceId: args.directiveId,
+        runId: args.runId,
+        sourceUrl: imported.sourceUrl,
+        externalId: imported.externalId,
+        mimeType: imported.mimeType,
+        tags: imported.tags,
+        metadata,
+        createdAt: now,
+      });
+      itemId = created.itemId;
+      versionId = created.versionId;
+    }
+
+    if (args.runId) {
+      await ctx.db.insert("workArtifacts", {
+        runId: args.runId,
+        directiveId: args.directiveId,
+        title: imported.title,
+        kind: "library_item",
+        summary: imported.summary,
+        url: imported.sourceUrl,
+        libraryItemId: itemId,
+        metadata: {
+          connectorId: "github",
+          action: "import_repository_context",
+        },
+        createdAt: now,
+      });
+    }
+
+    return { itemId, versionId, safeSummary: "Repository context is ready in Library." };
+  },
+});
 
 export const listRegistry = query({
   args: {},
@@ -2377,6 +2523,79 @@ async function executeGoogleWorkspaceConnectorAction(args: {
   return null;
 }
 
+async function unsealConnectorCredential(bundle: OAuthCredentialBundle) {
+  const credential = bundle.credential;
+  if (!credential?.encryptedSecret || !credential.encryptionNonce) {
+    throw new Error("Reconnect this service from Settings.");
+  }
+  return await connectorCredentialStorage.unseal({
+    encryptedSecret: credential.encryptedSecret,
+    encryptionNonce: credential.encryptionNonce,
+  });
+}
+
+async function executeGitHubConnectorAction(args: {
+  ctx: ActionCtx;
+  workspaceId: Id<"workspaces">;
+  connectorId: string;
+  actionType: string;
+  bundle: OAuthCredentialBundle;
+  logBase: {
+    workspaceId: Id<"workspaces">;
+    connectionId?: Id<"connectorConnections">;
+    connectorId: string;
+    actionType: string;
+    requestedBy?: string;
+    directiveId?: Id<"directives">;
+    runId?: Id<"workRuns">;
+    approvalId?: Id<"approvalQueue">;
+  };
+}) {
+  if (args.connectorId !== "github" || args.actionType !== "import_repository_context") {
+    return null;
+  }
+
+  const installationId = await unsealConnectorCredential(args.bundle);
+  const settings = args.bundle.connection?.settings && typeof args.bundle.connection.settings === "object" && !Array.isArray(args.bundle.connection.settings)
+    ? args.bundle.connection.settings as Record<string, unknown>
+    : {};
+  const repository = normalizeGitHubRepositorySettings({
+    installationId,
+    repositoryOwner: typeof settings.repositoryOwner === "string" ? settings.repositoryOwner : undefined,
+    repositoryName: typeof settings.repositoryName === "string" ? settings.repositoryName : undefined,
+    organizationName: typeof settings.organizationName === "string" ? settings.organizationName : undefined,
+  });
+  const context = await fetchGitHubRepositoryContext({
+    appId: process.env.GITHUB_APP_ID,
+    privateKey: process.env.GITHUB_APP_PRIVATE_KEY,
+    installationId: repository.installationId,
+    repositoryOwner: repository.owner,
+    repositoryName: repository.name,
+    request: connectorRequest,
+  });
+  const persisted = await args.ctx.runMutation(internalConnectors.persistGitHubRepositoryContext, {
+    workspaceId: args.workspaceId,
+    connectionId: args.logBase.connectionId,
+    requestedBy: args.logBase.requestedBy,
+    directiveId: args.logBase.directiveId,
+    runId: args.logBase.runId,
+    repository: context,
+  }) as { itemId?: unknown; versionId?: unknown; safeSummary?: string };
+
+  return {
+    status: "completed" as const,
+    safeSummary: persisted.safeSummary ?? "Repository context is ready in Library.",
+    externalId: context.externalId,
+    providerUrl: context.sourceUrl,
+    metadata: {
+      itemId: persisted.itemId,
+      versionId: persisted.versionId,
+      defaultBranch: context.metadata.defaultBranch,
+      fileCount: context.metadata.fileCount,
+    },
+  };
+}
+
 export const executeConnectorAction = action({
   args: {
     workspaceId: v.id("workspaces"),
@@ -2441,6 +2660,13 @@ export const executeConnectorAction = action({
         actionType: args.actionType,
         payload: args.actionPayload,
         bundle,
+      }) ?? await executeGitHubConnectorAction({
+        ctx,
+        workspaceId: args.workspaceId,
+        connectorId: args.connectorId,
+        actionType: args.actionType,
+        bundle,
+        logBase,
       });
 
       if (!result) {
@@ -2567,7 +2793,10 @@ export const requestAction = mutation({
             actionType: args.actionType as ConnectorActionType,
             approved: Boolean(args.approvalGranted),
           })
-        : { status: "completed" as const, safeSummary: safeActionSummary(args.actionType) };
+        : {
+            status: "needs_attention" as const,
+            safeSummary: "That service action is not connected to a live provider yet.",
+          };
 
       await ctx.db.insert("connectorActionLogs", {
         workspaceId: args.workspaceId,
