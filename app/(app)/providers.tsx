@@ -2,9 +2,11 @@
 
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
+import { useRouter } from "next/navigation";
 import { ConvexProviderWithClerk } from "convex/react-clerk";
-import { ConvexReactClient, useConvexAuth, useMutation, useQuery } from "convex/react";
+import { ConvexReactClient, useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import type { Doc } from "@/convex/_generated/dataModel";
 import { LoginCard } from "@/components/auth/LoginCard";
 import { OnboardingFlow } from "@/components/auth/OnboardingFlow";
 import { Loader2 } from "lucide-react";
@@ -22,24 +24,33 @@ export default function ConvexClientProvider({ children }: { children: ReactNode
 }
 
 function AuthGate({ children }: { children: ReactNode }) {
+  const router = useRouter();
   const { isLoaded, isSignedIn, sessionId } = useAuth();
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
   const seedWorkspace = useMutation(api.init.seedSwarm);
+  const completeOAuthConnection = useAction(api.connectors.completeOAuthConnection);
+  const completeGitHubAppConnection = useAction(api.connectors.completeGitHubAppConnection);
   const [seededSessionId, setSeededSessionId] = useState<string | null>(null);
   const [seedError, setSeedError] = useState<{ sessionId: string; message: string } | null>(null);
   const [authTimedOut, setAuthTimedOut] = useState(false);
   const [hasPassedGate, setHasPassedGate] = useState(false);
+  const [hasLoadedAccount, setHasLoadedAccount] = useState(false);
+  const [stableCurrentUser, setStableCurrentUser] = useState<Doc<"users"> | null | undefined>(undefined);
+  const [stableWorkspaces, setStableWorkspaces] = useState<Doc<"workspaces">[] | undefined>(undefined);
   const seedingSessionRef = useRef<string | null>(null);
+  const connectorCallbackRef = useRef<string | null>(null);
   const shouldLoadWorkspace = Boolean(isAuthenticated && sessionId && seededSessionId === sessionId);
   const currentUser = useQuery(api.users.current, shouldLoadWorkspace ? {} : "skip");
   const workspaces = useQuery(api.workspaces.get, shouldLoadWorkspace ? {} : "skip");
-  const workspace = workspaces?.[0];
+  const displayedCurrentUser = currentUser ?? stableCurrentUser;
+  const displayedWorkspaces = workspaces ?? stableWorkspaces;
+  const workspace = displayedWorkspaces?.[0];
   const error = seedError && seedError.sessionId === sessionId ? seedError.message : null;
   const isReady = Boolean(isAuthenticated && sessionId && seededSessionId === sessionId);
   const workspaceLoaded = Boolean(
     isReady &&
-    currentUser !== undefined &&
-    workspaces !== undefined &&
+    displayedCurrentUser !== undefined &&
+    displayedWorkspaces !== undefined &&
     (!workspace || workspace.onboardingCompletedAt),
   );
 
@@ -48,6 +59,9 @@ function AuthGate({ children }: { children: ReactNode }) {
       seedingSessionRef.current = null;
       queueMicrotask(() => {
         setHasPassedGate(false);
+        setHasLoadedAccount(false);
+        setStableCurrentUser(undefined);
+        setStableWorkspaces(undefined);
         setSeededSessionId(null);
         setSeedError(null);
       });
@@ -55,14 +69,14 @@ function AuthGate({ children }: { children: ReactNode }) {
   }, [isLoaded, isSignedIn]);
 
   useEffect(() => {
-    const isWaitingForAuth = !isLoaded || (isSignedIn && isConvexAuthLoading);
+    const isWaitingForAuth = !hasLoadedAccount && (!isLoaded || (isSignedIn && isConvexAuthLoading));
     if (!isWaitingForAuth) {
       queueMicrotask(() => setAuthTimedOut(false));
       return;
     }
     const timeout = window.setTimeout(() => setAuthTimedOut(true), 6000);
     return () => window.clearTimeout(timeout);
-  }, [isConvexAuthLoading, isLoaded, isSignedIn]);
+  }, [hasLoadedAccount, isConvexAuthLoading, isLoaded, isSignedIn]);
 
   useEffect(() => {
     if (!isLoaded || !isSignedIn || !isAuthenticated || !sessionId) {
@@ -100,6 +114,39 @@ function AuthGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (workspaceLoaded) queueMicrotask(() => setHasPassedGate(true));
   }, [workspaceLoaded]);
+
+  useEffect(() => {
+    if (!isReady || currentUser === undefined || workspaces === undefined) return;
+    queueMicrotask(() => {
+      setStableCurrentUser(currentUser);
+      setStableWorkspaces(workspaces);
+      setHasLoadedAccount(true);
+    });
+  }, [currentUser, isReady, workspaces]);
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || !isAuthenticated || typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const provider = params.get("connector_provider");
+    const state = params.get("state");
+    const code = params.get("code");
+    const installationId = params.get("installation_id");
+    const callbackKey = `${provider ?? ""}:${state ?? ""}:${code ?? ""}:${installationId ?? ""}`;
+
+    if (!provider || !state || connectorCallbackRef.current === callbackKey) return;
+    if (provider === "google_workspace" && !code) return;
+    if (provider === "github" && !installationId) return;
+    if (provider !== "google_workspace" && provider !== "github") return;
+
+    connectorCallbackRef.current = callbackKey;
+    const finish = provider === "github"
+      ? completeGitHubAppConnection({ state, installationId: installationId! })
+      : completeOAuthConnection({ state, code: code! });
+
+    void finish.finally(() => {
+      router.replace("/");
+    });
+  }, [completeGitHubAppConnection, completeOAuthConnection, isAuthenticated, isLoaded, isSignedIn, router]);
 
   if ((!isLoaded || (isSignedIn && isConvexAuthLoading)) && authTimedOut) {
     return <AuthUnavailable />;
@@ -142,14 +189,14 @@ function AuthGate({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!isReady || currentUser === undefined || workspaces === undefined) {
+  if (!isReady || displayedCurrentUser === undefined || displayedWorkspaces === undefined) {
     return <PreparingWorkspace label={isConvexAuthLoading ? "Checking your account" : "Preparing your workspace"} />;
   }
 
   if (workspace && !workspace.onboardingCompletedAt) {
     return (
       <main className="h-screen w-full overflow-y-auto bg-surface px-4 py-8">
-        <OnboardingFlow user={currentUser} workspace={workspace} />
+        <OnboardingFlow user={displayedCurrentUser} workspace={workspace} />
       </main>
     );
   }

@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useMutation } from "convex/react";
+import { useAction, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Doc } from "@/convex/_generated/dataModel";
-import { Building, Check, Loader2, ShieldCheck, User } from "lucide-react";
+import { Building, Check, ExternalLink, Loader2, ShieldCheck, User } from "lucide-react";
 import { ConnectorBrandIcon } from "@/components/settings/connector-brand-icon";
 import { copyForConnector, onboardingConnectorIds } from "@/components/settings/connector-copy";
 
@@ -16,6 +16,9 @@ type OnboardingFlowProps = {
 export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
   const updateProfile = useMutation(api.users.updateProfile);
   const completeOnboarding = useMutation(api.workspaces.completeOnboarding);
+  const startOAuthConnection = useAction(api.connectors.startOAuthConnection);
+  const startGitHubAppConnection = useAction(api.connectors.startGitHubAppConnection);
+  const setupManagedConnection = useMutation(api.connectors.setupManagedConnection);
   const [name, setName] = useState(user?.name ?? "");
   const [businessName, setBusinessName] = useState(workspace.name);
   const [avatarUrl, setAvatarUrl] = useState(user?.avatarUrl ?? "");
@@ -26,6 +29,11 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
   const [focusedConnectorId, setFocusedConnectorId] = useState(onboardingConnectorIds[0]);
   const selectedConnectorCount = connectorIds.length;
   const focusedConnector = copyForConnector(focusedConnectorId);
+
+  const googleConnectorIds = connectorIds.filter(isGoogleWorkspaceConnector);
+  const willConnectGoogle = googleConnectorIds.length > 0;
+  const willConnectGitHub = connectorIds.includes("github");
+  const willConnectOpenCode = connectorIds.includes("opencode");
 
   useEffect(() => {
     setName(user?.name ?? "");
@@ -55,6 +63,64 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
     );
   };
 
+  const runOpenCodeSetup = async () => {
+    const response = await fetch("/api/local/opencode/check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: "opencode" }),
+    });
+    const result = await response.json() as { ok?: boolean; safeMessage?: string };
+    if (!result.ok) {
+      throw new Error(result.safeMessage ?? "OpenCode is not ready on this computer yet.");
+    }
+    await setupManagedConnection({
+      workspaceId: workspace._id,
+      connectorId: "opencode",
+      settings: { command: "opencode" },
+    });
+  };
+
+  const startSelectedConnections = async () => {
+    if (willConnectOpenCode) {
+      await runOpenCodeSetup();
+    }
+
+    if (willConnectGoogle) {
+      const result = await startOAuthConnection({
+        workspaceId: workspace._id,
+        connectorId: googleConnectorIds[0],
+      });
+      const url = result && typeof result === "object"
+        ? (result as { authorizationUrl?: unknown; safeMessage?: unknown }).authorizationUrl
+        : undefined;
+      if (typeof url === "string" && url) {
+        window.location.assign(url);
+        return true;
+      }
+      const message = result && typeof result === "object"
+        ? (result as { safeMessage?: unknown }).safeMessage
+        : undefined;
+      throw new Error(typeof message === "string" ? message : "Google sign-in setup could not start.");
+    }
+
+    if (willConnectGitHub) {
+      const result = await startGitHubAppConnection({ workspaceId: workspace._id });
+      const url = result && typeof result === "object"
+        ? (result as { installationUrl?: unknown; safeMessage?: unknown }).installationUrl
+        : undefined;
+      if (typeof url === "string" && url) {
+        window.location.assign(url);
+        return true;
+      }
+      const message = result && typeof result === "object"
+        ? (result as { safeMessage?: unknown }).safeMessage
+        : undefined;
+      throw new Error(typeof message === "string" ? message : "GitHub setup could not start.");
+    }
+
+    return false;
+  };
+
   const finish = async () => {
     const cleanName = name.trim();
     const cleanBusinessName = businessName.trim();
@@ -73,8 +139,10 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
         reviewExternalActions,
       });
       if (connectorIds.length > 0) {
-        window.location.assign("/settings?onboarding_connections=1");
+        const redirected = await startSelectedConnections();
+        if (redirected) return;
       }
+      window.location.assign("/");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "FounderOS could not finish setup.");
     } finally {
@@ -89,7 +157,7 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
           <p className="text-[11px] font-bold uppercase tracking-widest text-text-muted">FounderOS setup</p>
           <h1 className="mt-3 text-3xl font-semibold tracking-tight text-text-primary">Set up your workspace.</h1>
           <p className="mt-3 text-sm leading-6 text-text-secondary">
-            Confirm the basics, then choose any services you want to connect first. You can skip this now and adjust everything later in Settings.
+            Confirm the basics, then choose any services you want to connect now. You can skip this and adjust everything later in Settings.
           </p>
           <div className="mt-6 space-y-3 text-sm text-text-secondary">
             <div className="flex items-center gap-2">
@@ -156,7 +224,7 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wider text-text-muted">Optional starting connections</p>
                 <p className="mt-1 text-xs leading-5 text-text-secondary">
-                  Choose the tools you want to connect first. You can skip any of them and change this later in Settings.
+                  Choose the tools you want to connect now. FounderOS will start the real setup flow when you continue.
                 </p>
               </div>
               <span className="text-xs font-semibold text-text-muted">
@@ -234,6 +302,15 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
                 </button>
               </aside>
             </div>
+            {selectedConnectorCount > 0 && (
+              <div className="mt-3 rounded-lg border border-emerald-500/15 bg-emerald-50 px-3 py-3 text-xs leading-5 text-emerald-900">
+                {connectionPlanText({
+                  google: willConnectGoogle,
+                  github: willConnectGitHub,
+                  opencode: willConnectOpenCode,
+                })}
+              </div>
+            )}
           </div>
 
           <label className="mt-5 flex items-start gap-3 rounded-lg border border-black/[0.06] bg-surface px-3 py-3">
@@ -261,11 +338,33 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
               className="inline-flex items-center gap-2 rounded-lg bg-black px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isSaving && <Loader2 size={15} className="animate-spin" />}
-              {selectedConnectorCount > 0 ? "Continue to connections" : "Open FounderOS"}
+              {selectedConnectorCount > 0 && <ExternalLink size={15} />}
+              {selectedConnectorCount > 0 ? "Start selected connections" : "Open FounderOS"}
             </button>
           </div>
         </div>
       </section>
     </div>
   );
+}
+
+function isGoogleWorkspaceConnector(connectorId: string) {
+  return connectorId === "gmail" ||
+    connectorId === "google_calendar" ||
+    connectorId === "google_drive" ||
+    connectorId === "google_docs" ||
+    connectorId === "google_sheets";
+}
+
+function connectionPlanText(args: { google: boolean; github: boolean; opencode: boolean }) {
+  const steps = [
+    args.opencode ? "check OpenCode on this computer" : undefined,
+    args.google ? "open Google sign-in" : undefined,
+    args.github && !args.google ? "open GitHub App install" : undefined,
+    args.github && args.google ? "then finish GitHub from Connections after Google returns" : undefined,
+  ].filter(Boolean);
+
+  return steps.length > 0
+    ? `When you continue, FounderOS will ${steps.join(", ")}.`
+    : "When you continue, FounderOS will save your setup.";
 }
