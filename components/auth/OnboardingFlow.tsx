@@ -1,10 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useAction, useMutation } from "convex/react";
+import { useEffect, useMemo, useState } from "react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import type { Doc } from "@/convex/_generated/dataModel";
-import { Building, Check, ExternalLink, Loader2, ShieldCheck, User } from "lucide-react";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
+import {
+  ArrowRight,
+  Building,
+  CheckCircle2,
+  ExternalLink,
+  Github,
+  Loader2,
+  Plug,
+  RefreshCw,
+  ShieldCheck,
+  User,
+} from "lucide-react";
 import { ConnectorBrandIcon } from "@/components/settings/connector-brand-icon";
 import { copyForConnector, onboardingConnectorIds } from "@/components/settings/connector-copy";
 
@@ -13,33 +24,116 @@ type OnboardingFlowProps = {
   workspace: Doc<"workspaces">;
 };
 
+type ServiceStatus = "not_connected" | "needs_attention" | "connected" | "disabled";
+
+type ServiceCard = {
+  id: string;
+  safeDisplayName: string;
+  description: string;
+  authType: "oauth2" | "api_key" | "webhook" | "github_app" | "managed";
+  status: ServiceStatus;
+  statusMessage: string;
+  healthy: boolean;
+  safeSettings?: {
+    command?: string;
+  };
+  connectionId?: Id<"connectorConnections">;
+};
+
+function isGoogleWorkspaceConnector(connectorId: string) {
+  return connectorId === "gmail" ||
+    connectorId === "google_calendar" ||
+    connectorId === "google_drive" ||
+    connectorId === "google_docs" ||
+    connectorId === "google_sheets";
+}
+
+function statusLabel(status: ServiceStatus, serviceId?: string) {
+  if (status === "connected") return serviceId === "opencode" ? "Configured" : "Connected";
+  if (status === "needs_attention") return "Needs setup";
+  if (status === "disabled") return "Off";
+  return "Not connected";
+}
+
+function statusStyles(status: ServiceStatus) {
+  if (status === "connected") return "border-emerald-500/15 bg-emerald-50 text-emerald-700";
+  if (status === "needs_attention") return "border-amber-500/20 bg-amber-50 text-amber-700";
+  if (status === "disabled") return "border-zinc-200 bg-zinc-50 text-zinc-500";
+  return "border-black/[0.06] bg-black/[0.02] text-text-muted";
+}
+
+function isOAuthService(id: string) {
+  return isGoogleWorkspaceConnector(id);
+}
+
+function primaryActionLabel(service?: ServiceCard) {
+  if (!service) return "Connect";
+  if (service.status === "connected") return "Connected";
+  if (service.id === "github" && service.connectionId) return "Save repository";
+  if (service.id === "github") return "Install GitHub App";
+  if (service.id === "opencode") return "Check local setup";
+  return service.status === "needs_attention" ? "Reconnect" : "Connect";
+}
+
+async function checkOpenCodeLocal(command?: string) {
+  const response = await fetch("/api/local/opencode/check", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ command: command ?? "opencode" }),
+  });
+  return await response.json() as { ok?: boolean; safeMessage?: string };
+}
+
 export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
   const updateProfile = useMutation(api.users.updateProfile);
+  const updateWorkspaceDetails = useMutation(api.workspaces.updateDetails);
   const completeOnboarding = useMutation(api.workspaces.completeOnboarding);
   const startOAuthConnection = useAction(api.connectors.startOAuthConnection);
   const startGitHubAppConnection = useAction(api.connectors.startGitHubAppConnection);
   const setupManagedConnection = useMutation(api.connectors.setupManagedConnection);
+  const selectGitHubRepository = useMutation(api.connectors.selectGitHubRepository);
+  const services = useQuery(api.connectors.listForWorkspace, { workspaceId: workspace._id }) as ServiceCard[] | undefined;
   const [name, setName] = useState(user?.name ?? "");
   const [businessName, setBusinessName] = useState(workspace.name);
   const [avatarUrl, setAvatarUrl] = useState(user?.avatarUrl ?? "");
-  const [connectorIds, setConnectorIds] = useState<string[]>([]);
   const [reviewExternalActions, setReviewExternalActions] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState("");
   const [focusedConnectorId, setFocusedConnectorId] = useState(onboardingConnectorIds[0]);
-  const selectedConnectorCount = connectorIds.length;
-  const focusedConnector = copyForConnector(focusedConnectorId);
+  const [busyServiceId, setBusyServiceId] = useState<string | null>(null);
+  const [isFinishing, setIsFinishing] = useState(false);
+  const [error, setError] = useState("");
 
-  const googleConnectorIds = connectorIds.filter(isGoogleWorkspaceConnector);
-  const willConnectGoogle = googleConnectorIds.length > 0;
-  const willConnectGitHub = connectorIds.includes("github");
-  const willConnectOpenCode = connectorIds.includes("opencode");
+  const onboardingServices = useMemo(() => {
+    if (!services) return undefined;
+    return onboardingConnectorIds
+      .map((id) => services.find((service) => service.id === id))
+      .filter((service): service is ServiceCard => Boolean(service));
+  }, [services]);
+  const focusedService = onboardingServices?.find((service) => service.id === focusedConnectorId) ?? onboardingServices?.[0];
+  const focusedCopy = copyForConnector(focusedService?.id ?? focusedConnectorId);
+  const connectedIds = useMemo(
+    () => onboardingServices?.filter((service) => service.status === "connected").map((service) => service.id) ?? [],
+    [onboardingServices],
+  );
+  const connectedCount = connectedIds.length;
 
   useEffect(() => {
     setName(user?.name ?? "");
     setAvatarUrl(user?.avatarUrl ?? "");
     setBusinessName(workspace.name);
   }, [user, workspace.name]);
+
+  useEffect(() => {
+    if (!onboardingServices || onboardingServices.length === 0) return;
+    const githubNeedsRepository = onboardingServices.find(
+      (service) => service.id === "github" && service.connectionId && service.status === "needs_attention",
+    );
+    const firstOpen = onboardingServices.find((service) => service.status !== "connected");
+    setFocusedConnectorId((current) =>
+      onboardingServices.some((service) => service.id === current)
+        ? current
+        : (githubNeedsRepository ?? firstOpen ?? onboardingServices[0]).id,
+    );
+  }, [onboardingServices]);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -55,109 +149,126 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
     reader.readAsDataURL(file);
   };
 
-  const toggleConnector = (connectorId: string) => {
-    setConnectorIds((current) =>
-      current.includes(connectorId)
-        ? current.filter((id) => id !== connectorId)
-        : [...current, connectorId],
-    );
-  };
-
-  const runOpenCodeSetup = async () => {
-    const response = await fetch("/api/local/opencode/check", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ command: "opencode" }),
-    });
-    const result = await response.json() as { ok?: boolean; safeMessage?: string };
-    if (!result.ok) {
-      throw new Error(result.safeMessage ?? "OpenCode is not ready on this computer yet.");
-    }
-    await setupManagedConnection({
-      workspaceId: workspace._id,
-      connectorId: "opencode",
-      settings: { command: "opencode" },
-    });
-  };
-
-  const startSelectedConnections = async () => {
-    if (willConnectOpenCode) {
-      await runOpenCodeSetup();
-    }
-
-    if (willConnectGoogle) {
-      const result = await startOAuthConnection({
-        workspaceId: workspace._id,
-        connectorId: googleConnectorIds[0],
-      });
-      const url = result && typeof result === "object"
-        ? (result as { authorizationUrl?: unknown; safeMessage?: unknown }).authorizationUrl
-        : undefined;
-      if (typeof url === "string" && url) {
-        window.location.assign(url);
-        return true;
-      }
-      const message = result && typeof result === "object"
-        ? (result as { safeMessage?: unknown }).safeMessage
-        : undefined;
-      throw new Error(typeof message === "string" ? message : "Google sign-in setup could not start.");
-    }
-
-    if (willConnectGitHub) {
-      const result = await startGitHubAppConnection({ workspaceId: workspace._id });
-      const url = result && typeof result === "object"
-        ? (result as { installationUrl?: unknown; safeMessage?: unknown }).installationUrl
-        : undefined;
-      if (typeof url === "string" && url) {
-        window.location.assign(url);
-        return true;
-      }
-      const message = result && typeof result === "object"
-        ? (result as { safeMessage?: unknown }).safeMessage
-        : undefined;
-      throw new Error(typeof message === "string" ? message : "GitHub setup could not start.");
-    }
-
-    return false;
-  };
-
-  const finish = async () => {
+  const saveBasics = async () => {
     const cleanName = name.trim();
     const cleanBusinessName = businessName.trim();
     if (!cleanName || !cleanBusinessName) {
-      setError("Add your name and business name to continue.");
-      return;
+      throw new Error("Add your name and business name to continue.");
     }
-    setIsSaving(true);
+    await updateProfile({ name: cleanName, avatarUrl: avatarUrl.trim() || undefined });
+    await updateWorkspaceDetails({ workspaceId: workspace._id, name: cleanBusinessName });
+  };
+
+  const connectService = async (service: ServiceCard) => {
+    if (service.status === "connected") return;
+    let redirected = false;
+    setBusyServiceId(service.id);
     setError("");
     try {
-      await updateProfile({ name: cleanName, avatarUrl: avatarUrl.trim() || undefined });
+      await saveBasics();
+
+      if (service.id === "opencode") {
+        const check = await checkOpenCodeLocal(service.safeSettings?.command);
+        if (!check.ok) throw new Error(check.safeMessage ?? "OpenCode is not ready on this computer yet.");
+        await setupManagedConnection({
+          workspaceId: workspace._id,
+          connectorId: "opencode",
+          settings: { command: service.safeSettings?.command ?? "opencode" },
+        });
+        return;
+      }
+
+      if (service.id === "github") {
+        const result = await startGitHubAppConnection({ workspaceId: workspace._id });
+        const url = result && typeof result === "object"
+          ? (result as { installationUrl?: unknown; safeMessage?: unknown }).installationUrl
+          : undefined;
+        if (typeof url === "string" && url) {
+          redirected = true;
+          window.location.assign(url);
+          return;
+        }
+        const message = result && typeof result === "object"
+          ? (result as { safeMessage?: unknown }).safeMessage
+          : undefined;
+        throw new Error(typeof message === "string" ? message : "GitHub setup could not start.");
+      }
+
+      if (isOAuthService(service.id)) {
+        const result = await startOAuthConnection({
+          workspaceId: workspace._id,
+          connectorId: service.id,
+          redirectOrigin: window.location.origin,
+        });
+        const url = result && typeof result === "object"
+          ? (result as { authorizationUrl?: unknown; safeMessage?: unknown }).authorizationUrl
+          : undefined;
+        if (typeof url === "string" && url) {
+          redirected = true;
+          window.location.assign(url);
+          return;
+        }
+        const message = result && typeof result === "object"
+          ? (result as { safeMessage?: unknown }).safeMessage
+          : undefined;
+        throw new Error(typeof message === "string" ? message : "Google sign-in setup could not start.");
+      }
+    } catch (connectionError) {
+      setError(connectionError instanceof Error ? connectionError.message : "That connection could not start.");
+    } finally {
+      if (!redirected) setBusyServiceId(null);
+    }
+  };
+
+  const handleGitHubRepositorySubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!focusedService?.connectionId) return;
+    const formData = new FormData(event.currentTarget);
+    setBusyServiceId("github");
+    setError("");
+    try {
+      await saveBasics();
+      await selectGitHubRepository({
+        connectionId: focusedService.connectionId,
+        repositoryOwner: String(formData.get("repositoryOwner") ?? ""),
+        repositoryName: String(formData.get("repositoryName") ?? ""),
+        organizationName: String(formData.get("organizationName") ?? "") || undefined,
+      });
+      event.currentTarget.reset();
+    } catch (repositoryError) {
+      setError(repositoryError instanceof Error ? repositoryError.message : "The repository could not be saved.");
+    } finally {
+      setBusyServiceId(null);
+    }
+  };
+
+  const finish = async () => {
+    setIsFinishing(true);
+    setError("");
+    try {
+      await saveBasics();
       await completeOnboarding({
         workspaceId: workspace._id,
-        name: cleanBusinessName,
-        connectorIds,
+        name: businessName.trim(),
+        connectorIds: connectedIds,
         reviewExternalActions,
       });
-      if (connectorIds.length > 0) {
-        const redirected = await startSelectedConnections();
-        if (redirected) return;
-      }
       window.location.assign("/");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "FounderOS could not finish setup.");
     } finally {
-      setIsSaving(false);
+      setIsFinishing(false);
     }
   };
 
   return (
-    <div className="mx-auto flex min-h-full max-w-5xl items-center">
-      <section className="grid w-full overflow-hidden rounded-lg border border-black/[0.06] bg-white shadow-sm lg:grid-cols-[360px_1fr]">
+    <div className="mx-auto flex min-h-full max-w-6xl items-center">
+      <section className="grid w-full overflow-hidden rounded-lg border border-black/[0.06] bg-white shadow-sm lg:grid-cols-[340px_1fr]">
         <div className="border-b border-black/[0.06] bg-surface p-6 lg:border-b-0 lg:border-r">
           <p className="text-[11px] font-bold uppercase tracking-widest text-text-muted">FounderOS setup</p>
           <h1 className="mt-3 text-3xl font-semibold tracking-tight text-text-primary">Set up your workspace.</h1>
           <p className="mt-3 text-sm leading-6 text-text-secondary">
-            Confirm the basics, then choose any services you want to connect now. You can skip this and adjust everything later in Settings.
+            Confirm the basics, then connect any services you want FounderOS to use now. Each connection starts from its own card.
           </p>
           <div className="mt-6 space-y-3 text-sm text-text-secondary">
             <div className="flex items-center gap-2">
@@ -170,7 +281,7 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
             </div>
             <div className="flex items-center gap-2">
               <ShieldCheck size={16} className="text-text-muted" />
-              <span>Optional connections and review rules</span>
+              <span>Connected services and approval rules</span>
             </div>
           </div>
         </div>
@@ -222,95 +333,141 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
           <div className="mt-6">
             <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-text-muted">Optional starting connections</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-text-muted">Connections</p>
                 <p className="mt-1 text-xs leading-5 text-text-secondary">
-                  Choose the tools you want to connect now. FounderOS will start the real setup flow when you continue.
+                  Open a card to see what it can do, then connect it before moving to the next one.
                 </p>
               </div>
               <span className="text-xs font-semibold text-text-muted">
-                {selectedConnectorCount === 0 ? "None selected" : `${selectedConnectorCount} selected`}
+                {connectedCount === 0 ? "No services connected" : `${connectedCount} connected`}
               </span>
             </div>
-            <div className="mt-3 grid gap-4 lg:grid-cols-[1fr_260px]">
+
+            <div className="mt-3 grid gap-4 lg:grid-cols-[1fr_300px]">
               <div className="grid gap-3 sm:grid-cols-2">
-                {onboardingConnectorIds.map((connectorId) => {
-                const connection = copyForConnector(connectorId);
-                const active = connectorIds.includes(connectorId);
-                const focused = focusedConnectorId === connectorId;
-                return (
-                  <button
-                    key={connectorId}
-                    type="button"
-                    onClick={() => setFocusedConnectorId(connectorId)}
-                    className={`min-h-[132px] rounded-lg border p-3 text-left transition ${
-                      focused
-                        ? "border-black/20 bg-white shadow-sm"
-                        : "border-black/[0.06] bg-white hover:border-black/15 hover:bg-surface"
-                    }`}
-                  >
-                    <span className="flex items-start justify-between gap-3">
-                      <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-black/[0.06] bg-surface">
-                        <ConnectorBrandIcon id={connectorId} className="h-6 w-6 text-zinc-900" />
-                      </span>
-                      <span
-                        role="checkbox"
-                        aria-checked={active}
-                        tabIndex={0}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          toggleConnector(connectorId);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key !== "Enter" && event.key !== " ") return;
-                          event.preventDefault();
-                          event.stopPropagation();
-                          toggleConnector(connectorId);
-                        }}
-                        className={`inline-flex h-6 w-6 items-center justify-center rounded-md border ${
-                          active ? "border-black bg-black text-white" : "border-black/[0.12] text-transparent"
+                {onboardingServices === undefined ? (
+                  onboardingConnectorIds.map((connectorId) => (
+                    <div key={connectorId} className="h-32 animate-pulse rounded-lg border border-black/[0.06] bg-black/[0.025]" />
+                  ))
+                ) : (
+                  onboardingServices.map((service) => {
+                    const connection = copyForConnector(service.id);
+                    const focused = focusedService?.id === service.id;
+                    const connected = service.status === "connected";
+                    return (
+                      <button
+                        key={service.id}
+                        type="button"
+                        onClick={() => setFocusedConnectorId(service.id)}
+                        className={`min-h-[138px] rounded-lg border p-3 text-left transition ${
+                          focused
+                            ? "border-black/20 bg-white shadow-sm"
+                            : "border-black/[0.06] bg-white hover:border-black/15 hover:bg-surface"
                         }`}
                       >
-                        <Check size={14} />
-                      </span>
-                    </span>
-                    <span className="mt-3 block text-sm font-semibold text-text-primary">{connection.label}</span>
-                    <span className="mt-1 block text-xs leading-5 text-text-secondary">{connection.useCase}</span>
-                    <span className="mt-3 inline-flex rounded-full bg-black/[0.035] px-2 py-0.5 text-[11px] font-medium text-text-muted">
-                      {connection.setup}
-                    </span>
-                  </button>
-                );
-              })}
+                        <span className="flex items-start justify-between gap-3">
+                          <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-black/[0.06] bg-surface">
+                            <ConnectorBrandIcon id={service.id} className="h-6 w-6 text-zinc-900" />
+                          </span>
+                          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${statusStyles(service.status)}`}>
+                            {connected ? <CheckCircle2 size={12} /> : <span className="h-1.5 w-1.5 rounded-full bg-current opacity-60" />}
+                            {statusLabel(service.status, service.id)}
+                          </span>
+                        </span>
+                        <span className="mt-3 block text-sm font-semibold text-text-primary">{connection.label}</span>
+                        <span className="mt-1 block text-xs leading-5 text-text-secondary">{connection.useCase}</span>
+                      </button>
+                    );
+                  })
+                )}
               </div>
+
               <aside className="rounded-lg border border-black/[0.06] bg-surface p-4">
-                <div className="flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-black/[0.06] bg-white">
-                    <ConnectorBrandIcon id={focusedConnectorId} className="h-6 w-6 text-zinc-900" />
-                  </span>
-                  <div>
-                    <p className="text-sm font-semibold text-text-primary">{focusedConnector.label}</p>
-                    <p className="text-xs text-text-muted">{focusedConnector.group}</p>
-                  </div>
-                </div>
-                <p className="mt-4 text-xs leading-5 text-text-secondary">{focusedConnector.detail}</p>
-                <button
-                  type="button"
-                  onClick={() => toggleConnector(focusedConnectorId)}
-                  className="mt-4 inline-flex h-9 w-full items-center justify-center rounded-lg bg-black px-3 text-xs font-semibold text-white"
-                >
-                  {connectorIds.includes(focusedConnectorId) ? "Remove from setup" : "Add to setup"}
-                </button>
+                {focusedService ? (
+                  <>
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-black/[0.06] bg-white">
+                        <ConnectorBrandIcon id={focusedService.id} className="h-6 w-6 text-zinc-900" />
+                      </span>
+                      <div>
+                        <p className="text-sm font-semibold text-text-primary">{focusedCopy.label}</p>
+                        <p className="text-xs text-text-muted">{focusedCopy.group}</p>
+                      </div>
+                    </div>
+                    <p className="mt-4 text-xs leading-5 text-text-secondary">{focusedCopy.detail}</p>
+                    {isGoogleWorkspaceConnector(focusedService.id) && (
+                      <p className="mt-3 rounded-lg border border-black/[0.05] bg-white px-3 py-2 text-xs leading-5 text-text-secondary">
+                        Google sign-in connects Gmail, Calendar, Drive, Docs and Sheets together.
+                      </p>
+                    )}
+                    {focusedService.statusMessage && (
+                      <p className="mt-3 rounded-lg border border-black/[0.05] bg-white px-3 py-2 text-xs leading-5 text-text-muted">
+                        {focusedService.statusMessage}
+                      </p>
+                    )}
+
+                    {focusedService.id === "github" && focusedService.connectionId && focusedService.status !== "connected" ? (
+                      <form onSubmit={handleGitHubRepositorySubmit} className="mt-4 space-y-3">
+                        <label className="block text-xs font-semibold text-text-secondary">
+                          Owner
+                          <input name="repositoryOwner" required placeholder="founderos" className="mt-1 h-9 w-full rounded-lg border border-black/[0.08] bg-white px-3 text-sm text-text-primary outline-none focus:border-black/25" />
+                        </label>
+                        <label className="block text-xs font-semibold text-text-secondary">
+                          Repository
+                          <input name="repositoryName" required placeholder="founder-os" className="mt-1 h-9 w-full rounded-lg border border-black/[0.08] bg-white px-3 text-sm text-text-primary outline-none focus:border-black/25" />
+                        </label>
+                        <label className="block text-xs font-semibold text-text-secondary">
+                          Organization
+                          <input name="organizationName" placeholder="Optional" className="mt-1 h-9 w-full rounded-lg border border-black/[0.08] bg-white px-3 text-sm text-text-primary outline-none focus:border-black/25" />
+                        </label>
+                        <button
+                          type="submit"
+                          disabled={busyServiceId === focusedService.id}
+                          className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-black px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {busyServiceId === focusedService.id ? <Loader2 size={14} className="animate-spin" /> : <Github size={14} />}
+                          Save repository
+                        </button>
+                      </form>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={focusedService.status === "connected" || busyServiceId === focusedService.id}
+                        onClick={() => void connectService(focusedService)}
+                        className="mt-4 inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-black px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {busyServiceId === focusedService.id ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : focusedService.id === "github" ? (
+                          <Github size={14} />
+                        ) : focusedService.id === "opencode" ? (
+                          <RefreshCw size={14} />
+                        ) : (
+                          <Plug size={14} />
+                        )}
+                        {primaryActionLabel(focusedService)}
+                        {focusedService.status !== "connected" && focusedService.id !== "opencode" && <ExternalLink size={13} />}
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const currentIndex = onboardingConnectorIds.indexOf(focusedService.id);
+                        const nextId = onboardingConnectorIds[currentIndex + 1] ?? onboardingConnectorIds[0];
+                        setFocusedConnectorId(nextId);
+                      }}
+                      className="mt-3 inline-flex h-8 w-full items-center justify-center gap-2 rounded-lg border border-black/[0.08] bg-white px-3 text-xs font-semibold text-text-secondary hover:bg-black/[0.03] hover:text-text-primary"
+                    >
+                      Next connection
+                      <ArrowRight size={13} />
+                    </button>
+                  </>
+                ) : (
+                  <div className="h-52 animate-pulse rounded-lg bg-black/[0.035]" />
+                )}
               </aside>
             </div>
-            {selectedConnectorCount > 0 && (
-              <div className="mt-3 rounded-lg border border-emerald-500/15 bg-emerald-50 px-3 py-3 text-xs leading-5 text-emerald-900">
-                {connectionPlanText({
-                  google: willConnectGoogle,
-                  github: willConnectGitHub,
-                  opencode: willConnectOpenCode,
-                })}
-              </div>
-            )}
           </div>
 
           <label className="mt-5 flex items-start gap-3 rounded-lg border border-black/[0.06] bg-surface px-3 py-3">
@@ -334,37 +491,15 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
             <button
               type="button"
               onClick={() => void finish()}
-              disabled={isSaving}
+              disabled={isFinishing || Boolean(busyServiceId)}
               className="inline-flex items-center gap-2 rounded-lg bg-black px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {isSaving && <Loader2 size={15} className="animate-spin" />}
-              {selectedConnectorCount > 0 && <ExternalLink size={15} />}
-              {selectedConnectorCount > 0 ? "Start selected connections" : "Open FounderOS"}
+              {isFinishing && <Loader2 size={15} className="animate-spin" />}
+              Open FounderOS
             </button>
           </div>
         </div>
       </section>
     </div>
   );
-}
-
-function isGoogleWorkspaceConnector(connectorId: string) {
-  return connectorId === "gmail" ||
-    connectorId === "google_calendar" ||
-    connectorId === "google_drive" ||
-    connectorId === "google_docs" ||
-    connectorId === "google_sheets";
-}
-
-function connectionPlanText(args: { google: boolean; github: boolean; opencode: boolean }) {
-  const steps = [
-    args.opencode ? "check OpenCode on this computer" : undefined,
-    args.google ? "open Google sign-in" : undefined,
-    args.github && !args.google ? "open GitHub App install" : undefined,
-    args.github && args.google ? "then finish GitHub from Connections after Google returns" : undefined,
-  ].filter(Boolean);
-
-  return steps.length > 0
-    ? `When you continue, FounderOS will ${steps.join(", ")}.`
-    : "When you continue, FounderOS will save your setup.";
 }

@@ -141,7 +141,7 @@ function AuthGate({ children }: { children: ReactNode }) {
     connectorCallbackRef.current = callbackKey;
     const finish = provider === "github"
       ? completeGitHubAppConnection({ state, installationId: installationId! })
-      : completeOAuthConnection({ state, code: code! });
+      : completeOAuthConnection({ state, code: code!, redirectOrigin: window.location.origin });
 
     void finish.finally(() => {
       router.replace("/");
@@ -159,7 +159,7 @@ function AuthGate({ children }: { children: ReactNode }) {
   if (!isSignedIn) {
     return (
       <main className="flex h-screen w-full items-center justify-center bg-surface px-4">
-        <LoginCard />
+        <LoginCard fallbackRedirectUrl={connectorCallbackFallbackPath()} />
       </main>
     );
   }
@@ -202,6 +202,21 @@ function AuthGate({ children }: { children: ReactNode }) {
   }
 
   return children;
+}
+
+function connectorCallbackFallbackPath() {
+  if (typeof window === "undefined") return "/";
+  const params = new URLSearchParams(window.location.search);
+  const provider = params.get("connector_provider");
+  const state = params.get("state");
+  const code = params.get("code");
+  const installationId = params.get("installation_id");
+  const isConnectorCallback = Boolean(
+    provider &&
+    state &&
+    ((provider === "google_workspace" && code) || (provider === "github" && installationId)),
+  );
+  return isConnectorCallback ? `${window.location.pathname}${window.location.search}` : "/";
 }
 
 function PreparingWorkspace({ label }: { label: string }) {

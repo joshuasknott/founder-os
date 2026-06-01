@@ -52,7 +52,7 @@ const clerkAppearance = {
   },
 };
 
-export function LoginCard() {
+export function LoginCard({ fallbackRedirectUrl = "/" }: { fallbackRedirectUrl?: string }) {
   const [mode, setMode] = useState<"signIn" | "signUp">("signIn");
 
   return (
@@ -72,7 +72,7 @@ export function LoginCard() {
       {mode === "signUp" ? (
         <SignUp
           routing="hash"
-          fallbackRedirectUrl="/"
+          fallbackRedirectUrl={fallbackRedirectUrl}
           signInUrl="/"
           appearance={clerkAppearance}
           oauthFlow="redirect"
@@ -80,7 +80,7 @@ export function LoginCard() {
       ) : (
         <SignIn
           routing="hash"
-          fallbackRedirectUrl="/"
+          fallbackRedirectUrl={fallbackRedirectUrl}
           signUpUrl="/"
           appearance={clerkAppearance}
           oauthFlow="redirect"

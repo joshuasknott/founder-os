@@ -79,8 +79,27 @@ function connectorSiteUrl() {
   ).replace(/\/+$/g, "");
 }
 
-function oauthRedirectUri(providerId: OAuthConnectorId) {
-  const url = new URL("/settings", connectorSiteUrl());
+function connectorSiteUrlForOrigin(origin?: string) {
+  if (!origin) return connectorSiteUrl();
+  try {
+    const parsed = new URL(origin);
+    const configured = new URL(connectorSiteUrl());
+    const isLocal =
+      parsed.hostname === "localhost" ||
+      parsed.hostname === "127.0.0.1" ||
+      parsed.hostname === "[::1]";
+    const isConfigured = parsed.origin === configured.origin;
+    if ((parsed.protocol === "http:" && isLocal) || (parsed.protocol === "https:" && isConfigured)) {
+      return parsed.origin;
+    }
+  } catch {
+    // Fall back to the configured site URL below.
+  }
+  return connectorSiteUrl();
+}
+
+function oauthRedirectUri(providerId: OAuthConnectorId, redirectOrigin?: string) {
+  const url = new URL("/settings", connectorSiteUrlForOrigin(redirectOrigin));
   url.searchParams.set("connector_provider", providerId);
   return url.toString();
 }
@@ -1232,6 +1251,7 @@ export const startOAuthConnection = action({
   args: {
     workspaceId: v.id("workspaces"),
     connectorId: v.string(),
+    redirectOrigin: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const providerId = oauthProviderForConnector(args.connectorId);
@@ -1276,7 +1296,7 @@ export const startOAuthConnection = action({
       authorizationUrl: buildOAuthAuthorizationUrl({
         connectorId: providerId,
         clientId: client.clientId,
-        redirectUri: oauthRedirectUri(providerId),
+        redirectUri: oauthRedirectUri(providerId, args.redirectOrigin),
         state,
         prompt: "consent",
       }),
@@ -1289,6 +1309,7 @@ export const completeOAuthConnection = action({
   args: {
     state: v.string(),
     code: v.string(),
+    redirectOrigin: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     let session: ConnectorSetupSessionForAction | null = null;
@@ -1306,6 +1327,9 @@ export const completeOAuthConnection = action({
 
       if (!session || session.workspaceId !== payload.workspaceId || session.providerId !== payload.providerId) {
         throw new Error("Connection setup expired. Start again from Settings.");
+      }
+      if (session.status === "completed") {
+        return { ok: true, safeMessage: "Connected and ready." };
       }
       if (session.status !== "pending" || Date.now() > session.expiresAt) {
         throw new Error("Connection setup expired. Start again from Settings.");
@@ -1343,7 +1367,7 @@ export const completeOAuthConnection = action({
         clientId: client.clientId,
         clientSecret: client.clientSecret,
         code: args.code,
-        redirectUri: oauthRedirectUri(providerId),
+        redirectUri: oauthRedirectUri(providerId, args.redirectOrigin),
         codeVerifier,
         request: connectorRequest,
       });
@@ -1515,7 +1539,16 @@ export const completeGitHubAppConnection = action({
       session = await ctx.runQuery(internalConnectors.getConnectorSetupSessionByState, {
         state: args.state,
       }) as ConnectorSetupSessionForAction | null;
-      if (!session || session.workspaceId !== payload.workspaceId || session.status !== "pending" || Date.now() > session.expiresAt) {
+      if (!session || session.workspaceId !== payload.workspaceId) {
+        throw new Error("Connection setup expired. Start again from Settings.");
+      }
+      if (session.status === "completed") {
+        return {
+          ok: true,
+          safeMessage: "GitHub is installed. Choose the repository before FounderOS uses it.",
+        };
+      }
+      if (session.status !== "pending" || Date.now() > session.expiresAt) {
         throw new Error("Connection setup expired. Start again from Settings.");
       }
 

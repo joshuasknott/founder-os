@@ -242,7 +242,7 @@ export function ConnectedServicesSettings() {
     void runServiceAction(`${serviceId}:callback`, async () => {
       const result = provider === "github"
         ? await completeGitHubAppConnection({ state, installationId: installationId! })
-        : await completeOAuthConnection({ state, code: code! });
+        : await completeOAuthConnection({ state, code: code!, redirectOrigin: window.location.origin });
       router.replace("/settings", { scroll: false });
       return result;
     }, serviceId);
@@ -271,7 +271,11 @@ export function ConnectedServicesSettings() {
 
     if (isOAuthService(service.id)) {
       void runServiceAction(service.id, async () => {
-        const result = await startOAuthConnection({ workspaceId, connectorId: service.id });
+        const result = await startOAuthConnection({
+          workspaceId,
+          connectorId: service.id,
+          redirectOrigin: window.location.origin,
+        });
         const url = result && typeof result === "object"
           ? (result as { authorizationUrl?: unknown }).authorizationUrl
           : undefined;
@@ -375,7 +379,7 @@ export function ConnectedServicesSettings() {
 
       {fromOnboarding && (
         <div className="mt-5 rounded-lg border border-emerald-500/15 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-900">
-          Connect the services you picked during setup, or skip any of them for now.
+          Review the services you connected during setup, or connect another one now.
         </div>
       )}
 
@@ -439,7 +443,7 @@ export function ConnectedServicesSettings() {
                             )}
                             {onboardingConnectorIds.has(service.id) && (
                               <span className="rounded-full border border-emerald-500/15 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
-                                Picked in setup
+                                Connected in setup
                               </span>
                             )}
                           </span>
