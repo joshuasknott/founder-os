@@ -35,7 +35,7 @@ import {
 import {
   buildOpenCodeArgs,
   builderProviderHelp,
-  opencodeModelForProfile,
+  selectOpenCodeModelForRun,
   selectBuilderAgent,
 } from "./agentAdapters.mjs";
 
@@ -159,6 +159,9 @@ function buildBuilderAgentEnv(env = process.env) {
     "BUILDER_OPENCODE_AGENT",
     "BUILDER_OPENCODE_ATTACH_URL",
     "BUILDER_MODEL",
+    "FOUNDEROS_OPENCODE_BUSINESS_MODEL",
+    "FOUNDEROS_OPENCODE_PLANNING_MODEL",
+    "FOUNDEROS_OPENCODE_CODING_MODEL",
     "BUILDER_CODEX_MODEL",
     "BUILDER_CODEX_REASONING_EFFORT",
     "BUILDER_LLM_API_KEY",
@@ -1036,6 +1039,14 @@ function buildTaskSpec(run, directive, workspace, builderAgent = BUILDER_AGENT) 
       hiddenFromFounder: true,
       preferredRealAdapter: "opencode",
     },
+    orchestration: {
+      hiddenFromFounder: true,
+      selectedRoute: builderAgent.orchestration?.model ?? builderAgent.model,
+      sensitivity: builderAgent.orchestration?.sensitivity,
+      outputContract: builderAgent.orchestration?.outputContract,
+      verifierRoute: builderAgent.orchestration?.verifierModel,
+      freeRouteBlocked: builderAgent.orchestration?.freeRouteBlocked,
+    },
     workspace: {
       isolation: workspace.isolation,
       safeWorkingDirectory: true,
@@ -1307,30 +1318,57 @@ async function runOpenCodeCommand(prompt, workspaceDir, title, builderAgent = BU
   return result.stdout || result.stderr;
 }
 
-function opencodeAgentFromConnection(connection, modelProfile) {
+function opencodeAgentFromConnection(connection, run, directive) {
   if (!connection || connection.status !== "connected") return null;
   const settings = connection.settings && typeof connection.settings === "object" ? connection.settings : {};
-  return selectBuilderAgent({
-    ...BUILDER_AGENT_ENV,
-    BUILDER_PROVIDER: "opencode",
-    BUILDER_OPENCODE_COMMAND: settings.command || "opencode",
-    BUILDER_OPENCODE_MODEL: opencodeModelForProfile(settings, modelProfile),
-    BUILDER_OPENCODE_AGENT: settings.agent || "",
-    BUILDER_OPENCODE_ATTACH_URL: settings.attachUrl || "",
+  const route = selectOpenCodeModelForRun({
+    settings,
+    modelProfile: run.modelProfile,
+    run,
+    directive,
+    env: BUILDER_AGENT_ENV,
   });
+  return {
+    ...selectBuilderAgent({
+      ...BUILDER_AGENT_ENV,
+      BUILDER_PROVIDER: "opencode",
+      BUILDER_OPENCODE_COMMAND: settings.command || "opencode",
+      BUILDER_OPENCODE_MODEL: route.model,
+      BUILDER_OPENCODE_AGENT: settings.agent || "",
+      BUILDER_OPENCODE_ATTACH_URL: settings.attachUrl || "",
+    }),
+    orchestration: route,
+  };
 }
 
-async function builderAgentForRun(client, run) {
-  if (!run.workspaceId) return BUILDER_AGENT;
+function defaultBuilderAgentForRun(run, directive) {
+  if (BUILDER_AGENT.adapter !== "opencode") return BUILDER_AGENT;
+  const route = selectOpenCodeModelForRun({
+    run,
+    directive,
+    env: BUILDER_AGENT_ENV,
+  });
+  return {
+    ...selectBuilderAgent({
+      ...BUILDER_AGENT_ENV,
+      BUILDER_PROVIDER: "opencode",
+      BUILDER_OPENCODE_MODEL: route.model,
+    }),
+    orchestration: route,
+  };
+}
+
+async function builderAgentForRun(client, run, directive) {
+  if (!run.workspaceId) return defaultBuilderAgentForRun(run, directive);
   try {
     const connection = await client.query(api.connectors.getConnectorConnectionForWorker, {
       workspaceId: run.workspaceId,
       connectorId: "opencode",
       workerToken: workerToken(),
     });
-    return opencodeAgentFromConnection(connection, run.modelProfile) ?? BUILDER_AGENT;
+    return opencodeAgentFromConnection(connection, run, directive) ?? defaultBuilderAgentForRun(run, directive);
   } catch {
-    return BUILDER_AGENT;
+    return defaultBuilderAgentForRun(run, directive);
   }
 }
 
@@ -1463,6 +1501,7 @@ function buildResultMetadata(args) {
       preferredRealAdapter: "opencode",
     },
     taskSpec: args.taskSpec,
+    orchestration: args.taskSpec?.orchestration,
     productPlan: args.taskSpec?.productPlan,
     source: args.source,
     isolation: {
@@ -2114,7 +2153,13 @@ async function processRun(client, run) {
     return;
   }
 
-  const builderAgent = await builderAgentForRun(client, run);
+  const directive = await client.query(api.directives.getDirectiveById, {
+    directiveId: run.directiveId,
+    workerToken: workerToken(),
+  });
+  if (!directive) throw new Error("Task not found.");
+
+  const builderAgent = await builderAgentForRun(client, run, directive);
   const builderAdapter = builderAgent.adapter;
   const builderProvider = builderAgent.provider;
 
@@ -2123,12 +2168,6 @@ async function processRun(client, run) {
     console.log(`Hidden builder run ready for review: ${run._id}`);
     return;
   }
-
-  const directive = await client.query(api.directives.getDirectiveById, {
-    directiveId: run.directiveId,
-    workerToken: workerToken(),
-  });
-  if (!directive) throw new Error("Task not found.");
 
   if (builderAdapter === "opencode") {
     await runOpenCodeBuilder(client, run, directive, builderAgent);

@@ -57,17 +57,25 @@ The sidebar should use the current page or selected item as context:
 
 The sidebar should stay quiet when it has nothing useful to add.
 
-## Worker Roster
+## Worker Presentation
 
-The default AI worker roles are:
+FounderOS may keep internal worker records for routing, ownership, and prompts, but the founder-facing product should not make the founder manage a fixed agent roster. The visible experience should stay centered on FounderOS, the work being prepared, the review needed, and the saved result.
 
-- **Orion, Chief of Staff**: understands requests, plans work, and keeps the founder briefed.
-- **Atlas, Systems Lead**: prepares internal tools, data flows, quality checks, and safe previews.
-- **Cipher, Preview Designer**: creates website and internal-tool previews for review.
-- **Nova, Growth Lead**: drafts campaigns, customer documents, research briefs, and launch messages.
-- **Sentinel, Operations Steward**: keeps workspace organization, schedules, versions, and summaries clear.
+User-facing UI can show a simple owner or current step when it helps, but named internal workers are optional presentation details, not the product model.
 
-User-facing UI can show worker name, role, avatar, current step, and output summary.
+## Hidden Model Orchestration
+
+Backend routing is based on capability, sensitivity, and output contract. It must not be exposed as a founder-facing setting.
+
+- `glm-4.5-air`: classification, simple summaries, and routine low-risk work.
+- `glm-4.7`: default business reasoning for Home, Library, product, marketing, and document work.
+- `glm-5-turbo`: planning, finance, complex synthesis, and strategy.
+- `glm-5.1`: coding, build, and debug work through opencode.
+- Free opencode routes: public or low-sensitive redacted drafts only, with GLM review required.
+- Gemini vision: low-sensitive redacted image or screenshot understanding only.
+- DeepSeek V4 Pro: optional escalation, high-stakes review, or hard code rescue after GLM failures.
+
+OpenAI/Copilot routes are optional manual fallbacks only and must not be the default route.
 
 ## Language Rules
 

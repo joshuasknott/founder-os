@@ -18,7 +18,8 @@ A private AI-native operating system for a non-technical founder running one bus
 - **Backend**: Convex (real-time database, functions, crons)
 - **Auth**: Clerk with Convex JWT authentication
 - **AI Workers**: Background workers for documents, design, communications, and generic tasks
-- **Builder**: Multi-provider build system (Codex, OpenCode, DeepSeek, OpenRouter, and more)
+- **Builder**: hidden opencode/GLM system for previews and review
+- **Model Orchestration**: hidden backend routing by capability, sensitivity, and output type
 
 ## Getting Started
 
@@ -54,7 +55,7 @@ Key variables:
 Create a Clerk JWT template named `convex`, then set the same issuer domain on
 the Convex deployment with `npx convex env set CLERK_JWT_ISSUER_DOMAIN <issuer>`.
 
-See [.env.example](.env.example) for the full list including worker providers and connector credentials.
+See [.env.example](.env.example) and [Environment Setup](docs/7_ENVIRONMENT.md) for the full list including hidden model routes, worker providers, and connector credentials.
 
 ### Run
 

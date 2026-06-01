@@ -7,6 +7,15 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
+const DEFAULT_LOCAL_CHAT_MODEL = process.env.FOUNDEROS_OPENCODE_BUSINESS_MODEL ?? "zai-coding-plan/glm-4.7";
+const FREE_OPENCODE_MODELS = new Set([
+  "opencode/deepseek-v4-flash-free",
+  "opencode/nemotron-3-super-free",
+  "opencode/minimax-m3-free",
+  "opencode/mimo-v2.5-free",
+  "opencode/big-pickle",
+]);
+
 function cleanText(value: unknown, maxLength = 8000) {
   return String(value ?? "")
     .replace(/\u001b\[[0-9;]*m/g, "")
@@ -25,14 +34,14 @@ function commandParts(commandValue: unknown) {
     : "opencode";
 
   if (/[&|<>`$;\r\n]/.test(raw)) {
-    throw new Error("Use a plain OpenCode command, such as opencode.");
+    throw new Error("Use a plain local opencode command.");
   }
 
   const parts = raw.match(/"[^"]+"|\S+/g)?.map((part) => part.replace(/^"|"$/g, "")) ?? [];
   const executableName = (parts[0] || "opencode").split(/[\\/]/).pop()?.toLowerCase();
   const allowedExecutables = new Set(["opencode", "opencode.exe", "opencode.cmd", "opencode.ps1"]);
   if (!executableName || !allowedExecutables.has(executableName)) {
-    throw new Error("Use the OpenCode command for this local connector.");
+    throw new Error("Use the supported local opencode command.");
   }
 
   return {
@@ -42,14 +51,18 @@ function commandParts(commandValue: unknown) {
 }
 
 function modelArg(value: unknown) {
-  if (typeof value !== "string" || !value.trim()) return undefined;
-  if (/[\r\n]/.test(value)) throw new Error("Use a plain OpenCode model name.");
-  return value.trim();
+  if (typeof value !== "string" || !value.trim()) return DEFAULT_LOCAL_CHAT_MODEL;
+  if (/[\r\n]/.test(value)) throw new Error("Use a plain model name.");
+  const selected = value.trim();
+  if (FREE_OPENCODE_MODELS.has(selected) || selected.includes("glm-5v-turbo")) {
+    return DEFAULT_LOCAL_CHAT_MODEL;
+  }
+  return selected;
 }
 
 function optionArg(value: unknown, label: string) {
   if (typeof value !== "string" || !value.trim()) return undefined;
-  if (/[\r\n]/.test(value)) throw new Error(`Use a plain OpenCode ${label}.`);
+  if (/[\r\n]/.test(value)) throw new Error(`Use a plain ${label}.`);
   return value.trim().slice(0, 200);
 }
 
@@ -62,7 +75,7 @@ function attachArg(value: unknown) {
     url.protocol === "http:" &&
     (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1");
   if (url.protocol !== "https:" && !isLocalHttp) {
-    throw new Error("Use a local OpenCode attach URL.");
+    throw new Error("Use a local opencode attach URL.");
   }
   return url.toString();
 }
@@ -79,7 +92,7 @@ async function runOpenCodeChat(args: {
   const systemPrompt = cleanText(args.systemPrompt, 12000);
   const userPrompt = cleanText(args.userPrompt, 4000);
   if (!systemPrompt || !userPrompt) {
-    throw new Error("OpenCode chat needs a current FounderOS prompt.");
+    throw new Error("FounderOS needs a current prompt.");
   }
 
   const prompt = [
@@ -101,7 +114,8 @@ async function runOpenCodeChat(args: {
     workspaceDir,
     "--title",
     "FounderOS chat",
-    ...(selectedModel ? ["--model", selectedModel] : []),
+    "--model",
+    selectedModel,
     ...(selectedAgent ? ["--agent", selectedAgent] : []),
     ...(selectedAttachUrl ? ["--attach", selectedAttachUrl] : []),
     prompt,
@@ -126,7 +140,7 @@ async function runOpenCodeChat(args: {
         await rm(workspaceDir, { recursive: true, force: true }).catch(() => {});
         const content = cleanText(stdout) || cleanText(stderr);
         if (error) {
-          reject(new Error(content || "OpenCode did not return a chat response."));
+          reject(new Error(content || "FounderOS did not return a chat response."));
           return;
         }
         resolve({ content });
@@ -165,7 +179,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         ok: false,
-        safeMessage: cleanText(error instanceof Error ? error.message : error, 240) || "OpenCode is not responding locally.",
+        safeMessage: cleanText(error instanceof Error ? error.message : error, 240) || "opencode is not responding on this computer.",
       },
       { status: 200 },
     );

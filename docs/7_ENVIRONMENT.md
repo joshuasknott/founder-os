@@ -28,18 +28,20 @@ or AI calls can use them.
 ## Optional accounts by feature
 
 - Google sign-in: enable Google as a social connection in the Clerk dashboard.
-- AI reasoning and generation: `DEEPSEEK_API_KEY`; optional `DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, `DEEPSEEK_REASONING_MODEL`.
-- Z.ai/GLM generation: `ZAI_API_KEY`.
-- Embeddings and Gemini fallback: `GEMINI_API_KEY`; optional `GEMINI_MODEL`, `GEMINI_EMBEDDING_MODEL`.
+- Hidden AI orchestration: `ZAI_API_KEY` for the default GLM routes. Optional overrides are `ZAI_BASE_URL`, `FOUNDEROS_GLM_45_AIR_MODEL`, `FOUNDEROS_GLM_47_MODEL`, `FOUNDEROS_GLM_5_TURBO_MODEL`, and `FOUNDEROS_GLM_51_MODEL`.
+- Local opencode route defaults: `FOUNDEROS_OPENCODE_BUSINESS_MODEL=zai-coding-plan/glm-4.7`, `FOUNDEROS_OPENCODE_PLANNING_MODEL=zai-coding-plan/glm-5-turbo`, and `FOUNDEROS_OPENCODE_CODING_MODEL=zai-coding-plan/glm-5.1`.
+- Gemini vision: `GEMINI_API_KEY` and optional `GEMINI_VISION_MODEL=gemini-3-flash`. This path is only for low-sensitive, redacted image or screenshot understanding.
+- Optional DeepSeek escalation/review: `DEEPSEEK_API_KEY`, optional `DEEPSEEK_BASE_URL`, and `DEEPSEEK_V4_PRO_MODEL`. DeepSeek is not the default when GLM is configured.
+- Optional external embeddings: `GEMINI_API_KEY` plus `FOUNDEROS_ALLOW_EXTERNAL_EMBEDDINGS=true`. The default is local deterministic embeddings unless this is explicitly enabled for public or low-sensitive text.
 - Connector credential encryption: `CONNECTOR_SECRET_ENCRYPTION_KEY`; optional `CONNECTOR_OAUTH_STATE_SECRET`.
 - Google Workspace connector OAuth: `GOOGLE_CONNECTOR_CLIENT_ID`, `GOOGLE_CONNECTOR_CLIENT_SECRET`.
 - GitHub App install flow and webhook ingestion: `GITHUB_APP_NAME`, `GITHUB_WEBHOOK_SECRET`; optional app variables `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`.
 - Vercel private keys are entered in Settings and stored through the encrypted connector credential path.
-- Preferred real product-building runs with OpenCode:
-  - Install and sign in to OpenCode on the computer running FounderOS.
-  - FounderOS uses `opencode` by default. In Settings, use **Check local setup** to confirm it is ready.
-  - Advanced builder environment variables are still supported for hosted worker runs when needed: `BUILDER_PROVIDER=opencode`, `BUILDER_OPENCODE_MODEL`, `BUILDER_OPENCODE_AGENT`, and `BUILDER_OPENCODE_ATTACH_URL`.
-- Real builder runs with cheaper chat-completions models when OpenCode is not used:
+- Preferred real opencode runs through the local build engine:
+  - Install and sign in to opencode on the computer running FounderOS.
+  - FounderOS uses `opencode` by default. In Settings, use **Check this computer** to confirm opencode is ready.
+  - Advanced builder environment variables are still supported for hosted worker runs when needed: `BUILDER_PROVIDER=opencode`, `BUILDER_OPENCODE_MODEL`, `BUILDER_OPENCODE_AGENT`, and `BUILDER_OPENCODE_ATTACH_URL`. If no model is pinned, coding/build work uses `zai-coding-plan/glm-5.1`.
+- Real builder runs with cheaper chat-completions models when opencode is not used:
   - DeepSeek preset: `BUILDER_PROVIDER=deepseek` and `DEEPSEEK_API_KEY`.
   - Z.ai preset: `BUILDER_PROVIDER=zai` and `ZAI_API_KEY`.
   - OpenRouter preset: `BUILDER_PROVIDER=openrouter`, `OPENROUTER_API_KEY`, and `OPENROUTER_MODEL`.
@@ -59,8 +61,8 @@ Vercel settings are optional and documented in `.env.example`.
 1. Run `npm install` if dependencies are missing.
 2. Start Convex with `npx convex dev` and keep it running.
 3. In another terminal, run `npm run dev`.
-4. For real product-building work, prefer OpenCode:
-   install and sign in to OpenCode, then use **Check local setup** in Settings.
+4. For real opencode work, prefer the local build engine:
+   install and sign in to opencode, then use **Check this computer** in Settings.
    Worker-only runs can still use `BUILDER_PROVIDER=opencode`, then run `npm run builder`.
    For direct chat-completions fallback, use `BUILDER_PROVIDER=deepseek`,
    `BUILDER_PROVIDER=zai`, or `BUILDER_PROVIDER=openrouter` with the matching API key.

@@ -9,6 +9,7 @@ import ts from "typescript";
 async function loadAiModule() {
   const outputDir = await mkdtemp(join(tmpdir(), "founderos-ai-"));
   const pricingSource = await readFile(resolve(process.cwd(), "convex", "pricing.config.ts"), "utf8");
+  const routingSource = await readFile(resolve(process.cwd(), "convex", "modelOrchestration.ts"), "utf8");
   const aiSource = await readFile(resolve(process.cwd(), "convex", "ai.ts"), "utf8");
   const compilerOptions = {
     module: ts.ModuleKind.ES2022,
@@ -16,11 +17,15 @@ async function loadAiModule() {
   };
 
   const pricing = ts.transpileModule(pricingSource, { compilerOptions });
+  const routing = ts.transpileModule(routingSource, { compilerOptions });
   const ai = ts.transpileModule(aiSource, { compilerOptions });
   await writeFile(join(outputDir, "pricing.config.mjs"), pricing.outputText, "utf8");
+  await writeFile(join(outputDir, "modelOrchestration.mjs"), routing.outputText, "utf8");
   await writeFile(
     join(outputDir, "ai.mjs"),
-    ai.outputText.replace('from "./pricing.config";', 'from "./pricing.config.mjs";'),
+    ai.outputText
+      .replace('from "./pricing.config";', 'from "./pricing.config.mjs";')
+      .replace('from "./modelOrchestration";', 'from "./modelOrchestration.mjs";'),
     "utf8",
   );
   return import(pathToFileURL(join(outputDir, "ai.mjs")).href);
@@ -34,9 +39,13 @@ function resetRuntime() {
   process.env = { ...originalEnv };
   delete process.env.DEEPSEEK_API_KEY;
   delete process.env.GEMINI_API_KEY;
+  delete process.env.ZAI_API_KEY;
+  delete process.env.Z_AI_API_KEY;
+  delete process.env.ZHIPU_API_KEY;
   globalThis.fetch = originalFetch;
 }
 
+test.beforeEach(resetRuntime);
 test.afterEach(resetRuntime);
 
 test("chat routes through the core runtime and reports safe usage metadata", async () => {
@@ -95,6 +104,38 @@ test("structured classification returns parsed JSON with conservative validation
   assert.equal(result.parsed.workerKind, "communications");
   assert.equal(result.parsed.requiresReview, true);
   assert.equal(result.parsed.confidence, 0.82);
+});
+
+test("classification prefers the hidden GLM air route when Z.ai is configured", async () => {
+  process.env.ZAI_API_KEY = "test-key";
+  let requestBody;
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(init.body);
+    return Response.json({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              category: "document",
+              workerKind: "document",
+              confidence: 0.77,
+              requiresReview: false,
+              reasoning: "It asks for a summary.",
+            }),
+          },
+        },
+      ],
+    });
+  };
+
+  const result = await ai.classifyText({
+    title: "Summary",
+    text: "Summarize these public notes",
+  });
+
+  assert.equal(requestBody.model, "glm-4.5-air");
+  assert.equal(result.parsed.category, "document");
+  assert.equal(result.usage.model, "core:classification");
 });
 
 test("safe errors hide provider names, URLs, keys, and technical details", () => {

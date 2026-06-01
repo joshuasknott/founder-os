@@ -3,12 +3,14 @@ import assert from "node:assert/strict";
 import {
   buildOpenCodeArgs,
   builderProviderHelp,
+  isFreeOpenCodeModel,
   isLlmBuilderProvider,
   opencodeModelForProfile,
+  selectOpenCodeModelForRun,
   selectBuilderAgent,
 } from "../workers/builder/agentAdapters.mjs";
 
-test("builder agent selection prefers explicit OpenCode without exposing Codex defaults", () => {
+test("builder agent selection prefers explicit opencode without exposing Codex defaults", () => {
   const selected = selectBuilderAgent({
     BUILDER_PROVIDER: "opencode",
     BUILDER_OPENCODE_MODEL: "openrouter/deepseek/deepseek-chat",
@@ -67,7 +69,7 @@ test("opencode args run in the isolated workspace and never auto-approve permiss
   assert.equal(args.at(-1), "Build the preview");
 });
 
-test("opencode auto leaves model choice to OpenCode and manual tiers can pin models", () => {
+test("opencode auto leaves model choice to opencode and manual tiers can pin models", () => {
   const settings = {
     model: "fallback/model",
     modelLow: "fast/model",
@@ -78,4 +80,62 @@ test("opencode auto leaves model choice to OpenCode and manual tiers can pin mod
   assert.equal(opencodeModelForProfile(settings, "low"), "fast/model");
   assert.equal(opencodeModelForProfile(settings, "medium"), "fallback/model");
   assert.equal(opencodeModelForProfile(settings, "high"), "reasoning/model");
+});
+
+test("hidden builder route selects glm-5.1 for coding work", () => {
+  const selected = selectOpenCodeModelForRun({
+    run: {
+      kind: "code_preview",
+      title: "Booking tool",
+    },
+    directive: {
+      objective: "Build a private booking tool preview",
+    },
+    env: {},
+  });
+
+  assert.equal(selected.model, "zai-coding-plan/glm-5.1");
+  assert.equal(selected.outputContract, "code_changes");
+  assert.equal(selected.verifierModel, "zai-coding-plan/glm-5-turbo");
+});
+
+test("hidden builder route blocks free opencode models for private work", () => {
+  const selected = selectOpenCodeModelForRun({
+    run: {
+      kind: "code_preview",
+      title: "Revenue dashboard",
+    },
+    directive: {
+      objective: "Build a dashboard using revenue and customer data",
+    },
+    env: {
+      BUILDER_OPENCODE_MODEL: "opencode/deepseek-v4-flash-free",
+    },
+  });
+
+  assert.equal(isFreeOpenCodeModel("opencode/deepseek-v4-flash-free"), true);
+  assert.equal(selected.requestedModel, "opencode/deepseek-v4-flash-free");
+  assert.equal(selected.model, "zai-coding-plan/glm-5.1");
+  assert.equal(selected.freeRouteBlocked, true);
+  assert.equal(selected.sensitivity, "confidential");
+});
+
+test("hidden builder route allows redacted low-sensitive public drafts through free routes", () => {
+  const selected = selectOpenCodeModelForRun({
+    run: {
+      kind: "document",
+      title: "Redacted public draft",
+    },
+    directive: {
+      objective: "Redacted public draft for a blog post",
+    },
+    env: {
+      BUILDER_OPENCODE_MODEL: "opencode/minimax-m3-free",
+    },
+  });
+
+  assert.equal(selected.model, "opencode/minimax-m3-free");
+  assert.equal(selected.outputContract, "public_draft");
+  assert.equal(selected.freeRouteAllowed, true);
+  assert.equal(selected.verifierModel, "zai-coding-plan/glm-4.7");
 });

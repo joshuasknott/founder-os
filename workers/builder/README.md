@@ -7,9 +7,9 @@ Current behavior:
 - finds queued `code_preview` work runs
 - marks them in progress
 - writes plain-language progress updates
-- plans the product workflow before building
+- plans the opencode workflow before building
 - uses a flexible hidden builder-agent adapter
-- prefers OpenCode for real model-flexible builds when configured
+- prefers opencode for real model-flexible builds when configured
 - supports chat-completions adapters for DeepSeek, Z.ai, OpenRouter, and custom compatible endpoints
 - keeps Codex available as an optional adapter
 - runs the builder in an isolated branch/workspace or safe copied directory
@@ -42,12 +42,17 @@ Configuration:
 - `BUILDER_AGENT`: optional alias for `BUILDER_PROVIDER`.
 - `BUILDER_AGENT_TIMEOUT_MS`: timeout for real builder-agent calls. Defaults to `600000`.
 - `BUILDER_REPAIR_ATTEMPTS`: number of repair passes after failed checks. Defaults to `1`.
-- OpenCode preferred real adapter:
+- opencode preferred real adapter:
   - `BUILDER_PROVIDER=opencode`
   - `BUILDER_OPENCODE_COMMAND`: defaults to `opencode`
-  - `BUILDER_OPENCODE_MODEL`: model in OpenCode `provider/model` format, for example an OpenRouter, DeepSeek, Z.ai, or local model configured in OpenCode
-  - `BUILDER_OPENCODE_AGENT`: optional locked-down OpenCode agent name
-  - `BUILDER_OPENCODE_ATTACH_URL`: optional headless OpenCode server URL
+  - `BUILDER_OPENCODE_MODEL`: optional pinned model in opencode `provider/model` format. If omitted, hidden routing chooses `zai-coding-plan/glm-5.1` for coding/build work.
+  - `BUILDER_OPENCODE_AGENT`: optional locked-down opencode agent name
+  - `BUILDER_OPENCODE_ATTACH_URL`: optional headless opencode server URL
+- Hidden opencode route defaults:
+  - `FOUNDEROS_OPENCODE_BUSINESS_MODEL`: defaults to `zai-coding-plan/glm-4.7`
+  - `FOUNDEROS_OPENCODE_PLANNING_MODEL`: defaults to `zai-coding-plan/glm-5-turbo`
+  - `FOUNDEROS_OPENCODE_CODING_MODEL`: defaults to `zai-coding-plan/glm-5.1`
+  - Free opencode models are allowed only for redacted public drafts and require a GLM verifier route. Private build work is automatically moved to the paid GLM route.
 - Chat-completions adapters:
   - `BUILDER_PROVIDER=deepseek` with `DEEPSEEK_API_KEY`
   - `BUILDER_PROVIDER=zai` with `ZAI_API_KEY`

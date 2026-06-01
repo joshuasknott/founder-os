@@ -5,6 +5,16 @@ const LLM_PROVIDER_ALIASES = new Set(["llm", "chat-completions", "chat_completio
 const DEEPSEEK_PROVIDER_ALIASES = new Set(["deepseek", "deepseek-chat"]);
 const ZAI_PROVIDER_ALIASES = new Set(["zai", "z.ai", "z_ai", "zhipu", "glm"]);
 const OPENROUTER_PROVIDER_ALIASES = new Set(["openrouter", "open-router", "open_router"]);
+const DEFAULT_OPENCODE_BUSINESS_MODEL = "zai-coding-plan/glm-4.7";
+const DEFAULT_OPENCODE_PLANNING_MODEL = "zai-coding-plan/glm-5-turbo";
+const DEFAULT_OPENCODE_CODING_MODEL = "zai-coding-plan/glm-5.1";
+const FREE_OPENCODE_DRAFT_ROUTES = new Set([
+  "opencode/deepseek-v4-flash-free",
+  "opencode/nemotron-3-super-free",
+  "opencode/minimax-m3-free",
+  "opencode/mimo-v2.5-free",
+  "opencode/big-pickle",
+]);
 
 function cleanString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -46,6 +56,110 @@ function defaultLlmBaseUrl(provider) {
   if (provider === "zai") return "https://api.z.ai/api/paas/v4";
   if (provider === "openrouter") return "https://openrouter.ai/api/v1";
   return "https://api.deepseek.com";
+}
+
+function normalizeText(value) {
+  return String(value ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function inferRouteSensitivity(run = {}, directive = {}) {
+  const text = normalizeText(`${run.title ?? ""} ${directive.title ?? ""} ${directive.objective ?? ""}`);
+  if (
+    /\b(api[_ -]?key|secret|password|bearer|private key|access token|refresh token)\b/.test(text) ||
+    /\b(sk|pk|rk|ghp|github_pat|ya29)[-_a-z0-9]{8,}\b/.test(text)
+  ) {
+    return "restricted";
+  }
+  if (
+    /\b(bank|payroll|salary|tax|legal|contract|nda|cap table|runway|revenue|invoice|customer list)\b/.test(text) ||
+    /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/.test(text)
+  ) {
+    return "confidential";
+  }
+  if (/\b(redacted|public draft|blog post|press release|social post|marketing copy|landing page copy)\b/.test(text)) {
+    return "low";
+  }
+  if (/\b(public information|published page|public website)\b/.test(text)) return "public";
+  return "internal";
+}
+
+function outputContractForRun(run = {}, directive = {}) {
+  if (run.kind === "code_preview") return "code_changes";
+  const text = normalizeText(`${run.title ?? ""} ${directive.title ?? ""} ${directive.objective ?? ""}`);
+  if (/\b(public draft|blog post|press release|social post|marketing copy)\b/.test(text)) {
+    return "public_draft";
+  }
+  return "library_item";
+}
+
+function routeForOutputContract(outputContract, env = {}) {
+  if (outputContract === "code_changes") {
+    return readEnv(env, "FOUNDEROS_OPENCODE_CODING_MODEL") ?? DEFAULT_OPENCODE_CODING_MODEL;
+  }
+  if (outputContract === "library_item") {
+    return readEnv(env, "FOUNDEROS_OPENCODE_PLANNING_MODEL") ?? DEFAULT_OPENCODE_PLANNING_MODEL;
+  }
+  return readEnv(env, "FOUNDEROS_OPENCODE_BUSINESS_MODEL") ?? DEFAULT_OPENCODE_BUSINESS_MODEL;
+}
+
+export function isFreeOpenCodeModel(model) {
+  return FREE_OPENCODE_DRAFT_ROUTES.has(cleanString(model) ?? "");
+}
+
+function freeOpenCodeAllowed(args) {
+  const lowEnough = args.sensitivity === "public" || args.sensitivity === "low";
+  return lowEnough && args.outputContract === "public_draft" && args.redacted === true;
+}
+
+export function selectOpenCodeModelForRun({
+  settings = {},
+  modelProfile = "auto",
+  run = {},
+  directive = {},
+  env = process.env,
+} = {}) {
+  const outputContract = outputContractForRun(run, directive);
+  const sensitivity = inferRouteSensitivity(run, directive);
+  const redacted = /\bredacted\b/i.test(`${directive.objective ?? ""} ${run.title ?? ""}`);
+  const requestedModel =
+    opencodeModelForProfile(settings, modelProfile) ||
+    readEnv(env, "BUILDER_OPENCODE_MODEL") ||
+    readEnv(env, "BUILDER_MODEL");
+  const defaultModel = routeForOutputContract(outputContract, env);
+  const freeAllowed = freeOpenCodeAllowed({ sensitivity, outputContract, redacted });
+
+  if (requestedModel && isFreeOpenCodeModel(requestedModel) && !freeAllowed) {
+    return {
+      model: defaultModel,
+      requestedModel,
+      sensitivity,
+      outputContract,
+      verifierModel: DEFAULT_OPENCODE_BUSINESS_MODEL,
+      freeRouteBlocked: true,
+      freeRouteAllowed: false,
+    };
+  }
+
+  if (requestedModel) {
+    return {
+      model: requestedModel,
+      requestedModel,
+      sensitivity,
+      outputContract,
+      verifierModel: isFreeOpenCodeModel(requestedModel) ? DEFAULT_OPENCODE_BUSINESS_MODEL : DEFAULT_OPENCODE_PLANNING_MODEL,
+      freeRouteBlocked: false,
+      freeRouteAllowed: isFreeOpenCodeModel(requestedModel) ? freeAllowed : undefined,
+    };
+  }
+
+  return {
+    model: defaultModel,
+    sensitivity,
+    outputContract,
+    verifierModel: outputContract === "code_changes" ? DEFAULT_OPENCODE_PLANNING_MODEL : DEFAULT_OPENCODE_BUSINESS_MODEL,
+    freeRouteBlocked: false,
+    freeRouteAllowed: undefined,
+  };
 }
 
 function chatCompletionsUrl(env, provider) {
@@ -179,7 +293,7 @@ export function buildOpenCodeArgs(agent, prompt, workspaceDir, title = "FounderO
 
 export function builderProviderHelp(provider) {
   const canonical = canonicalProvider(provider);
-  if (canonical === "opencode") return "OpenCode should be installed and authenticated for the selected model.";
+  if (canonical === "opencode") return "opencode should be installed and authenticated for the selected model.";
   if (canonical === "codex") return "Set OPENAI_API_KEY and BUILDER_USE_CODEX=true for the Codex adapter.";
   if (canonical === "deepseek") return "Set DEEPSEEK_API_KEY for the DeepSeek chat-completions adapter.";
   if (canonical === "zai") return "Set ZAI_API_KEY for the Z.ai chat-completions adapter.";

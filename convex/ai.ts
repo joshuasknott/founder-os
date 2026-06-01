@@ -1,4 +1,12 @@
 import { calculateCostUSD } from "./pricing.config";
+import {
+  configuredModelForRoute,
+  getHiddenModelRoute,
+  inferSensitivityFromText,
+  routeRequestForCoreUseCase,
+  selectModelRoute,
+  type HiddenModelRouteId,
+} from "./modelOrchestration";
 
 const DEFAULT_DEEPSEEK_MODEL = "deepseek-chat";
 const DEFAULT_DEEPSEEK_REASONING_MODEL = "deepseek-reasoner";
@@ -231,7 +239,7 @@ function safeErrorText(error: unknown) {
 
   const cleaned = raw
     .replace(/https?:\/\/\S+/gi, "the AI service")
-    .replace(/\b(?:deepseek|gemini|openai|gpt|claude|mistral|llama)[-\w.]*/gi, "AI")
+    .replace(/\b(?:deepseek|gemini|openai|opencode|openrouter|zai|z\.ai|zhipu|glm|gpt|claude|mistral|llama)[-\w.]*/gi, "AI")
     .replace(/\b(?:api|sdk|http|json|stack|trace|fetch|token|bearer|key|model)\b/gi, "service")
     .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted]")
     .replace(/\s+/g, " ")
@@ -253,15 +261,80 @@ export function safeAIErrorMessage(error: unknown) {
   return safeErrorText(error);
 }
 
+function zAiApiKey() {
+  return process.env.ZAI_API_KEY ?? process.env.Z_AI_API_KEY ?? process.env.ZHIPU_API_KEY;
+}
+
+function zAiBaseUrl() {
+  return (process.env.ZAI_BASE_URL ?? "https://api.z.ai/api/paas/v4").replace(/\/$/, "");
+}
+
+function deepSeekModelForRoute(routeId: HiddenModelRouteId | undefined, purpose: RoutePurpose) {
+  if (routeId === "deepseek/deepseek-v4-pro") {
+    return process.env.DEEPSEEK_V4_PRO_MODEL ?? process.env.DEEPSEEK_MODEL ?? "deepseek-v4-pro";
+  }
+  return deepSeekModelForPurpose(purpose);
+}
+
+async function callZai(
+  options: TextOutputOptions & { structured?: boolean },
+  routeId: HiddenModelRouteId,
+): Promise<CoreAIResult> {
+  const startedAt = Date.now();
+  const apiKey = zAiApiKey();
+  if (!apiKey) throw new Error("Primary AI key is not configured.");
+
+  const model = configuredModelForRoute(routeId);
+  const response = await fetch(`${zAiBaseUrl()}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: options.systemPrompt },
+        { role: "user", content: options.userPrompt },
+      ],
+      temperature: options.temperature ?? 0.2,
+      ...(options.maxOutputTokens ? { max_tokens: options.maxOutputTokens } : {}),
+      ...(options.structured ? { response_format: { type: "json_object" } } : {}),
+    }),
+  });
+
+  const data = await readJson<DeepSeekResponse>(response);
+
+  if (!response.ok) {
+    throw new Error(data.error?.message ?? `Primary AI request failed (${response.status}).`);
+  }
+
+  const content = data.choices?.[0]?.message?.content?.trim();
+  if (!content) throw new Error("Primary AI returned no content.");
+
+  return {
+    content,
+    usage: usageFromProvider({
+      useCase: options.useCase,
+      latencyMs: Date.now() - startedAt,
+      model,
+      inputText: `${options.systemPrompt}\n${options.userPrompt}`,
+      outputText: content,
+      usage: data.usage,
+    }),
+  };
+}
+
 async function callDeepSeek(
   options: TextOutputOptions & { structured?: boolean },
+  routeId?: HiddenModelRouteId,
 ): Promise<CoreAIResult> {
   const startedAt = Date.now();
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) throw new Error("Primary AI key is not configured.");
 
   const purpose = routePurpose(options.tier ?? 1, options.useCase);
-  const model = deepSeekModelForPurpose(purpose);
+  const model = deepSeekModelForRoute(routeId, purpose);
   const baseUrl = process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com";
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
@@ -350,23 +423,56 @@ async function callGemini(
   };
 }
 
+async function callSelectedRoute(
+  routeId: HiddenModelRouteId,
+  options: TextOutputOptions & { structured?: boolean },
+) {
+  const route = getHiddenModelRoute(routeId);
+  if (route.provider === "zai" && route.channel === "chat_completions") {
+    return await callZai(options, routeId);
+  }
+  if (route.provider === "deepseek") {
+    return await callDeepSeek(options, routeId);
+  }
+  if (route.provider === "gemini") {
+    return await callGemini(options);
+  }
+  throw new Error("Selected route is not available for this request.");
+}
+
 async function runText(options: TextOutputOptions & { structured?: boolean }): Promise<CoreAIResult> {
   let lastError: unknown;
+  const routeSelection = selectModelRoute(routeRequestForCoreUseCase({
+    useCase: options.useCase,
+    tier: options.tier,
+    structured: options.structured,
+    text: `${options.systemPrompt}\n${options.userPrompt}`,
+  }));
+  const routeIds = [
+    routeSelection.selectedRouteId,
+    ...routeSelection.fallbackRouteIds,
+  ].filter((routeId, index, routeList) => routeList.indexOf(routeId) === index);
+  let attemptedDeepSeek = false;
 
-  try {
-    const result = await callDeepSeek(options);
-    await options.onUsage?.(result.usage);
-    return result;
-  } catch (error) {
-    lastError = error;
+  for (const routeId of routeIds) {
+    try {
+      if (getHiddenModelRoute(routeId).provider === "deepseek") attemptedDeepSeek = true;
+      const result = await callSelectedRoute(routeId, options);
+      await options.onUsage?.(result.usage);
+      return result;
+    } catch (error) {
+      lastError = error;
+    }
   }
 
-  try {
-    const result = await callGemini(options);
-    await options.onUsage?.(result.usage);
-    return result;
-  } catch (error) {
-    lastError = error;
+  if (!attemptedDeepSeek && process.env.DEEPSEEK_API_KEY && !zAiApiKey()) {
+    try {
+      const result = await callDeepSeek(options);
+      await options.onUsage?.(result.usage);
+      return result;
+    } catch (error) {
+      lastError = error;
+    }
   }
 
   throw new Error(safeErrorText(lastError));
@@ -713,7 +819,10 @@ export async function executeEmbeddingWithUsage(
     });
 
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  const canUseExternalEmbedding =
+    process.env.FOUNDEROS_ALLOW_EXTERNAL_EMBEDDINGS === "true" &&
+    ["public", "low"].includes(inferSensitivityFromText(text));
+  if (!apiKey || !canUseExternalEmbedding) {
     const usage = fallbackUsage();
     await args?.onUsage?.(usage);
     return { embedding: fallbackEmbedding(text), usage };

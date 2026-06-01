@@ -15,7 +15,8 @@ Make every visible connector work standalone before combining connectors into la
 - Google Sheets: Google OAuth setup, spreadsheet lookup through Drive, and safe spreadsheet preview reads for chat/task context.
 - GitHub: GitHub App install, repository selection, and provider-backed repository context import into Library when `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` are configured.
 - Stripe: restricted read-only key setup and finance sync into Library/facts. Money-moving actions are blocked by policy.
-- OpenCode: local command setup for product-building work when the local OpenCode environment is configured.
+- opencode: local command setup for opencode work when the local build environment is configured.
+- Hidden model orchestration: GLM route policy for classification, business reasoning, planning, and opencode build work; free/Gemini routes are privacy-gated.
 
 ## Not Live Yet
 
@@ -39,5 +40,7 @@ Make every visible connector work standalone before combining connectors into la
 - Approved calendar event creation requires Calendar write scope and an exact event date/time.
 - GitHub repository context import requires a GitHub App installation, chosen repository, `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, and the app to have repository metadata and contents read access.
 - Stripe sync requires `CONNECTOR_SECRET_ENCRYPTION_KEY` and a restricted Stripe key beginning with `rk_test_` or `rk_live_`.
-- OpenCode work requires OpenCode installed/authenticated locally and the builder worker running with the expected local command.
+- opencode through the local build engine requires opencode installed/authenticated locally and the builder worker running with the expected local command.
+- Default GLM routing requires `ZAI_API_KEY`; opencode build routing expects the working `zai-coding-plan/glm-4.7`, `zai-coding-plan/glm-5-turbo`, and `zai-coding-plan/glm-5.1` routes.
+- Gemini requires `GEMINI_API_KEY` only for low-sensitive redacted vision work. DeepSeek V4 Pro requires `DEEPSEEK_API_KEY` only when optional escalation or verification is enabled.
 - Background work requires `CONVEX_URL` or `NEXT_PUBLIC_CONVEX_URL` plus `FOUNDEROS_WORKER_TOKEN` for the relevant worker process.
