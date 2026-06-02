@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api.js";
 
@@ -173,7 +174,12 @@ async function main() {
   } while (true);
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+const directRunPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : undefined;
+if (import.meta.url === directRunPath) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
+
+export { processRun };

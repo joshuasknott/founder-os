@@ -17,13 +17,12 @@ import {
 } from "lucide-react";
 
 type WorkStatus =
-  | "preparing"
-  | "in_progress"
-  | "ready_for_review"
-  | "pending_approval"
-  | "completed"
-  | "needs_attention"
-  | "stopped";
+  | "queued"
+  | "working"
+  | "needs review"
+  | "needs approval"
+  | "done"
+  | "failed";
 
 type WorkItem = {
   id: Id<"workRuns">;
@@ -100,20 +99,18 @@ function formatTime(timestamp: number) {
 
 function statusClasses(status: WorkStatus) {
   switch (status) {
-    case "preparing":
+    case "queued":
       return "bg-zinc-100 text-zinc-600";
-    case "in_progress":
+    case "working":
       return "bg-blue-50 text-blue-700";
-    case "ready_for_review":
+    case "needs review":
       return "bg-emerald-50 text-emerald-700";
-    case "pending_approval":
+    case "needs approval":
       return "bg-amber-50 text-amber-700";
-    case "completed":
+    case "done":
       return "bg-green-50 text-green-700";
-    case "needs_attention":
+    case "failed":
       return "bg-red-50 text-red-700";
-    case "stopped":
-      return "bg-zinc-100 text-zinc-500";
   }
 }
 
@@ -156,16 +153,16 @@ function approvalRiskText(kind?: string) {
 }
 
 function StatusIcon({ status }: { status: WorkStatus }) {
-  if (status === "completed" || status === "ready_for_review") {
+  if (status === "done" || status === "needs review") {
     return <CheckCircle2 size={15} className="text-emerald-600" />;
   }
-  if (status === "pending_approval") {
+  if (status === "needs approval") {
     return <PauseCircle size={15} className="text-amber-600" />;
   }
-  if (status === "needs_attention") {
+  if (status === "failed") {
     return <AlertCircle size={15} className="text-red-600" />;
   }
-  if (status === "in_progress") {
+  if (status === "working") {
     return <PlayCircle size={15} className="text-blue-600" />;
   }
   return <Clock3 size={15} className="text-text-muted" />;
@@ -313,9 +310,6 @@ function WorkRow({
   onDecline?: (approvalId: Id<"approvalQueue">) => Promise<void>;
 }) {
   const description =
-    item.status === "preparing" && item.kind === "code_preview"
-      ? "The product builder has not started on this computer yet. This work will move forward when the local builder is running."
-      :
     cleanDisplayText(item.approval?.description) ||
     cleanDisplayText(item.summary) ||
     cleanDisplayText(item.latestUpdate) ||
@@ -334,7 +328,7 @@ function WorkRow({
               {cleanDisplayText(item.title)}
             </h3>
             <span className={`shrink-0 rounded-md px-2 py-1 text-[10px] font-semibold leading-none ${statusClasses(item.status)}`}>
-              {item.status === "preparing" && item.kind === "code_preview" ? "Waiting for builder" : item.statusLabel}
+              {item.statusLabel}
             </span>
           </div>
           {item.approval?.title && (

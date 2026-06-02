@@ -33,6 +33,12 @@ If required context is missing, the worker asks a clarifying question in the sam
 
 Work in Review needs a specific founder decision, answer, or approval. Work in Completed should explain the outcome and link to Library knowledge, schedule changes, or external results when they exist.
 
+Hidden local execution runs through the FounderOS local runner. The runner
+registers capabilities, heartbeats, leases hidden work, and delegates to the
+existing builder, document, design, communications, and generic handlers. These
+records stay internal; founder-facing Work only shows `queued`, `working`,
+`needs review`, `needs approval`, `done`, or `failed`.
+
 ## Library Behavior
 
 Library answers should draw from business knowledge and explain sources in plain language when useful. Workers may use hidden relationships between conversations, work, outputs, schedules, decisions, and records to find context, but they must not ask the founder to manage those relationships manually.
@@ -66,6 +72,10 @@ User-facing UI can show a simple owner or current step when it helps, but named 
 ## Hidden Model Orchestration
 
 Backend routing is based on capability, sensitivity, and output contract. It must not be exposed as a founder-facing setting.
+
+Local runner routing adds one hidden input bundle to each run: capability,
+sensitivity, output contract, and approval needs. Capability matching happens
+before leasing so a local process only receives work it can safely handle.
 
 - `zai-coding-plan/glm-4.5-air`: classification, simple summaries, and routine low-risk work through opencode.
 - `zai-coding-plan/glm-4.7`: default business reasoning for Home, Library, product, marketing, and document work through opencode.

@@ -99,6 +99,13 @@ test("leases only queued or expired work and increments attempts", () => {
   assert.equal(leased.leaseExpiresAt, 1500);
   assert.equal(runtime.canLeaseRun(leased, ["document"], 1200), false);
   assert.equal(runtime.canLeaseRun(leased, ["document"], 1600), true);
+
+  const retryCoolingDown = {
+    ...queued,
+    nextRetryAt: 2000,
+  };
+  assert.equal(runtime.canLeaseRun(retryCoolingDown, ["document"], 1500), false);
+  assert.equal(runtime.canLeaseRun(retryCoolingDown, ["document"], 2000), true);
 });
 
 test("run completion clears locks and records completion time", () => {
@@ -241,6 +248,8 @@ test("failures retry until the final allowed attempt and keep messages plain", (
   assert.equal(retry.updateTone, "progress");
   assert.equal(retry.updateMessage, "I hit a temporary issue and will try again.");
   assert.equal(retry.patch.failureReason.includes("CLI"), false);
+  assert.equal(retry.patch.retryDelayMs, 10000);
+  assert.equal(retry.patch.nextRetryAt, 11500);
 
   const finalFailure = runtime.failRunState(
     {
@@ -262,6 +271,86 @@ test("failures retry until the final allowed attempt and keep messages plain", (
   assert.equal(finalFailure.patch.status, "failed");
   assert.equal(finalFailure.updateTone, "error");
   assert.equal(finalFailure.patch.failedAt, 2500);
+  assert.equal(finalFailure.patch.nextRetryAt, undefined);
+});
+
+test("hidden local routing captures capability sensitivity output contract and approval needs", () => {
+  const buildRouting = runtime.localRoutingForRun({
+    kind: "code_preview",
+    title: "Revenue dashboard",
+    objective: "Build a private dashboard using revenue and customer data",
+  });
+
+  assert.equal(buildRouting.capability, "coding");
+  assert.equal(buildRouting.sensitivity, "confidential");
+  assert.equal(buildRouting.outputContract, "code_changes");
+
+  const emailRouting = runtime.localRoutingForRun({
+    kind: "email",
+    title: "Follow up",
+    objective: "Send an email to alex@example.com with the proposal",
+  });
+
+  assert.equal(emailRouting.capability, "communication");
+  assert.equal(emailRouting.sensitivity, "confidential");
+  assert.equal(emailRouting.outputContract, "library_item");
+  assert.deepEqual(emailRouting.approvalNeeds, ["send_email"]);
+});
+
+test("local runner capability matching rejects unsafe or unsupported hidden routes", () => {
+  const runner = {
+    capabilities: ["coding"],
+    outputContracts: ["code_changes"],
+    maxSensitivity: "internal",
+    approvalCapabilities: ["publish_preview"],
+  };
+
+  assert.equal(
+    runtime.runnerCanHandleRouting(runner, {
+      capability: "coding",
+      sensitivity: "internal",
+      outputContract: "code_changes",
+      approvalNeeds: [],
+    }),
+    true,
+  );
+  assert.equal(
+    runtime.runnerCanHandleRouting(runner, {
+      capability: "document",
+      sensitivity: "internal",
+      outputContract: "library_item",
+      approvalNeeds: [],
+    }),
+    false,
+  );
+  assert.equal(
+    runtime.runnerCanHandleRouting(runner, {
+      capability: "coding",
+      sensitivity: "confidential",
+      outputContract: "code_changes",
+      approvalNeeds: [],
+    }),
+    false,
+  );
+  assert.equal(
+    runtime.runnerCanHandleRouting(runner, {
+      capability: "coding",
+      sensitivity: "internal",
+      outputContract: "code_changes",
+      approvalNeeds: ["send_email"],
+    }),
+    false,
+  );
+});
+
+test("hidden run statuses project to the founder-visible status set", () => {
+  assert.equal(runtime.founderVisibleStatusForRun("queued"), "queued");
+  assert.equal(runtime.founderVisibleStatusForRun("working"), "working");
+  assert.equal(runtime.founderVisibleStatusForRun("needs_review"), "needs review");
+  assert.equal(runtime.founderVisibleStatusForRun("waiting_for_approval"), "needs approval");
+  assert.equal(runtime.founderVisibleStatusForRun("completed"), "done");
+  assert.equal(runtime.founderVisibleStatusForRun("failed"), "failed");
+  assert.equal(runtime.founderVisibleStatusForRun("stopped"), "failed");
 });
 
 test("output model creates Library-ready item and document fields", () => {

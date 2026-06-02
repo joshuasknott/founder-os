@@ -67,7 +67,16 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Workers
 
-Background workers handle delegated work outside the main app:
+The local runner is the preferred path for delegated work on a founder's
+computer. It registers with Convex, heartbeats while running, leases hidden Work
+items, then delegates to the existing handlers:
+
+```bash
+npm run local-runner       # Local runner (continuous)
+npm run local-runner:once  # Local runner (single lease)
+```
+
+The legacy individual workers are still supported for compatibility:
 
 ```bash
 npm run worker:documents       # Document processing

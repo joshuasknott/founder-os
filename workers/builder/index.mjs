@@ -2258,6 +2258,7 @@ export {
   extractLlmJson,
   outputKindForRun,
   planProductBuild,
+  processRun,
   runTestCommands,
   snapshotWorkspaceFiles,
   toPlainFounderText,

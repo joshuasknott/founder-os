@@ -17,6 +17,8 @@
     "worker:communications:once": "node workers/communications/index.mjs --once",
     "worker:generic": "node workers/generic/index.mjs",
     "worker:generic:once": "node workers/generic/index.mjs --once",
+    "local-runner": "node workers/local-runner/index.mjs",
+    "local-runner:once": "node workers/local-runner/index.mjs --once",
     "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {

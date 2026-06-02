@@ -12,9 +12,12 @@ import {
   canLeaseRun,
   failRunState,
   finishRunPatch,
+  founderVisibleStatusForRun,
   leaseIsValid,
   leaseRunPatch,
+  localRoutingForRun,
   normalizePlainWorkerMessage,
+  type FounderVisibleWorkStatus,
   type TaskClassification,
   type WorkRunKind,
 } from "./taskRuntime";
@@ -99,38 +102,25 @@ const taskClassification = v.object({
   signals: v.array(v.string()),
 });
 
-type WorkPageStatus =
-  | "preparing"
-  | "in_progress"
-  | "ready_for_review"
-  | "pending_approval"
-  | "completed"
-  | "needs_attention"
-  | "stopped";
+type WorkPageStatus = FounderVisibleWorkStatus;
 
 function statusForWorkPage(status: string): WorkPageStatus {
-  if (status === "queued") return "preparing";
-  if (status === "working") return "in_progress";
-  if (status === "needs_review") return "ready_for_review";
-  if (status === "waiting_for_approval") return "pending_approval";
-  if (status === "completed") return "completed";
-  if (status === "failed") return "needs_attention";
-  if (status === "stopped") return "stopped";
-  return "needs_attention";
+  if (
+    status === "queued" ||
+    status === "working" ||
+    status === "needs_review" ||
+    status === "waiting_for_approval" ||
+    status === "completed" ||
+    status === "failed" ||
+    status === "stopped"
+  ) {
+    return founderVisibleStatusForRun(status);
+  }
+  return "failed";
 }
 
 function labelForWorkPage(status: WorkPageStatus) {
-  const labels: Record<WorkPageStatus, string> = {
-    preparing: "Preparing",
-    in_progress: "In progress",
-    ready_for_review: "Ready for review",
-    pending_approval: "Waiting for approval",
-    completed: "Completed",
-    needs_attention: "Needs attention",
-    stopped: "Stopped",
-  };
-
-  return labels[status];
+  return status;
 }
 
 async function addResultCardsToChat(
@@ -211,7 +201,7 @@ async function addResultCardsToChat(
   return patch;
 }
 
-async function saveRunOutputToLibrary(
+export async function saveRunOutputToLibrary(
   ctx: MutationCtx,
   run: {
     _id: Id<"workRuns">;
@@ -454,6 +444,12 @@ export const create = mutation({
     }
 
     const now = Date.now();
+    const localRouting = localRoutingForRun({
+      kind: args.kind,
+      title: args.title,
+      objective: directive.objective,
+      classification: args.classification,
+    });
     const runId = await ctx.db.insert("workRuns", {
       workspaceId: current.workspaceId,
       directiveId: args.directiveId,
@@ -461,6 +457,7 @@ export const create = mutation({
       kind: args.kind,
       workerKind: args.workerKind,
       classification: args.classification,
+      localRouting,
       status: "queued",
       title: args.title,
       summary: args.summary,
@@ -602,6 +599,8 @@ export const leaseNext = mutation({
         await ctx.db.patch(run.taskId, {
           status: "failed",
           failureReason: failure.patch.failureReason,
+          retryDelayMs: undefined,
+          nextRetryAt: undefined,
           failedAt: now,
           updatedAt: now,
         });
@@ -620,6 +619,13 @@ export const leaseNext = mutation({
     if (!candidate) return null;
 
     const leaseId = `${args.workerId}:${now}:${Math.random().toString(36).slice(2)}`;
+    const directive = await ctx.db.get(candidate.directiveId);
+    const localRouting = candidate.localRouting ?? localRoutingForRun({
+      kind: candidate.kind,
+      title: candidate.title,
+      objective: directive?.objective,
+      classification: candidate.classification,
+    });
     const patch = leaseRunPatch(candidate, {
       now,
       leaseId,
@@ -627,18 +633,19 @@ export const leaseNext = mutation({
       leaseMs: args.leaseMs,
     });
 
-    await ctx.db.patch(candidate._id, patch);
+    await ctx.db.patch(candidate._id, { ...patch, localRouting });
     if (candidate.taskId) {
       await ctx.db.patch(candidate.taskId, {
         status: "in_progress",
         executionToken: leaseId,
         retryCount: patch.attemptCount,
+        retryDelayMs: undefined,
+        nextRetryAt: undefined,
         startedAt: now,
         updatedAt: now,
       });
     }
 
-    const directive = await ctx.db.get(candidate.directiveId);
     if (directive && directive.status === "pending_spec") {
       await ctx.db.patch(candidate.directiveId, { status: "in_progress" });
     }
@@ -663,7 +670,7 @@ export const leaseNext = mutation({
       metadata: { leaseId, attemptCount: patch.attemptCount },
     });
 
-    return { ...candidate, ...patch };
+    return { ...candidate, ...patch, localRouting };
   },
 });
 
@@ -1037,6 +1044,8 @@ export const markFailed = mutation({
         status: failure.retryScheduled ? "queued" : "failed",
         failureReason: failure.patch.failureReason,
         retryCount: run.attemptCount ?? 0,
+        retryDelayMs: failure.patch.retryDelayMs,
+        nextRetryAt: failure.patch.nextRetryAt,
         failedAt: failure.retryScheduled ? undefined : now,
         updatedAt: now,
       });

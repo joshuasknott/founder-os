@@ -68,16 +68,18 @@ function NavItem({ href, icon: Icon, label, pathname }: NavItemProps) {
 function statusLabel(status?: string) {
   if (!status) return "";
   const labels: Record<string, string> = {
-    pending_spec: "Preparing",
-    needs_clarification: "Needs answer",
-    awaiting_approval: "Waiting",
-    in_progress: "In progress",
-    blocked: "Paused",
-    completed: "Completed",
-    failed: "Needs attention",
+    pending_spec: "queued",
+    needs_clarification: "needs review",
+    custom_fallback: "needs review",
+    awaiting_approval: "needs approval",
+    in_progress: "working",
+    blocked: "failed",
+    aborted_by_principal: "failed",
+    completed: "done",
+    failed: "failed",
   };
 
-  return labels[status] ?? status.replace(/_/g, " ");
+  return labels[status] ?? "failed";
 }
 
 function canStopTask(status?: string) {

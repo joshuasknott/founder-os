@@ -82,6 +82,48 @@ export type WorkRunStatus =
   | "failed"
   | "stopped";
 
+export type FounderVisibleWorkStatus =
+  | "queued"
+  | "working"
+  | "needs review"
+  | "needs approval"
+  | "done"
+  | "failed";
+
+export type LocalRunnerCapability =
+  | "coding"
+  | "debugging"
+  | "document"
+  | "design"
+  | "communication"
+  | "schedule"
+  | "data"
+  | "generic"
+  | "business_reasoning"
+  | "product_marketing_docs"
+  | "planning";
+
+export type LocalRunnerSensitivity =
+  | "public"
+  | "low"
+  | "internal"
+  | "confidential"
+  | "restricted";
+
+export type LocalRunnerOutputContract =
+  | "plain_text"
+  | "structured_json"
+  | "library_item"
+  | "code_changes"
+  | "public_draft";
+
+export type LocalRunRouting = {
+  capability: LocalRunnerCapability;
+  sensitivity: LocalRunnerSensitivity;
+  outputContract: LocalRunnerOutputContract;
+  approvalNeeds: SensitiveActionKind[];
+};
+
 export type RunLike = {
   kind: WorkRunKind;
   status: WorkRunStatus;
@@ -89,11 +131,14 @@ export type RunLike = {
   maxAttempts?: number;
   leaseId?: string;
   leaseExpiresAt?: number;
+  nextRetryAt?: number;
+  retryDelayMs?: number;
   updatedAt?: number;
   summary?: string;
   previewUrl?: string;
   title: string;
   classification?: Partial<TaskClassification>;
+  localRouting?: LocalRunRouting;
 };
 
 export const sensitiveActionKinds = [
@@ -121,6 +166,151 @@ export type ApprovalAuditEvent = {
 
 export const DEFAULT_MAX_ATTEMPTS = 3;
 export const DEFAULT_LEASE_MS = 10 * 60 * 1000;
+export const DEFAULT_RETRY_DELAY_MS = 10 * 1000;
+export const MAX_RETRY_DELAY_MS = 5 * 60 * 1000;
+
+const SENSITIVITY_RANK: Record<LocalRunnerSensitivity, number> = {
+  public: 0,
+  low: 1,
+  internal: 2,
+  confidential: 3,
+  restricted: 4,
+};
+
+export function founderVisibleStatusForRun(status: WorkRunStatus): FounderVisibleWorkStatus {
+  if (status === "queued") return "queued";
+  if (status === "working") return "working";
+  if (status === "needs_review") return "needs review";
+  if (status === "waiting_for_approval") return "needs approval";
+  if (status === "completed") return "done";
+  return "failed";
+}
+
+export function inferLocalSensitivity(
+  text?: string,
+  fallback: LocalRunnerSensitivity = "internal",
+): LocalRunnerSensitivity {
+  const normalized = String(text ?? "").toLowerCase();
+  if (!normalized.trim()) return fallback;
+
+  if (
+    /\b(api[_ -]?key|secret|password|passwd|bearer|private key|refresh token|access token)\b/.test(normalized) ||
+    /\b(sk|pk|rk|ghp|github_pat|ya29)[-_a-z0-9]{8,}\b/.test(normalized) ||
+    /-----begin [a-z ]+private key-----/.test(normalized)
+  ) {
+    return "restricted";
+  }
+
+  if (
+    /\b(bank|payroll|salary|tax|legal|contract|nda|cap table|investor update|runway|revenue|invoice|customer list|health)\b/.test(normalized) ||
+    /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/.test(normalized) ||
+    /\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/.test(normalized)
+  ) {
+    return "confidential";
+  }
+
+  if (/\b(redacted|public draft|public copy|blog post|press release|social post|landing page copy|marketing copy)\b/.test(normalized)) {
+    return "low";
+  }
+
+  if (/\b(public information|published page|public website)\b/.test(normalized)) {
+    return "public";
+  }
+
+  return fallback;
+}
+
+function approvalNeedsForText(text: string): SensitiveActionKind[] {
+  const normalized = text.toLowerCase();
+  const needs = new Set<SensitiveActionKind>();
+
+  if (/\b(send|reply|email|contact|outreach|follow up with|follow-up with)\b/.test(normalized)) {
+    needs.add("send_email");
+  }
+  if (/\b(calendar|invite|book a meeting|schedule a meeting|create an event)\b/.test(normalized)) {
+    needs.add("create_calendar_event");
+  }
+  if (/\b(publish|deploy|go live|make live|publicly available)\b/.test(normalized)) {
+    needs.add("publish_preview");
+  }
+  if (/\b(post to|post on|tweet|linkedin|social channel)\b/.test(normalized)) {
+    needs.add("post_externally");
+  }
+  if (/\b(pay|purchase|buy|spend|subscribe|upgrade plan)\b/.test(normalized)) {
+    needs.add("spend_money");
+  }
+  if (/\b(delete|remove permanently|wipe|destroy)\b/.test(normalized)) {
+    needs.add("delete_data");
+  }
+  if (/\b(change live|update production|edit the live|replace live)\b/.test(normalized)) {
+    needs.add("change_live_asset");
+  }
+
+  return [...needs];
+}
+
+function defaultCapabilityForRun(kind: WorkRunKind, classification?: Partial<TaskClassification>): LocalRunnerCapability {
+  if (kind === "code_preview") return "coding";
+  if (kind === "document") return classification?.category === "document" ? "document" : "product_marketing_docs";
+  if (kind === "design") return "design";
+  if (kind === "email") return "communication";
+  if (kind === "schedule") return "schedule";
+  if (kind === "data_update") return "data";
+  return "generic";
+}
+
+function defaultOutputContractForRun(
+  kind: WorkRunKind,
+  text: string,
+): LocalRunnerOutputContract {
+  if (kind === "code_preview") return "code_changes";
+  if (/\b(public draft|blog post|press release|social post|marketing copy)\b/i.test(text)) {
+    return "public_draft";
+  }
+  return "library_item";
+}
+
+export function localRoutingForRun(args: {
+  kind: WorkRunKind;
+  title?: string;
+  objective?: string;
+  classification?: Partial<TaskClassification>;
+}): LocalRunRouting {
+  const text = `${args.title ?? ""}\n${args.objective ?? ""}`;
+  return {
+    capability: defaultCapabilityForRun(args.kind, args.classification),
+    sensitivity: inferLocalSensitivity(text),
+    outputContract: defaultOutputContractForRun(args.kind, text),
+    approvalNeeds: approvalNeedsForText(text),
+  };
+}
+
+export function runnerCanHandleRouting(
+  runner: {
+    capabilities: LocalRunnerCapability[];
+    outputContracts?: LocalRunnerOutputContract[];
+    maxSensitivity?: LocalRunnerSensitivity;
+    approvalCapabilities?: SensitiveActionKind[];
+  },
+  routing: LocalRunRouting,
+) {
+  if (!runner.capabilities.includes(routing.capability)) return false;
+
+  const maxSensitivity = runner.maxSensitivity ?? "restricted";
+  if (SENSITIVITY_RANK[routing.sensitivity] > SENSITIVITY_RANK[maxSensitivity]) return false;
+
+  if (runner.outputContracts && !runner.outputContracts.includes(routing.outputContract)) return false;
+
+  const approvalCapabilities = runner.approvalCapabilities ?? [...sensitiveActionKinds];
+  return routing.approvalNeeds.every((need) => approvalCapabilities.includes(need));
+}
+
+function retryDelayForAttempt(attempts: number) {
+  return Math.min(
+    MAX_RETRY_DELAY_MS,
+    DEFAULT_RETRY_DELAY_MS * 2 ** Math.max(0, attempts - 1),
+  );
+}
 
 export function nextScheduledRunAt(args: {
   cadence: ScheduleCadence;
@@ -500,6 +690,7 @@ export function approvedActionFallbackResult(args: {
 export function canLeaseRun(run: RunLike, kinds: WorkRunKind[], now: number) {
   if (!kinds.includes(run.kind)) return false;
   if (run.status === "queued") {
+    if (typeof run.nextRetryAt === "number" && run.nextRetryAt > now) return false;
     return (run.attemptCount ?? 0) < (run.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
   }
   if (run.status !== "working") return false;
@@ -523,6 +714,8 @@ export function leaseRunPatch(
     leaseId: args.leaseId,
     leaseOwner: args.leaseOwner,
     leaseExpiresAt: args.now + (args.leaseMs ?? DEFAULT_LEASE_MS),
+    nextRetryAt: undefined,
+    retryDelayMs: undefined,
     startedAt: args.now,
     updatedAt: args.now,
   };
@@ -567,6 +760,7 @@ export function failRunState(
   const attempts = run.attemptCount ?? 0;
   const maxAttempts = run.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   const willRetry = args.retryable !== false && attempts < maxAttempts;
+  const retryDelayMs = willRetry ? retryDelayForAttempt(attempts) : undefined;
   const failureReason = normalizePlainWorkerMessage(
     args.failureReason,
     "FounderOS could not finish this step yet.",
@@ -585,6 +779,8 @@ export function failRunState(
       leaseId: undefined,
       leaseOwner: undefined,
       leaseExpiresAt: undefined,
+      nextRetryAt: willRetry ? args.now + retryDelayMs! : undefined,
+      retryDelayMs,
       failedAt: willRetry ? undefined : args.now,
       updatedAt: args.now,
     },

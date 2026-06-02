@@ -8,6 +8,7 @@ FounderOS uses Convex for live workspace data. Some table names preserve earlier
 - `directives` are visible Work items.
 - `tasks` are the steps inside a work item.
 - `workRuns`, `workRunUpdates`, and `workArtifacts` are hidden execution records behind Work.
+- `localRunners` records local processes that can lease hidden Work safely from Convex.
 - `items` and `itemVersions` are the unified FounderOS knowledge model.
 - `documents` and `documentVersions` remain the editable Library compatibility layer used by the current UI.
 - `itemRelations`, `entities`, and `facts` store relationships and structured knowledge behind Library search and context.
@@ -77,6 +78,22 @@ Work should be queryable in three founder-facing groups:
 - Completed: finished or stopped work with outcomes and links.
 
 `workRuns`, `workRunUpdates`, and `workArtifacts` remain hidden runtime tables. The founder sees their business meaning through Work items, progress updates, review prompts, and saved outputs.
+
+`workRuns.localRouting` stores hidden routing inputs for local execution:
+capability, sensitivity, output contract, and approval needs. `attemptCount`,
+`maxAttempts`, `retryDelayMs`, and `nextRetryAt` hold retry metadata used by
+both the local runner and legacy workers.
+
+`localRunners`
+
+- `runnerId`: stable local process identity
+- `status`, `lastHeartbeatAt`, and `heartbeatExpiresAt`
+- hidden capabilities, output contracts, max sensitivity, and approval capabilities
+- safe readiness messages and counters
+
+Local runner rows are not founder-facing UI. They exist so Convex can lease work
+to a local machine without cloud functions needing direct access to local
+OpenCode subscriptions.
 
 ## Library
 

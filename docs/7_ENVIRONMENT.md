@@ -14,6 +14,7 @@ or AI calls can use them.
 - `CLERK_SECRET_KEY`: Clerk secret key used by Next.js route handlers and proxy auth checks.
 - `CLERK_JWT_ISSUER_DOMAIN`: Clerk JWT issuer domain configured in Convex, for example `https://your-app.clerk.accounts.dev`.
 - `FOUNDEROS_WORKER_TOKEN`: Long random shared secret for local workers that call worker-only mutations.
+- `LOCAL_RUNNER_ID`: Stable name for the computer running hidden local work, for example `founder-laptop`.
 
 ## Clerk and Convex setup
 
@@ -39,7 +40,9 @@ or AI calls can use them.
 - Vercel private keys are entered in Settings and stored through the encrypted connector credential path.
 - Preferred real opencode runs through the local build engine:
   - Install and sign in to opencode on the computer running FounderOS.
-  - FounderOS uses `opencode` by default. In Settings, use **Check this computer** to confirm opencode is ready.
+  - FounderOS uses `opencode` by default for local build work when `BUILDER_PROVIDER=opencode`.
+  - `npm run local-runner` validates the local opencode command and auth before advertising coding capability when `LOCAL_RUNNER_REQUIRE_OPENCODE=true`.
+  - In Settings, use **Check this computer** to confirm opencode is ready for chat-side local checks.
   - Advanced builder environment variables are still supported for hosted worker runs when needed: `BUILDER_PROVIDER=opencode`, `BUILDER_OPENCODE_MODEL`, `BUILDER_OPENCODE_AGENT`, and `BUILDER_OPENCODE_ATTACH_URL`. If no model is pinned, coding/build work uses `zai-coding-plan/glm-5.1`.
 - Direct chat-completions builder adapters are optional legacy/manual paths when opencode is not used:
   - DeepSeek preset: `BUILDER_PROVIDER=deepseek` and `DEEPSEEK_API_KEY`. Use this only for manual escalation/review or rescue work, not routine chat or default builds.
@@ -48,6 +51,28 @@ or AI calls can use them.
   - Any compatible endpoint: `BUILDER_PROVIDER=llm`, `BUILDER_LLM_API_KEY`, `BUILDER_LLM_CHAT_COMPLETIONS_URL`, and `BUILDER_LLM_MODEL`.
 - Real builder runs with the OpenAI Codex SDK: `BUILDER_PROVIDER=codex`, `BUILDER_USE_CODEX=true`, and `OPENAI_API_KEY`.
 - Vercel preview publishing: `BUILDER_VERCEL_PREVIEWS=true` plus `VERCEL_TOKEN` or `BUILDER_VERCEL_TOKEN`, and `VERCEL_PROJECT_ID` or `BUILDER_VERCEL_PROJECT_ID`. Add `VERCEL_TEAM_ID` or `BUILDER_VERCEL_TEAM_ID` for team-scoped projects.
+
+## Local runner defaults
+
+The local runner is the preferred hidden execution process. It registers in the
+`localRunners` table, renews a heartbeat, leases matching `workRuns`, delegates
+to the existing builder/document/design/communications/generic handlers, and
+writes plain progress/results back through the same Work and Library paths.
+
+Common settings:
+
+- `LOCAL_RUNNER_ID`: stable machine id. Defaults to `local:<process id>`.
+- `LOCAL_RUNNER_CAPABILITIES`: comma-separated hidden capabilities. Defaults to `coding,document,design,communication,schedule,data,generic`.
+- `LOCAL_RUNNER_OUTPUT_CONTRACTS`: defaults to `plain_text,structured_json,library_item,code_changes,public_draft`.
+- `LOCAL_RUNNER_MAX_SENSITIVITY`: defaults to `restricted`.
+- `LOCAL_RUNNER_APPROVAL_CAPABILITIES`: sensitive actions this runner can prepare or resume.
+- `LOCAL_RUNNER_REQUIRE_OPENCODE=true`: fail startup if opencode is not installed and authenticated.
+- `LOCAL_RUNNER_SKIP_OPENCODE_CHECK=true`: skip the startup check only for development or simulated runs.
+
+Founder-facing UI does not expose local runner records, capabilities, providers,
+models, routing, leases, logs, or tool calls. Work only projects the plain
+statuses `queued`, `working`, `needs review`, `needs approval`, `done`, and
+`failed`.
 
 ## Worker defaults
 
@@ -61,13 +86,13 @@ Vercel settings are optional and documented in `.env.example`.
 1. Run `npm install` if dependencies are missing.
 2. Start Convex with `npx convex dev` and keep it running.
 3. In another terminal, run `npm run dev`.
-4. For real opencode work, prefer the local build engine:
-   install and sign in to opencode, then use **Check this computer** in Settings.
-   Worker-only runs can still use `BUILDER_PROVIDER=opencode`, then run `npm run builder`.
-   Direct chat-completions builder presets are manual compatibility paths only;
-   do not use them as routine fallback for normal chat or work.
-5. Start only the other workers you need, for example
-   `npm run worker:documents:once`.
+4. For real opencode work, install and sign in to opencode on this computer.
+5. Set `BUILDER_PROVIDER=opencode`, `LOCAL_RUNNER_REQUIRE_OPENCODE=true`, and a stable `LOCAL_RUNNER_ID`.
+6. Start the local runner with `npm run local-runner`.
+7. Legacy worker-only runs remain available when needed, for example `npm run builder` or `npm run worker:documents:once`.
+
+Direct chat-completions builder presets are manual compatibility paths only; do
+not use them as routine fallback for normal chat or work.
 
 The builder always works in an isolated workspace unless `BUILDER_ISOLATION_MODE=workspace`
 is explicitly set. It saves review versions to Library, runs configured checks,

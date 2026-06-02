@@ -8,6 +8,7 @@ import { recordAuditEvent } from "./audit";
 import {
   buildRefinementRunModel,
   classifyTaskObjective,
+  localRoutingForRun,
   normalizePlainWorkerMessage,
   type TaskClassification,
 } from "./taskRuntime";
@@ -74,6 +75,12 @@ export const createDirective = mutation({
       title: args.title,
       objective: args.objective,
     });
+    const localRouting = localRoutingForRun({
+      kind: classification.runKind,
+      title: args.title,
+      objective: args.objective,
+      classification,
+    });
     const modelProfile = normalizeModelProfile(args.modelProfile);
     const assignedAgent = await chooseAssignedAgent(ctx, classification, current.workspaceId);
     const directiveId = await ctx.db.insert("directives", {
@@ -97,6 +104,7 @@ export const createDirective = mutation({
       classification,
       workerKind: classification.workerKind,
       modelProfile,
+      localRouting,
       retryCount: 0,
       updatedAt: now,
     });
@@ -109,6 +117,7 @@ export const createDirective = mutation({
       workerKind: classification.workerKind,
       classification,
       modelProfile,
+      localRouting,
       status: "queued",
       title: args.title,
       attemptCount: 0,
@@ -206,6 +215,12 @@ export const addClarification = mutation({
       refinement: args.content,
       classification,
     });
+    const localRouting = localRoutingForRun({
+      kind: refinement.runKind,
+      title: refinement.title,
+      objective: refinement.updatedObjective,
+      classification,
+    });
     const assignedAgent = await chooseAssignedAgent(ctx, classification, current.workspaceId);
     const now = Date.now();
 
@@ -227,6 +242,7 @@ export const addClarification = mutation({
       classification,
       workerKind: classification.workerKind,
       modelProfile,
+      localRouting,
       retryCount: 0,
       updatedAt: now,
     });
@@ -239,6 +255,7 @@ export const addClarification = mutation({
       workerKind: refinement.workerKind,
       classification,
       modelProfile,
+      localRouting,
       status: "queued",
       title: refinement.title,
       trigger: "chat",

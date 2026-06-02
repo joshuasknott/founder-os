@@ -31,6 +31,36 @@ const workerKind = v.union(
   v.literal("generic")
 );
 
+const localRunnerCapability = v.union(
+  v.literal("coding"),
+  v.literal("debugging"),
+  v.literal("document"),
+  v.literal("design"),
+  v.literal("communication"),
+  v.literal("schedule"),
+  v.literal("data"),
+  v.literal("generic"),
+  v.literal("business_reasoning"),
+  v.literal("product_marketing_docs"),
+  v.literal("planning")
+);
+
+const localRunnerSensitivity = v.union(
+  v.literal("public"),
+  v.literal("low"),
+  v.literal("internal"),
+  v.literal("confidential"),
+  v.literal("restricted")
+);
+
+const localRunnerOutputContract = v.union(
+  v.literal("plain_text"),
+  v.literal("structured_json"),
+  v.literal("library_item"),
+  v.literal("code_changes"),
+  v.literal("public_draft")
+);
+
 const taskCategory = v.union(
   v.literal("build"),
   v.literal("document"),
@@ -77,6 +107,13 @@ const sensitiveActionKind = v.union(
   v.literal("change_live_asset"),
   v.literal("generic")
 );
+
+const localRunRouting = v.object({
+  capability: localRunnerCapability,
+  sensitivity: localRunnerSensitivity,
+  outputContract: localRunnerOutputContract,
+  approvalNeeds: v.array(sensitiveActionKind),
+});
 
 const connectorAuthType = v.union(
   v.literal("oauth2"),
@@ -413,10 +450,13 @@ export default defineSchema({
     classification: v.optional(taskClassification),
     workerKind: v.optional(workerKind),
     modelProfile: v.optional(v.string()),
+    localRouting: v.optional(localRunRouting),
     outputItemId: v.optional(v.id("items")),
     outputDocumentId: v.optional(v.id("documents")),
     failureReason: v.optional(v.string()),
     retryCount: v.optional(v.number()),
+    retryDelayMs: v.optional(v.number()),
+    nextRetryAt: v.optional(v.number()),
     executionToken: v.optional(v.string()),
     startedAt: v.optional(v.number()),
     completedAt: v.optional(v.number()),
@@ -425,6 +465,38 @@ export default defineSchema({
   })
     .index("by_directive", ["directiveId"])
     .index("by_workspace", ["workspaceId"]),
+
+  localRunners: defineTable({
+    runnerId: v.string(),
+    name: v.optional(v.string()),
+    status: v.union(
+      v.literal("starting"),
+      v.literal("online"),
+      v.literal("offline")
+    ),
+    capabilities: v.array(localRunnerCapability),
+    outputContracts: v.array(localRunnerOutputContract),
+    maxSensitivity: localRunnerSensitivity,
+    approvalCapabilities: v.array(sensitiveActionKind),
+    currentRunId: v.optional(v.id("workRuns")),
+    lastSafeMessage: v.optional(v.string()),
+    opencodeReady: v.optional(v.boolean()),
+    opencodeSafeMessage: v.optional(v.string()),
+    processId: v.optional(v.number()),
+    version: v.optional(v.string()),
+    leaseCount: v.optional(v.number()),
+    completedCount: v.optional(v.number()),
+    failedCount: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    startedAt: v.number(),
+    lastHeartbeatAt: v.number(),
+    heartbeatExpiresAt: v.number(),
+    stoppedAt: v.optional(v.number()),
+  })
+    .index("by_runner_id", ["runnerId"])
+    .index("by_status", ["status"])
+    .index("by_heartbeat", ["heartbeatExpiresAt"]),
 
   // ===========================================================================
   // 3. THE CIRCUIT BREAKER (Tiered Autonomy Approval Gate)
@@ -850,6 +922,7 @@ export default defineSchema({
     workerKind: v.optional(workerKind),
     classification: v.optional(taskClassification),
     modelProfile: v.optional(v.string()),
+    localRouting: v.optional(localRunRouting),
     status: v.union(
       v.literal("queued"),
       v.literal("working"),
@@ -869,11 +942,14 @@ export default defineSchema({
     navigationCardMessageId: v.optional(v.id("chatMessages")),
     attemptCount: v.optional(v.number()),
     maxAttempts: v.optional(v.number()),
+    retryDelayMs: v.optional(v.number()),
+    nextRetryAt: v.optional(v.number()),
     failureReason: v.optional(v.string()),
     lastError: v.optional(v.string()),
     leaseId: v.optional(v.string()),
     leaseOwner: v.optional(v.string()),
     leaseExpiresAt: v.optional(v.number()),
+    localRunnerId: v.optional(v.string()),
     startedAt: v.optional(v.number()),
     completedAt: v.optional(v.number()),
     failedAt: v.optional(v.number()),
