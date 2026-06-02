@@ -61,8 +61,8 @@ export const connectorCopy: Record<string, ConnectorCopy> = {
     label: "Website previews",
     group: "Website previews",
     setup: "Access token and project",
-    useCase: "Save preview project details for builder-run previews.",
-    detail: "The builder can publish previews from its environment. The Settings connection does not run Vercel actions yet.",
+    useCase: "Create private review links and publish approved site updates.",
+    detail: "FounderOS validates the saved Vercel token and project. Private review links can be prepared from builder output; live site updates wait for approval.",
   },
 };
 

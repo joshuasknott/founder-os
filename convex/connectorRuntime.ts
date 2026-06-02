@@ -1059,11 +1059,11 @@ export const connectorRegistry: Record<string, ConnectorDefinition> = {
   vercel: {
     id: "vercel",
     safeDisplayName: "Website previews",
-    description: "Store website preview setup. Live preview publishing runs through the builder environment.",
+    description: "Create private review links and publish approved site updates through Vercel.",
     authType: "api_key",
     capabilities: ["create_preview_deployment", "change_live_asset"],
     requiredScopes: ["web.preview", "web.publish"],
-    scopeLabels: ["Save preview project details"],
+    scopeLabels: ["Create review links", "Publish approved live updates"],
     connectionStatus: "not_connected",
     approvalPolicy: "per_sensitive_action",
     actions: [
@@ -1071,20 +1071,18 @@ export const connectorRegistry: Record<string, ConnectorDefinition> = {
         type: "create_preview_deployment",
         safeLabel: "Create review links",
         requiredCapabilities: ["create_preview_deployment"],
-        requiredScopes: [],
-        approval: "blocked",
+        requiredScopes: ["web.preview"],
+        approval: "never",
         handlerKey: "vercel.preview",
-        blockedSafeMessage: "Website preview publishing is handled by the builder environment, not this Settings connection yet.",
       },
       {
         type: "publish_live_deployment",
         safeLabel: "Update live sites",
         requiredCapabilities: ["change_live_asset"],
-        requiredScopes: [],
-        approval: "blocked",
+        requiredScopes: ["web.publish"],
+        approval: "always",
         sensitiveActionKind: "change_live_asset",
         handlerKey: "vercel.publish",
-        blockedSafeMessage: "Live site updates are not wired through Settings yet.",
       },
     ],
   },
@@ -1128,7 +1126,9 @@ export function publicConnectionCard(
   const status = testConnectorConnection(definition, connection);
   const safeSettings = definition.id === "opencode"
     ? definedSettings({ command: sanitizeOpenCodeConnectionSettings(connection?.settings).command })
-    : undefined;
+    : definition.id === "vercel"
+      ? definedSettings(sanitizeVercelConnectionSettings(connection?.settings))
+      : undefined;
   return {
     ...publicConnectorDefinition(definition),
     connectionId: connection?._id,

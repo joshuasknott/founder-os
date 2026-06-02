@@ -33,6 +33,15 @@ type ServiceCard = {
   healthy: boolean;
   safeSettings?: {
     command?: string;
+    projectId?: string;
+    projectName?: string;
+    teamId?: string;
+    productionDomain?: string;
+    rootDirectory?: string;
+    framework?: string;
+    buildCommand?: string;
+    installCommand?: string;
+    outputDirectory?: string;
   };
   connectionId?: Id<"connectorConnections">;
   lastTestedAt?: number;
@@ -80,6 +89,7 @@ function actionCopy(actionType: string) {
     disconnect: "Turned off",
     test_connection: "Connection check",
     update_settings: "Settings updated",
+    select_project: "Project selected",
   };
   return labels[actionType] ?? actionType.replace(/_/g, " ");
 }
@@ -175,15 +185,21 @@ export function ConnectedServicesSettings() {
   const completeGitHubAppConnection = useAction(api.connectors.completeGitHubAppConnection);
   const startConnection = useMutation(api.connectors.startConnection);
   const setupApiKeyConnection = useMutation(api.connectors.setupApiKeyConnection);
+  const setupVercelConnection = useAction(api.connectors.setupVercelConnection);
   const setupManagedConnection = useMutation(api.connectors.setupManagedConnection);
   const selectGitHubRepository = useMutation(api.connectors.selectGitHubRepository);
   const testConnection = useMutation(api.connectors.testConnection);
+  const testVercelConnection = useAction(api.connectors.testVercelConnection);
+  const selectVercelProject = useAction(api.connectors.selectVercelProject);
+  const listVercelProjectsForConnection = useAction(api.connectors.listVercelProjectsForConnection);
   const disconnect = useMutation(api.connectors.disconnect);
   const [busyKey, setBusyKey] = React.useState<string | null>(null);
   const [serviceMessages, setServiceMessages] = React.useState<Record<string, string>>({});
   const [historyOpen, setHistoryOpen] = React.useState(false);
   const [setupServiceId, setSetupServiceId] = React.useState<string | null>(null);
+  const [vercelProjects, setVercelProjects] = React.useState<Array<{ projectId?: string; projectName?: string }>>([]);
   const callbackHandledRef = React.useRef<string | null>(null);
+  const vercelProjectFormRef = React.useRef<HTMLFormElement | null>(null);
 
   const visibleServices = React.useMemo(() => {
     if (!services) return undefined;
@@ -304,12 +320,18 @@ export function ConnectedServicesSettings() {
     }
 
     await runServiceAction(setupService.id, () =>
-      setupApiKeyConnection({
+      setupService.id === "vercel"
+        ? setupVercelConnection({
+            workspaceId,
+            apiKey: String(formData.get("apiKey") ?? ""),
+            settings,
+          })
+        : setupApiKeyConnection({
         workspaceId,
         connectorId: setupService.id,
         apiKey: String(formData.get("apiKey") ?? ""),
         settings,
-      }),
+          }),
     );
     form.reset();
     setSetupServiceId(null);
@@ -355,6 +377,34 @@ export function ConnectedServicesSettings() {
     );
     form.reset();
     setSetupServiceId(null);
+  };
+
+  const handleVercelProjectSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!setupService?.connectionId) return;
+    const formData = new FormData(event.currentTarget);
+    const settings: Record<string, string> = {};
+    for (const [key, value] of formData.entries()) {
+      if (typeof value === "string" && value.trim()) settings[key] = value.trim();
+    }
+    await runServiceAction("vercel:project", () =>
+      selectVercelProject({
+        connectionId: setupService.connectionId!,
+        settings,
+      }),
+      "vercel",
+    );
+  };
+
+  const loadVercelProjects = async () => {
+    if (!setupService?.connectionId) return;
+    const result = await runServiceAction("vercel:projects", () =>
+      listVercelProjectsForConnection({ connectionId: setupService.connectionId! }),
+      "vercel",
+    );
+    if (result && typeof result === "object" && Array.isArray((result as { projects?: unknown }).projects)) {
+      setVercelProjects((result as { projects: Array<{ projectId?: string; projectName?: string }> }).projects);
+    }
   };
 
   return (
@@ -504,7 +554,9 @@ export function ConnectedServicesSettings() {
                       void runServiceAction(`${setupService.id}:check`, () =>
                         setupService.id === "opencode"
                           ? checkOpenCodeLocal(setupService.safeSettings?.command)
-                          : testConnection({ connectionId: setupService.connectionId! }),
+                          : setupService.id === "vercel"
+                            ? testVercelConnection({ connectionId: setupService.connectionId! })
+                            : testConnection({ connectionId: setupService.connectionId! }),
                       )
                     }
                     className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
@@ -615,6 +667,93 @@ export function ConnectedServicesSettings() {
                   <button type="submit" disabled={Boolean(busyKey)} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-zinc-900 px-3.5 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50">
                     <RefreshCw size={14} />
                     Check local setup
+                  </button>
+                </div>
+              </form>
+            ) : setupService.id === "vercel" && setupService.connectionId ? (
+              <form ref={vercelProjectFormRef} onSubmit={handleVercelProjectSubmit} className="space-y-4 px-5 py-5">
+                <div className="flex flex-wrap justify-end gap-2">
+                  <button
+                    type="button"
+                    disabled={Boolean(busyKey)}
+                    onClick={() => void loadVercelProjects()}
+                    className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <RefreshCw size={13} />
+                    Load projects
+                  </button>
+                </div>
+                {vercelProjects.length > 0 && (
+                  <div className="rounded-lg border border-black/[0.06] bg-surface px-3 py-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Recent projects</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {vercelProjects.slice(0, 6).map((project) => (
+                        <button
+                          key={project.projectId ?? project.projectName}
+                          type="button"
+                          onClick={() => {
+                            const form = vercelProjectFormRef.current;
+                            const projectId = form?.elements.namedItem("projectId") as HTMLInputElement | null;
+                            const projectName = form?.elements.namedItem("projectName") as HTMLInputElement | null;
+                            if (projectId) projectId.value = project.projectId ?? "";
+                            if (projectName) projectName.value = project.projectName ?? "";
+                          }}
+                          className="rounded-lg border border-black/[0.06] bg-white px-2.5 py-1 text-xs font-medium text-text-secondary transition hover:border-black/15 hover:text-text-primary"
+                        >
+                          {project.projectName ?? project.projectId}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                    Project ID
+                    <input name="projectId" defaultValue={setupService.safeSettings?.projectId ?? ""} placeholder="prj_..." className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                  </label>
+                  <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                    Project name
+                    <input name="projectName" defaultValue={setupService.safeSettings?.projectName ?? ""} placeholder="Optional" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                  </label>
+                  <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                    Team ID
+                    <input name="teamId" defaultValue={setupService.safeSettings?.teamId ?? ""} placeholder="Optional" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                  </label>
+                  <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                    Production domain
+                    <input name="productionDomain" defaultValue={setupService.safeSettings?.productionDomain ?? ""} placeholder="Optional" className="h-10 w-full rounded-lg border border-black/[0.08] bg-surface px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25 focus:bg-white" />
+                  </label>
+                </div>
+                <details className="rounded-lg border border-black/[0.06] bg-surface px-3 py-2">
+                  <summary className="cursor-pointer text-xs font-semibold text-text-secondary">
+                    Build settings
+                  </summary>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                      Root directory
+                      <input name="rootDirectory" defaultValue={setupService.safeSettings?.rootDirectory ?? ""} placeholder="Optional" className="h-10 w-full rounded-lg border border-black/[0.08] bg-white px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25" />
+                    </label>
+                    <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                      Framework
+                      <input name="framework" defaultValue={setupService.safeSettings?.framework ?? ""} placeholder="Optional" className="h-10 w-full rounded-lg border border-black/[0.08] bg-white px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25" />
+                    </label>
+                    <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                      Build command
+                      <input name="buildCommand" defaultValue={setupService.safeSettings?.buildCommand ?? ""} placeholder="Optional" className="h-10 w-full rounded-lg border border-black/[0.08] bg-white px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25" />
+                    </label>
+                    <label className="space-y-1.5 text-xs font-semibold text-text-secondary">
+                      Output directory
+                      <input name="outputDirectory" defaultValue={setupService.safeSettings?.outputDirectory ?? ""} placeholder="Optional" className="h-10 w-full rounded-lg border border-black/[0.08] bg-white px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25" />
+                    </label>
+                  </div>
+                </details>
+                <div className="flex justify-end gap-2 pt-1">
+                  <button type="button" onClick={() => setSetupServiceId(null)} className="inline-flex h-9 items-center justify-center rounded-lg border border-zinc-200 bg-white px-3.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50">
+                    Close
+                  </button>
+                  <button type="submit" disabled={Boolean(busyKey)} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-zinc-900 px-3.5 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50">
+                    <KeyRound size={14} />
+                    Confirm project
                   </button>
                 </div>
               </form>

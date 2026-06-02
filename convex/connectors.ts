@@ -64,6 +64,15 @@ import {
   type GitHubCreatedPullRequest,
   type GitHubRepositoryImport,
 } from "./githubRuntime";
+import {
+  confirmVercelProject,
+  createVercelDeploymentFromFiles,
+  listVercelProjects,
+  publishVercelDeploymentFromSettings,
+  safeVercelProviderError,
+  validateVercelConnection,
+  vercelSettingsFromConnection,
+} from "./vercelRuntime";
 
 function storedStatus(status: ConnectorConnectionStatus): Exclude<ConnectorConnectionStatus, "not_connected"> {
   return status === "not_connected" ? "needs_attention" : status;
@@ -170,6 +179,9 @@ const internalConnectors = anyApi.connectors as unknown as {
     workspaceId: string;
     connectorId: string;
   }, unknown>;
+  getConnectionByIdForProvider: FunctionReference<"query", "internal", {
+    connectionId: string;
+  }, unknown>;
   getConnectedConnectorIds: FunctionReference<"query", "internal", {
     workspaceId: string;
   }, string[]>;
@@ -262,6 +274,15 @@ const internalConnectors = anyApi.connectors as unknown as {
     lastSafeMessage?: string;
     lastSafeError?: string;
     metadata?: unknown;
+  }, unknown>;
+  updateVercelConnectionFromProvider: FunctionReference<"mutation", "internal", {
+    connectionId: string;
+    settings?: unknown;
+    status: "connected" | "needs_attention";
+    healthy: boolean;
+    safeMessage: string;
+    actionType: string;
+    providerMetadata?: unknown;
   }, unknown>;
 };
 const internalMemory = anyApi.memory as unknown as {
@@ -1059,6 +1080,13 @@ export const getConnectorConnectionForSync = internalQuery({
         q.eq("workspaceId", args.workspaceId).eq("connectorId", args.connectorId),
       )
       .first();
+  },
+});
+
+export const getConnectionByIdForProvider = internalQuery({
+  args: { connectionId: v.id("connectorConnections") },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.connectionId);
   },
 });
 
@@ -2402,6 +2430,77 @@ export const setupApiKeyConnection = mutation({
   },
 });
 
+export const setupVercelConnection = action({
+  args: {
+    workspaceId: v.id("workspaces"),
+    apiKey: v.string(),
+    settings: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    const validation = validateApiKeyConnectorSetup({
+      connectorId: "vercel",
+      credential: args.apiKey,
+      settings: args.settings,
+    });
+    if (!validation.ok) return validation;
+
+    const connectionId = await ctx.runMutation(internalConnectors.completeManagedConnection, {
+      workspaceId: args.workspaceId,
+      connectorId: "vercel",
+      credentialHandle: args.apiKey,
+      grantedScopes: validation.grantedScopes,
+      settings: validation.settings,
+      connectedBy: "settings",
+      metadata: { credentialKind: "api_key", connectorId: "vercel" },
+    }) as Id<"connectorConnections">;
+
+    if (validation.status !== "connected") {
+      return {
+        ...validation,
+        connectionId,
+      };
+    }
+
+    try {
+      const bundle = await ctx.runQuery(internalConnectors.getConnectorCredentialBundle, {
+        workspaceId: args.workspaceId,
+        connectorId: "vercel",
+      }) as OAuthCredentialBundle;
+      const settings = await vercelSettingsFromBundle(bundle);
+      const result = await validateVercelConnection({ settings, request: connectorRequest });
+      await ctx.runMutation(internalConnectors.updateVercelConnectionFromProvider, {
+        connectionId,
+        settings: result.project ? { ...settings, ...result.project } : settings,
+        status: result.status,
+        healthy: result.healthy,
+        safeMessage: result.safeMessage,
+        actionType: "test_connection",
+        providerMetadata: result.project,
+      });
+      return {
+        ...result,
+        connectionId,
+      };
+    } catch (error) {
+      const safeMessage = safeVercelProviderError(error, "Vercel could not validate this connection.");
+      await ctx.runMutation(internalConnectors.updateVercelConnectionFromProvider, {
+        connectionId,
+        status: "needs_attention",
+        healthy: false,
+        safeMessage,
+        actionType: "test_connection",
+      });
+      return {
+        ok: false,
+        status: "needs_attention" as const,
+        healthy: false,
+        safeMessage,
+        connectionId,
+      };
+    }
+  },
+});
+
 export const setupManagedConnection = mutation({
   args: {
     workspaceId: v.id("workspaces"),
@@ -2637,6 +2736,60 @@ export const selectGitHubRepository = mutation({
   },
 });
 
+export const updateVercelConnectionFromProvider = internalMutation({
+  args: {
+    connectionId: v.id("connectorConnections"),
+    settings: v.optional(v.any()),
+    status: v.union(v.literal("connected"), v.literal("needs_attention")),
+    healthy: v.boolean(),
+    safeMessage: v.string(),
+    actionType: v.string(),
+    providerMetadata: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    const connection = await ctx.db.get(args.connectionId);
+    if (!connection || connection.connectorId !== "vercel") {
+      throw new Error("Vercel connection not found.");
+    }
+
+    const now = Date.now();
+    const settings = sanitizeConnectorConnectionSettings("vercel", args.settings) ?? connection.settings;
+    await ctx.db.patch(args.connectionId, {
+      settings,
+      status: storedStatus(args.status),
+      lastTestedAt: now,
+      lastHealthyAt: args.healthy ? now : connection.lastHealthyAt,
+      lastSafeMessage: args.safeMessage,
+      updatedAt: now,
+    });
+
+    await upsertConnectionSyncStateDirect(ctx, {
+      workspaceId: connection.workspaceId,
+      connectorId: "vercel",
+      status: setupStatusFromConnection(args.status),
+      safeMessage: args.safeMessage,
+      successful: args.healthy,
+      metadata: args.providerMetadata,
+      now,
+    });
+
+    await ctx.db.insert("connectorActionLogs", {
+      workspaceId: connection.workspaceId,
+      connectionId: args.connectionId,
+      connectorId: "vercel",
+      actionType: args.actionType,
+      status: args.healthy ? "completed" : "needs_attention",
+      approvalRequired: false,
+      safeSummary: args.safeMessage,
+      providerMetadata: args.providerMetadata,
+      createdAt: now,
+      completedAt: now,
+    });
+
+    return { status: args.status, safeMessage: args.safeMessage, settings };
+  },
+});
+
 export const testConnection = mutation({
   args: { connectionId: v.id("connectorConnections") },
   handler: async (ctx, args) => {
@@ -2688,6 +2841,227 @@ export const testConnection = mutation({
     });
 
     return result;
+  },
+});
+
+function vercelConnectionSettingsRecord(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+async function vercelSettingsFromBundle(bundle: OAuthCredentialBundle) {
+  const token = await unsealConnectorCredential(bundle);
+  return vercelSettingsFromConnection({
+    token,
+    settings: bundle.connection?.settings,
+    apiBaseUrl: process.env.VERCEL_API_BASE_URL ?? process.env.BUILDER_VERCEL_API_BASE_URL,
+  });
+}
+
+export const testVercelConnection = action({
+  args: { connectionId: v.id("connectorConnections") },
+  handler: async (ctx, args) => {
+    const existing = await ctx.runQuery(internalConnectors.getConnectionByIdForProvider, {
+      connectionId: args.connectionId,
+    }) as {
+      workspaceId: Id<"workspaces">;
+      connectorId: string;
+    } | null;
+    if (!existing || existing.connectorId !== "vercel") {
+      return { ok: false, safeMessage: "Vercel connection not found." };
+    }
+    await ctx.runQuery(internalConnectors.authorizeWorkspaceForAction, {
+      workspaceId: existing.workspaceId,
+    });
+
+    try {
+      const bundle = await ctx.runQuery(internalConnectors.getConnectorCredentialBundle, {
+        workspaceId: existing.workspaceId,
+        connectorId: "vercel",
+      }) as OAuthCredentialBundle;
+      const settings = await vercelSettingsFromBundle(bundle);
+      const result = await validateVercelConnection({ settings, request: connectorRequest });
+      await ctx.runMutation(internalConnectors.updateVercelConnectionFromProvider, {
+        connectionId: args.connectionId,
+        settings: result.project ? { ...settings, ...result.project } : settings,
+        status: result.status,
+        healthy: result.healthy,
+        safeMessage: result.safeMessage,
+        actionType: "test_connection",
+        providerMetadata: result.project,
+      });
+      return result;
+    } catch (error) {
+      const safeMessage = safeVercelProviderError(error, "Vercel could not validate this connection.");
+      await ctx.runMutation(internalConnectors.updateVercelConnectionFromProvider, {
+        connectionId: args.connectionId,
+        status: "needs_attention",
+        healthy: false,
+        safeMessage,
+        actionType: "test_connection",
+      });
+      return { ok: false, status: "needs_attention" as const, healthy: false, safeMessage };
+    }
+  },
+});
+
+export const listVercelProjectsForConnection = action({
+  args: {
+    connectionId: v.id("connectorConnections"),
+    search: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.runQuery(internalConnectors.getConnectionByIdForProvider, {
+      connectionId: args.connectionId,
+    }) as {
+      workspaceId: Id<"workspaces">;
+      connectorId: string;
+    } | null;
+    if (!existing || existing.connectorId !== "vercel") {
+      return { ok: false, safeMessage: "Vercel connection not found.", projects: [] };
+    }
+    await ctx.runQuery(internalConnectors.authorizeWorkspaceForAction, {
+      workspaceId: existing.workspaceId,
+    });
+
+    try {
+      const bundle = await ctx.runQuery(internalConnectors.getConnectorCredentialBundle, {
+        workspaceId: existing.workspaceId,
+        connectorId: "vercel",
+      }) as OAuthCredentialBundle;
+      const settings = await vercelSettingsFromBundle(bundle);
+      const projects = await listVercelProjects({
+        settings,
+        search: args.search,
+        request: connectorRequest,
+      });
+      return {
+        ok: true,
+        safeMessage: projects.length > 0
+          ? "Choose a Vercel project to use for previews."
+          : "No matching Vercel projects were found.",
+        projects,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        safeMessage: safeVercelProviderError(error, "Vercel projects could not be loaded."),
+        projects: [],
+      };
+    }
+  },
+});
+
+export const selectVercelProject = action({
+  args: {
+    connectionId: v.id("connectorConnections"),
+    settings: v.any(),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.runQuery(internalConnectors.getConnectionByIdForProvider, {
+      connectionId: args.connectionId,
+    }) as {
+      workspaceId: Id<"workspaces">;
+      connectorId: string;
+      settings?: unknown;
+    } | null;
+    if (!existing || existing.connectorId !== "vercel") {
+      return { ok: false, safeMessage: "Vercel connection not found." };
+    }
+    await ctx.runQuery(internalConnectors.authorizeWorkspaceForAction, {
+      workspaceId: existing.workspaceId,
+    });
+
+    try {
+      const bundle = await ctx.runQuery(internalConnectors.getConnectorCredentialBundle, {
+        workspaceId: existing.workspaceId,
+        connectorId: "vercel",
+      }) as OAuthCredentialBundle;
+      const base = vercelConnectionSettingsRecord(existing.settings);
+      const requested = vercelConnectionSettingsRecord(args.settings);
+      const settings = await vercelSettingsFromBundle({
+        ...bundle,
+        connection: {
+          ...bundle.connection,
+          settings: {
+            ...base,
+            ...requested,
+          },
+        },
+      });
+      const project = await confirmVercelProject({ settings, request: connectorRequest });
+      const savedSettings = {
+        ...settings,
+        ...project,
+        productionDomain: settings.productionDomain,
+      };
+      const safeMessage = `Connected to ${project.projectName ?? "the selected Vercel project"}.`;
+      await ctx.runMutation(internalConnectors.updateVercelConnectionFromProvider, {
+        connectionId: args.connectionId,
+        settings: savedSettings,
+        status: "connected",
+        healthy: true,
+        safeMessage,
+        actionType: "select_project",
+        providerMetadata: project,
+      });
+      return {
+        ok: true,
+        status: "connected" as const,
+        healthy: true,
+        safeMessage,
+        project,
+      };
+    } catch (error) {
+      const safeMessage = safeVercelProviderError(error, "Vercel could not confirm that project.");
+      await ctx.runMutation(internalConnectors.updateVercelConnectionFromProvider, {
+        connectionId: args.connectionId,
+        status: "needs_attention",
+        healthy: false,
+        safeMessage,
+        actionType: "select_project",
+      });
+      return { ok: false, status: "needs_attention" as const, healthy: false, safeMessage };
+    }
+  },
+});
+
+export const getVercelDeploymentSettingsForWorker = action({
+  args: {
+    workspaceId: v.id("workspaces"),
+    workerToken: v.string(),
+  },
+  handler: async (ctx, args) => {
+    if (!isAuthorizedWorkerToken(args.workerToken)) throw new Error("Worker authorization required.");
+    const bundle = await ctx.runQuery(internalConnectors.getConnectorCredentialBundle, {
+      workspaceId: args.workspaceId,
+      connectorId: "vercel",
+    }) as OAuthCredentialBundle;
+    if (
+      !bundle.connection ||
+      bundle.connection.status !== "connected" ||
+      bundle.connection.disabledAt
+    ) {
+      return null;
+    }
+
+    const settings = await vercelSettingsFromBundle(bundle);
+    return {
+      enabled: true,
+      token: settings.token,
+      projectId: settings.projectId,
+      projectName: settings.projectName,
+      teamId: settings.teamId,
+      productionDomain: settings.productionDomain,
+      rootDirectory: settings.rootDirectory,
+      framework: settings.framework,
+      buildCommand: settings.buildCommand,
+      installCommand: settings.installCommand,
+      outputDirectory: settings.outputDirectory,
+      apiBaseUrl: settings.apiBaseUrl,
+      source: "settings",
+    };
   },
 });
 
@@ -3172,6 +3546,40 @@ async function executeGitHubConnectorAction(args: {
   };
 }
 
+async function executeVercelConnectorAction(args: {
+  connectorId: string;
+  actionType: string;
+  payload: unknown;
+  bundle: OAuthCredentialBundle;
+}) {
+  if (args.connectorId !== "vercel") {
+    return null;
+  }
+
+  const payload = actionPayloadRecord(args.payload);
+  const settings = await vercelSettingsFromBundle(args.bundle);
+
+  if (args.actionType === "create_preview_deployment") {
+    return await createVercelDeploymentFromFiles({
+      settings,
+      files: payload.files,
+      metadata: payload.metadata,
+      request: connectorRequest,
+    });
+  }
+
+  if (args.actionType === "publish_live_deployment") {
+    return await publishVercelDeploymentFromSettings({
+      settings,
+      deploymentId: payload.deploymentId,
+      productionDomain: payload.productionDomain,
+      request: connectorRequest,
+    });
+  }
+
+  return null;
+}
+
 export const executeConnectorAction = action({
   args: {
     workspaceId: v.id("workspaces"),
@@ -3240,6 +3648,23 @@ export const executeConnectorAction = action({
       };
     }
 
+    if (args.connectorId === "vercel" && args.actionType === "publish_live_deployment" && (!args.approvalId || !args.runId)) {
+      const safeMessage = "This needs your approval first.";
+      await ctx.runMutation(internalConnectors.logConnectorAction, {
+        ...logBase,
+        status: "approval_required",
+        approvalRequired: true,
+        safeSummary: safeMessage,
+      });
+      return {
+        allowed: false,
+        approvalRequired: true,
+        reason: "approval_required" as const,
+        safeMessage,
+        sensitiveActionKind: evaluation.sensitiveActionKind,
+      };
+    }
+
     try {
       const bundle = await ctx.runQuery(internalConnectors.getConnectorCredentialBundle, {
         workspaceId: args.workspaceId,
@@ -3260,6 +3685,11 @@ export const executeConnectorAction = action({
         payload: args.actionPayload,
         bundle,
         logBase,
+      }) ?? await executeVercelConnectorAction({
+        connectorId: args.connectorId,
+        actionType: args.actionType,
+        payload: args.actionPayload,
+        bundle,
       });
 
       if (!result) {

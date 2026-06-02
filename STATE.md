@@ -21,7 +21,7 @@ Make every visible connector work standalone before combining connectors into la
 ## Not Live Yet
 
 - GitHub issue creation: live through the configured GitHub App path after repository selection and approval. Pull-request creation is not live yet and explicitly blocked by connector action evaluation.
-- Vercel connector card: Settings setup stores project details only. Builder preview publishing currently uses worker environment variables; Settings connector actions are explicitly not live yet.
+- Vercel connector card: Settings setup validates the saved token and project through Vercel, can confirm or update the selected project, and the builder worker prefers saved Settings credentials before falling back to worker environment variables. Private review links remain allowed from builder output; live/public publishing still requires approval.
 - PostHog, Resend, Canva, Slack, Notion: not exposed as live standalone connectors.
 - Google Drive/Docs/Sheets write/export actions: not live and explicitly blocked by connector action evaluation.
 
@@ -29,7 +29,7 @@ Make every visible connector work standalone before combining connectors into la
 
 - Add approved GitHub pull-request creation only when it calls the GitHub provider end to end.
 - Add a real Google Drive/Docs/Sheets Library import path if full file contents should be saved permanently, not only used as read-only context previews.
-- Add a Settings-driven Vercel path or keep Vercel marked unavailable outside builder environment setup.
+- Keep Vercel preview/live publishing tests aligned with the Settings credential path and the approval boundary for live changes.
 - Add integration tests around `executeConnectorAction` with mocked Google provider calls.
 - Add end-to-end checks for: connect Google, ask chat for today's Gmail rundown, create email task, approve send, confirm Gmail provider id is saved.
 

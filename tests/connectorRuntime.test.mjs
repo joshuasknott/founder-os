@@ -244,7 +244,8 @@ test("github and website preview connections keep approval boundaries", () => {
   });
   assert.equal(vercelSettings.projectId, "prj_abc");
   assert.equal(vercelSettings.productionDomain, "founder.example");
-  assert.equal(JSON.stringify(runtime.publicConnectionCard(vercel, { settings: vercelSettings })).includes("prj_abc"), false);
+  assert.equal(JSON.stringify(runtime.publicConnectionCard(vercel, { settings: vercelSettings })).includes("vercel_secret"), false);
+  assert.equal(runtime.publicConnectionCard(vercel, { settings: vercelSettings }).safeSettings.projectId, "prj_abc");
 
   const vercelConnection = {
     status: "connected",
@@ -256,13 +257,20 @@ test("github and website preview connections keep approval boundaries", () => {
     connectorId: "vercel",
     actionType: "create_preview_deployment",
     connection: vercelConnection,
-  }).reason, "blocked_by_policy");
+  }).allowed, true);
+  const pendingLivePublish = runtime.evaluateConnectorActionRequest({
+    connectorId: "vercel",
+    actionType: "publish_live_deployment",
+    connection: vercelConnection,
+  });
+  assert.equal(pendingLivePublish.reason, "approval_required");
+  assert.equal(pendingLivePublish.sensitiveActionKind, "change_live_asset");
   assert.equal(runtime.evaluateConnectorActionRequest({
     connectorId: "vercel",
     actionType: "publish_live_deployment",
     connection: vercelConnection,
     approvalGranted: true,
-  }).reason, "blocked_by_policy");
+  }).allowed, true);
 });
 
 test("opencode managed setup defaults to local command and hides advanced details", () => {

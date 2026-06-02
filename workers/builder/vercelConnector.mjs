@@ -78,6 +78,28 @@ export function vercelSettingsFromEnv(env = process.env) {
   };
 }
 
+export function mergeSavedVercelSettings(envSettings = vercelSettingsFromEnv(), savedSettings = null) {
+  if (!savedSettings || typeof savedSettings !== "object" || !savedSettings.token) {
+    return envSettings;
+  }
+
+  return {
+    ...envSettings,
+    enabled: true,
+    token: cleanString(savedSettings.token, 2000),
+    projectId: cleanString(savedSettings.projectId) ?? envSettings.projectId,
+    projectName: cleanString(savedSettings.projectName) ?? envSettings.projectName,
+    teamId: cleanString(savedSettings.teamId) ?? envSettings.teamId,
+    productionDomain: cleanDomain(savedSettings.productionDomain) ?? envSettings.productionDomain,
+    rootDirectory: cleanPath(savedSettings.rootDirectory) ?? envSettings.rootDirectory,
+    framework: cleanString(savedSettings.framework, 80) ?? envSettings.framework,
+    buildCommand: cleanString(savedSettings.buildCommand, 240) ?? envSettings.buildCommand,
+    installCommand: cleanString(savedSettings.installCommand, 240) ?? envSettings.installCommand,
+    outputDirectory: cleanPath(savedSettings.outputDirectory) ?? envSettings.outputDirectory,
+    apiBaseUrl: cleanString(savedSettings.apiBaseUrl, 240) ?? envSettings.apiBaseUrl,
+  };
+}
+
 export function vercelIsConfigured(settings = vercelSettingsFromEnv()) {
   return Boolean(
     settings.enabled &&

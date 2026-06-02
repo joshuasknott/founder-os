@@ -30,6 +30,7 @@ import {
   outputKindCanDeployPreview,
   publishVercelDeployment,
   safeVercelFailureMessage,
+  mergeSavedVercelSettings,
   vercelIsConfigured,
   vercelSettingsFromEnv,
 } from "./vercelConnector.mjs";
@@ -690,10 +691,10 @@ function outputKindForPreviewDeployment(run, directive) {
   return run?.classification?.outputItemKind ?? outputKindForRun(run, directive);
 }
 
-async function createReviewPreviewStatus(workspaceDir = ROOT_WORKSPACE_DIR, run, directive) {
+async function createReviewPreviewStatus(client, workspaceDir = ROOT_WORKSPACE_DIR, run, directive) {
   const localStatus = await ensurePreviewStatus(workspaceDir);
   const outputKind = outputKindForPreviewDeployment(run, directive);
-  const settings = vercelSettingsFromEnv();
+  const settings = await vercelSettingsForRun(client, run);
   const requestedDeployment = detectSensitiveExternalAction(directive?.objective)?.actionKind;
 
   if (!outputKindCanDeployPreview(outputKind) || !vercelIsConfigured(settings)) {
@@ -1604,6 +1605,20 @@ async function builderAgentForRun(client, run, directive) {
   }
 }
 
+async function vercelSettingsForRun(client, run) {
+  const envSettings = vercelSettingsFromEnv();
+  if (!run?.workspaceId) return envSettings;
+  try {
+    const savedSettings = await client.action(api.connectors.getVercelDeploymentSettingsForWorker, {
+      workspaceId: run.workspaceId,
+      workerToken: workerToken(),
+    });
+    return mergeSavedVercelSettings(envSettings, savedSettings);
+  } catch {
+    return envSettings;
+  }
+}
+
 function eventProgress(event) {
   if (!event || typeof event !== "object") return null;
 
@@ -1823,7 +1838,7 @@ function buildPublishedLibraryContent(args) {
 async function publishApprovedDeployment(client, run, approvedAction) {
   if (!canPublishApprovedDeployment(approvedAction.actionKind)) return false;
 
-  const settings = vercelSettingsFromEnv();
+  const settings = await vercelSettingsForRun(client, run);
   if (!vercelIsConfigured(settings)) return false;
 
   const metadata = readRunMetadata(run);
@@ -2008,7 +2023,7 @@ async function simulateRun(client, run) {
   await sleep(600);
   await append(client, run._id, "I'm checking the preview.");
 
-  const previewStatus = await createReviewPreviewStatus(ROOT_WORKSPACE_DIR, run);
+  const previewStatus = await createReviewPreviewStatus(client, ROOT_WORKSPACE_DIR, run);
   const hasPreview = previewStatus.available;
   const summary = hasPreview
     ? "A first review version is ready. This development setup is using a sample result."
@@ -2148,7 +2163,7 @@ async function runCodex(client, run, directive) {
     const testResults = checksNeedRepair(setupResults)
       ? setupResults
       : await runTestCommands(workspace.workingDirectory);
-    const previewStatus = await createReviewPreviewStatus(workspace.workingDirectory, run, directive);
+    const previewStatus = await createReviewPreviewStatus(client, workspace.workingDirectory, run, directive);
     const codexResult = extractCodexResult(finalResponse);
     if (externalAction) {
       codexResult.externalActionRequested = true;
@@ -2279,7 +2294,7 @@ async function runLlmBuilder(client, run, directive) {
       baselineSnapshot,
       modelChangedPaths,
     );
-    const previewStatus = await createReviewPreviewStatus(workspace.workingDirectory, run, directive);
+    const previewStatus = await createReviewPreviewStatus(client, workspace.workingDirectory, run, directive);
     const codexResult = {
       summary: toPlainFounderText(repairResult?.summary ?? llmResult.summary),
       reviewNotes: Array.isArray(llmResult.reviewNotes)
@@ -2411,7 +2426,7 @@ async function runOpenCodeBuilder(client, run, directive, builderAgent = BUILDER
       baselineSnapshot,
       [],
     );
-    const previewStatus = await createReviewPreviewStatus(workspace.workingDirectory, run, directive);
+    const previewStatus = await createReviewPreviewStatus(client, workspace.workingDirectory, run, directive);
     if (externalAction) {
       opencodeResult.externalActionRequested = true;
       opencodeResult.publishOrDeployBlocked = true;

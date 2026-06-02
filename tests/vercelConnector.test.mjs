@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   collectVercelDeploymentFiles,
   createVercelPreviewDeployment,
+  mergeSavedVercelSettings,
   publishVercelDeployment,
   safeVercelFailureMessage,
   vercelIsConfigured,
@@ -35,6 +36,28 @@ test("vercel settings require explicit preview enablement and credentials", () =
   });
   assert.equal(vercelIsConfigured(enabled), true);
   assert.equal(enabled.productionDomain, "founder.example");
+});
+
+test("saved vercel settings override worker environment without breaking fallback", () => {
+  const envSettings = vercelSettingsFromEnv({
+    BUILDER_VERCEL_PREVIEWS: "true",
+    VERCEL_TOKEN: "env_token_1234567890",
+    VERCEL_PROJECT_ID: "env_project",
+    VERCEL_PRODUCTION_DOMAIN: "env.example",
+  });
+
+  assert.equal(mergeSavedVercelSettings(envSettings, null).projectId, "env_project");
+
+  const merged = mergeSavedVercelSettings(envSettings, {
+    token: "settings_token_1234567890",
+    projectId: "settings_project",
+    productionDomain: "https://settings.example/path",
+  });
+  assert.equal(merged.enabled, true);
+  assert.equal(merged.token, "settings_token_1234567890");
+  assert.equal(merged.projectId, "settings_project");
+  assert.equal(merged.productionDomain, "settings.example");
+  assert.equal(vercelIsConfigured(merged), true);
 });
 
 test("preview deployment sends a sanitized request and returns safe metadata", async () => {
