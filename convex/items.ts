@@ -1,6 +1,8 @@
 import { mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
 import {
   entityType,
   factStatus,
@@ -21,6 +23,7 @@ import {
 } from "./itemModel";
 import { actorFromIdentity, ensureDocWorkspace, requireCurrentUser, requireWorkspaceAccess } from "./authz";
 import { recordAuditEvent } from "./audit";
+import { inferMemorySensitivity, redactSecrets } from "./memoryModel";
 
 const publicItemStatus = v.union(
   v.literal("draft"),
@@ -28,6 +31,13 @@ const publicItemStatus = v.union(
   v.literal("under_review"),
   v.literal("approved"),
   v.literal("finalized"),
+);
+
+const memorySensitivity = v.union(
+  v.literal("public"),
+  v.literal("internal"),
+  v.literal("confidential"),
+  v.literal("sensitive"),
 );
 
 const workflowStep = v.object({
@@ -104,6 +114,14 @@ function summarizeContent(content?: string, fallback = "Saved to Library.") {
   const sentence = normalized.match(/^.{40,220}?[.!?](?:\s|$)/)?.[0]?.trim();
   const summary = sentence ?? normalized.slice(0, 180).trim();
   return summary.length < normalized.length ? `${summary.replace(/[,\s]+$/, "")}...` : summary;
+}
+
+async function scheduleMemoryExtraction(
+  ctx: MutationCtx,
+  itemId: Id<"items">,
+  versionId: Id<"itemVersions">,
+) {
+  await ctx.scheduler.runAfter(0, internal.memory.extractFromItem, { itemId, versionId });
 }
 
 function inferTitle(args: { title?: string; content?: string; sourceUrl?: string; fileNames?: string[] }) {
@@ -393,6 +411,7 @@ export const create = mutation({
       await ctx.db.patch(itemId, { legacyDocumentId: docId });
       await ctx.db.patch(versionId, { legacyDocumentVersionId: docVersionId });
     }
+    await scheduleMemoryExtraction(ctx, itemId, versionId);
 
     await recordAuditEvent(ctx, {
       ...actorFromIdentity(current.identity, current.user),
@@ -457,7 +476,10 @@ export const intake = mutation({
     const tags = inferTags(args.content, args.sourceUrl, fileNames);
     const wordCount = args.content.trim() ? args.content.trim().split(/\s+/).length : 0;
     const lineCount = args.content ? args.content.split(/\r?\n/).length : 0;
-    const extractedUrls = Array.from(args.content.matchAll(/https?:\/\/[^\s)]+/g), (match) => match[0]).slice(0, 10);
+    const extractedUrls = Array.from(
+      args.content.matchAll(/https?:\/\/[^\s)]+/g),
+      (match) => redactSecrets(match[0]).text,
+    ).slice(0, 10);
     const extractedEmails = Array.from(
       args.content.matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi),
       (match) => match[0],
@@ -479,10 +501,11 @@ export const intake = mutation({
           emails: extractedEmails,
         },
       },
-      searchText: [title, summary, args.content, tags.join(" "), fileNames?.join(" "), args.sourceUrl]
-        .filter(Boolean)
-        .join("\n")
-        .toLowerCase(),
+      searchText: redactSecrets(
+        [title, summary, args.content, tags.join(" "), fileNames?.join(" "), args.sourceUrl]
+          .filter(Boolean)
+          .join("\n"),
+      ).text.toLowerCase(),
     };
 
     const { itemId, versionId: itemVersionId } = await createItemWithVersion(ctx, {
@@ -549,6 +572,8 @@ export const intake = mutation({
         predicate: "mentions_url",
         object: extractedUrls[0],
         status: "observed",
+        sensitivity: inferMemorySensitivity(extractedUrls[0]),
+        isSensitive: inferMemorySensitivity(extractedUrls[0]) !== "internal",
         sourceItemId: itemId,
         sourceVersionId: itemVersionId,
         metadata: { count: extractedUrls.length, urls: extractedUrls },
@@ -565,6 +590,8 @@ export const intake = mutation({
         predicate: "mentions_email",
         object: extractedEmails[0],
         status: "observed",
+        sensitivity: "confidential",
+        isSensitive: true,
         sourceItemId: itemId,
         sourceVersionId: itemVersionId,
         metadata: { count: extractedEmails.length, emails: extractedEmails },
@@ -572,6 +599,7 @@ export const intake = mutation({
         updatedAt: now,
       });
     }
+    await scheduleMemoryExtraction(ctx, itemId, itemVersionId);
 
     await recordAuditEvent(ctx, {
       ...actorFromIdentity(current.identity, current.user),
@@ -604,6 +632,7 @@ export const update = mutation({
     const current = await requireCurrentUser(ctx);
     const item = ensureDocWorkspace(await ctx.db.get(args.itemId), current.workspaceId, "Item");
     const versionId = await appendItemVersion(ctx, args);
+    await scheduleMemoryExtraction(ctx, args.itemId, versionId);
     await recordAuditEvent(ctx, {
       ...actorFromIdentity(current.identity, current.user),
       workspaceId: current.workspaceId,
@@ -909,6 +938,7 @@ export const addFact = mutation({
     value: v.optional(v.any()),
     confidence: v.optional(v.number()),
     status: v.optional(factStatus),
+    sensitivity: v.optional(memorySensitivity),
     sourceItemId: v.optional(v.id("items")),
     sourceVersionId: v.optional(v.id("itemVersions")),
     validFrom: v.optional(v.number()),
@@ -924,16 +954,20 @@ export const addFact = mutation({
     if (args.itemId) ensureDocWorkspace(await ctx.db.get(args.itemId), current.workspaceId, "Item");
     if (args.sourceItemId) ensureDocWorkspace(await ctx.db.get(args.sourceItemId), current.workspaceId, "Source item");
     const now = Date.now();
+    const redactedObject = redactSecrets(args.object).text;
+    const sensitivity = args.sensitivity ?? inferMemorySensitivity(args.object);
     return await ctx.db.insert("facts", {
       workspaceId: current.workspaceId,
       entityId: args.entityId,
       itemId: args.itemId,
       subject: args.subject,
       predicate: args.predicate,
-      object: args.object,
+      object: redactedObject,
       value: args.value,
       confidence: args.confidence,
       status: args.status ?? "observed",
+      sensitivity,
+      isSensitive: sensitivity === "confidential" || sensitivity === "sensitive",
       sourceItemId: args.sourceItemId,
       sourceVersionId: args.sourceVersionId,
       validFrom: args.validFrom,

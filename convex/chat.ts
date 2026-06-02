@@ -166,6 +166,7 @@ async function buildReadOnlyChatPrompt(ctx: ActionCtx, args: {
   agentId: Id<"agents">;
   content: string;
   modelProfile?: string;
+  useMemory?: boolean;
 }): Promise<ReadOnlyChatPrompt> {
   const authorization = await ctx.runQuery(internal.chat.authorizeSessionForAction, {
     sessionId: args.sessionId,
@@ -192,6 +193,8 @@ async function buildReadOnlyChatPrompt(ctx: ActionCtx, args: {
       queryText: args.content,
       limit: 8,
       workspaceId: authorization.workspaceId,
+      purpose: "chat",
+      useMemory: args.useMemory,
     });
     libraryContext = context.text;
   } catch {
@@ -231,6 +234,7 @@ async function enqueueHomeMessageAction(ctx: ActionCtx, args: {
   agentId: Id<"agents">;
   content: string;
   modelProfile?: string;
+  useMemory?: boolean;
 }): Promise<SendHomeMessageResult> {
   const prepared = await buildReadOnlyChatPrompt(ctx, args);
   const intake = classifyHomeChatIntake(args.content);
@@ -251,6 +255,7 @@ async function enqueueHomeMessageAction(ctx: ActionCtx, args: {
     allowFreeRoute: intake.allowFreeRoute,
     requiresWork: intake.requiresWork,
     classification: intake.taskClassification,
+    useMemory: args.useMemory,
   }) as SendHomeMessageResult;
 }
 
@@ -412,6 +417,7 @@ export const sendHomeMessage = action({
     agentId: v.id("agents"),
     content: v.string(),
     modelProfile: v.optional(v.string()),
+    useMemory: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<SendHomeMessageResult> => {
     return await enqueueHomeMessageAction(ctx, args);
@@ -424,6 +430,7 @@ export const sendMessage = action({
     agentId: v.id("agents"),
     content: v.string(),
     modelProfile: v.optional(v.string()),
+    useMemory: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     await enqueueHomeMessageAction(ctx, args);
@@ -436,6 +443,7 @@ export const prepareLocalOpenCodeChat = action({
     agentId: v.id("agents"),
     content: v.string(),
     modelProfile: v.optional(v.string()),
+    useMemory: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const prepared = await buildReadOnlyChatPrompt(ctx, args);
@@ -496,6 +504,7 @@ export const enqueueHomeChatJob = internalMutation({
     allowFreeRoute: v.boolean(),
     requiresWork: v.boolean(),
     classification: taskClassification,
+    useMemory: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const current = await requireCurrentUser(ctx);
@@ -533,6 +542,7 @@ export const enqueueHomeChatJob = internalMutation({
         objective: args.content,
         sessionId: session._id,
         status: "pending_spec",
+        useMemory: args.useMemory,
       });
 
       taskId = await ctx.db.insert("tasks", {
@@ -548,6 +558,7 @@ export const enqueueHomeChatJob = internalMutation({
         workerKind: classification.workerKind,
         modelProfile,
         localRouting: workRouting,
+        useMemory: args.useMemory,
         retryCount: 0,
         updatedAt: now,
       });
@@ -562,6 +573,7 @@ export const enqueueHomeChatJob = internalMutation({
         classification,
         modelProfile,
         localRouting: workRouting,
+        useMemory: args.useMemory,
         status: "queued",
         title,
         attemptCount: 0,
@@ -602,6 +614,7 @@ export const enqueueHomeChatJob = internalMutation({
       allowFreeRoute: args.allowFreeRoute,
       requiresWork: args.requiresWork,
       classification: args.classification,
+      useMemory: args.useMemory,
       attemptCount: 0,
       maxAttempts: 2,
       createdAt: now,

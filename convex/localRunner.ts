@@ -1,4 +1,5 @@
 import { mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
@@ -514,6 +515,12 @@ export const complete = mutation({
             ...(status === "needs_review" ? { needsReview: true } : {}),
           },
         });
+    if (status === "completed") {
+      await ctx.scheduler.runAfter(0, internal.memory.extractFromCompletedWork, {
+        runId: args.runId,
+        itemId: output?.itemId,
+      });
+    }
 
     if (run.taskId) {
       await ctx.db.patch(run.taskId, {

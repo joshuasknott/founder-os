@@ -135,3 +135,4 @@ tests/            # Test files
 - [AI Worker Protocols](docs/4_AGENT_PROTOCOLS.md)
 - [Connector Runtime](docs/5_CONNECTOR_RUNTIME.md)
 - [Environment Setup](docs/7_ENVIRONMENT.md)
+- [Remembered Details](docs/8_MEMORY_LAYER.md)

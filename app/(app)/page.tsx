@@ -268,6 +268,7 @@ function HomePageContent() {
 
   const [mode, setMode] = useState<PromptMode>("chat");
   const [input, setInput] = useState("");
+  const [useRememberedDetails, setUseRememberedDetails] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -413,6 +414,7 @@ function HomePageContent() {
           sessionId,
           agentId: defaultWorker._id,
           content: trimmed,
+          useMemory: useRememberedDetails,
         }) as { directiveId?: Id<"directives">; requiresWork?: boolean };
         if (result.requiresWork) {
           setNotice("Added to Work. I'll keep you posted on progress.");
@@ -425,6 +427,7 @@ function HomePageContent() {
         title: titleFromPrompt(trimmed),
         objective: trimmed,
         sessionId,
+        useMemory: useRememberedDetails,
       });
 
       setMode("chat");
@@ -446,6 +449,7 @@ function HomePageContent() {
     mode,
     router,
     sendHomeMessage,
+    useRememberedDetails,
   ]);
 
   const handleRequestChanges = useCallback(async (content: string) => {
@@ -484,6 +488,8 @@ function HomePageContent() {
             inputRef={inputRef}
             isSending={isSending}
             onSend={handleSend}
+            useRememberedDetails={useRememberedDetails}
+            setUseRememberedDetails={setUseRememberedDetails}
           />
 
           {trimmedInput.length >= 2 && searchPreview ? (
@@ -621,6 +627,8 @@ function HomePageContent() {
             inputRef={inputRef}
             isSending={isSending}
             onSend={handleSend}
+            useRememberedDetails={useRememberedDetails}
+            setUseRememberedDetails={setUseRememberedDetails}
           />
           {notice && <p className="mt-2 text-xs font-medium text-text-secondary">{notice}</p>}
         </div>
@@ -638,6 +646,8 @@ function PromptBox({
   inputRef,
   isSending,
   onSend,
+  useRememberedDetails,
+  setUseRememberedDetails,
 }: {
   mode: PromptMode;
   setMode: (mode: PromptMode) => void;
@@ -646,6 +656,8 @@ function PromptBox({
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
   isSending: boolean;
   onSend: () => void;
+  useRememberedDetails: boolean;
+  setUseRememberedDetails: (value: boolean) => void;
 }) {
   const [isListening, setIsListening] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -799,6 +811,15 @@ function PromptBox({
               </>
             )}
           </div>
+          <label className="flex items-center gap-1.5 text-[11px] font-medium text-text-muted">
+            <input
+              type="checkbox"
+              checked={useRememberedDetails}
+              onChange={(event) => setUseRememberedDetails(event.target.checked)}
+              className="h-3.5 w-3.5 rounded border-black/20"
+            />
+            Use remembered details
+          </label>
 
           </div>
 

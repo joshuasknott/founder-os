@@ -108,6 +108,8 @@ No asset type should dominate the page. Internal areas may exist as quiet metada
 
 Library items should open into a selected item view. The item view should show a clear summary, source, related work, and versions when useful. Documents and saved outputs support manual editing by creating a new version. Version history belongs only inside the selected item view, not as a global Library screen.
 
+FounderOS may extract a conservative set of remembered business details from Library saves and completed work. The direct controls stay under Settings: view, refresh, add, edit, delete, and disable. Home exposes only a per-request `Use remembered details` checkbox. Do not add a top-level memory route or expose extraction, embedding, scoring, worker, model, or provider mechanics.
+
 Completed tasks, conversations, schedules, and decisions should be reachable for continuity without turning Library into an activity feed.
 
 ## Schedules

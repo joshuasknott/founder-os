@@ -25,6 +25,7 @@ Core stack: Next.js App Router, Convex, BetterAuth, Tailwind CSS.
 - [Backend Schema](./docs/3_BACKEND_SCHEMA.md): Convex table mapping and minimal initialization rules.
 - [AI Worker Protocols](./docs/4_AGENT_PROTOCOLS.md): worker roles, surface behavior, language rules, and approval boundaries.
 - [Hidden Runtime](./docs/5_CONNECTOR_RUNTIME.md): hidden work runtime, connector visibility, Library knowledge, Schedules, and current implementation boundary.
+- [Remembered Details](./docs/8_MEMORY_LAYER.md): safe extraction, redaction, retrieval gates, founder controls, and operator refresh notes.
 
 ## Implementation Notes
 

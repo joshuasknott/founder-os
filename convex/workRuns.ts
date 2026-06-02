@@ -1,4 +1,5 @@
 import { mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
@@ -27,6 +28,8 @@ import { projectFounderVisibleWorkflowStatus, taskDependenciesAreComplete } from
 import { selectDocumentContextCandidates } from "./documentContextRuntime";
 import { actorFromIdentity, ensureDocWorkspace, requireCurrentUser, requireWorkerToken, workerActor } from "./authz";
 import { recordAuditEvent } from "./audit";
+import { buildMemoryContext } from "./memory";
+import { inferMemorySensitivity } from "./memoryModel";
 
 const workRunKind = v.union(
   v.literal("code_preview"),
@@ -386,6 +389,7 @@ export async function saveRunOutputToLibrary(
   }
 
   await ctx.db.patch(itemVersionId, { legacyDocumentVersionId: documentVersionId });
+  await ctx.scheduler.runAfter(0, internal.memory.extractFromItem, { itemId, versionId: itemVersionId });
 
   const artifactPatch = {
     title: output.title,
@@ -478,6 +482,7 @@ export const create = mutation({
       workerKind: args.workerKind,
       classification: args.classification,
       localRouting,
+      useMemory: directive.useMemory,
       status: "queued",
       title: args.title,
       summary: args.summary,
@@ -566,10 +571,50 @@ export const getDocumentContext = query({
       };
     }));
 
-    return selectDocumentContextCandidates({
+    const libraryContext = selectDocumentContextCandidates({
       queryText,
       requestSensitivity,
       candidates,
+    });
+    const remembered = await buildMemoryContext(ctx, {
+      workspaceId: run.workspaceId,
+      queryText,
+      purpose: "document",
+      requestSensitivity: inferMemorySensitivity(queryText),
+      useMemory: run.useMemory,
+      limit: 4,
+    });
+    return [
+      ...libraryContext,
+      ...remembered.entries.map((entry) => ({
+        id: String(entry._id),
+        title: entry.label,
+        summary: "Remembered detail",
+        excerpt: entry.value,
+        sensitivity: entry.sensitivity,
+      })),
+    ].slice(0, 6);
+  },
+});
+
+export const getTaskMemoryContext = query({
+  args: {
+    runId: v.id("workRuns"),
+    workerToken: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireWorkerToken(args.workerToken);
+    const run = await ctx.db.get(args.runId);
+    if (!run?.workspaceId) return { enabled: false, text: "", entries: [] };
+    const directive = await ctx.db.get(run.directiveId);
+    const queryText = `${run.title}\n${directive?.objective ?? ""}`;
+    return await buildMemoryContext(ctx, {
+      workspaceId: run.workspaceId,
+      queryText,
+      purpose: run.kind === "code_preview" ? "builder" : "workflow",
+      requestSensitivity: inferMemorySensitivity(queryText),
+      useMemory: run.useMemory,
+      limit: 6,
     });
   },
 });
@@ -969,6 +1014,10 @@ export const markCompleted = mutation({
     });
 
     const output = await saveRunOutputToLibrary(ctx, run);
+    await ctx.scheduler.runAfter(0, internal.memory.extractFromCompletedWork, {
+      runId: args.runId,
+      itemId: output?.itemId,
+    });
     if (run.taskId) {
       await ctx.db.patch(run.taskId, {
         status: "completed",
@@ -1045,6 +1094,10 @@ export const completeWithResult = mutation({
       content: args.content,
       previewUrl: args.previewUrl,
       metadata: args.metadata,
+    });
+    await ctx.scheduler.runAfter(0, internal.memory.extractFromCompletedWork, {
+      runId: args.runId,
+      itemId: output?.itemId,
     });
     if (run.taskId) {
       await ctx.db.patch(run.taskId, {

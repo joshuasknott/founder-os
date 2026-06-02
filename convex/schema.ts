@@ -175,6 +175,30 @@ const chatJobStatus = v.union(
   v.literal("failed")
 );
 
+const memoryType = v.union(
+  v.literal("founder_preference"),
+  v.literal("business_fact"),
+  v.literal("decision"),
+  v.literal("recurring_workflow"),
+  v.literal("person"),
+  v.literal("company"),
+  v.literal("product"),
+  v.literal("reusable_context")
+);
+
+const memorySensitivity = v.union(
+  v.literal("public"),
+  v.literal("internal"),
+  v.literal("confidential"),
+  v.literal("sensitive")
+);
+
+const memorySourceKind = v.union(
+  v.literal("library_item"),
+  v.literal("completed_work"),
+  v.literal("manual")
+);
+
 export default defineSchema({
   // ===========================================================================
   // 0. THE BUSINESS SHELL (Workspace -> internal areas -> Library -> Versions)
@@ -478,6 +502,7 @@ export default defineSchema({
       v.literal("completed")
     ),
     tokenBudgetUSD: v.optional(v.number()),
+    useMemory: v.optional(v.boolean()),
     archivedAt: v.optional(v.number()),
   })
     .index("by_status", ["status"])
@@ -507,6 +532,7 @@ export default defineSchema({
     workerKind: v.optional(workerKind),
     modelProfile: v.optional(v.string()),
     localRouting: v.optional(localRunRouting),
+    useMemory: v.optional(v.boolean()),
     outputItemId: v.optional(v.id("items")),
     outputDocumentId: v.optional(v.id("documents")),
     failureReason: v.optional(v.string()),
@@ -630,6 +656,7 @@ export default defineSchema({
     verifierRequired: v.boolean(),
     allowFreeRoute: v.boolean(),
     requiresWork: v.boolean(),
+    useMemory: v.optional(v.boolean()),
     classification: v.optional(taskClassification),
     attemptCount: v.optional(v.number()),
     maxAttempts: v.optional(v.number()),
@@ -757,6 +784,8 @@ export default defineSchema({
     value: v.optional(v.any()),
     confidence: v.optional(v.number()),
     status: factStatus,
+    sensitivity: v.optional(memorySensitivity),
+    isSensitive: v.optional(v.boolean()),
     sourceItemId: v.optional(v.id("items")),
     sourceVersionId: v.optional(v.id("itemVersions")),
     validFrom: v.optional(v.number()),
@@ -769,6 +798,35 @@ export default defineSchema({
     .index("by_item", ["itemId"])
     .index("by_source_item", ["sourceItemId"])
     .index("by_workspace_predicate", ["workspaceId", "predicate"]),
+
+  memoryEntries: defineTable({
+    workspaceId: v.id("workspaces"),
+    type: memoryType,
+    label: v.string(),
+    value: v.string(),
+    canonicalKey: v.string(),
+    searchText: v.string(),
+    sensitivity: memorySensitivity,
+    status: v.union(v.literal("active"), v.literal("deleted")),
+    sourceKind: memorySourceKind,
+    sourceItemId: v.optional(v.id("items")),
+    sourceVersionId: v.optional(v.id("itemVersions")),
+    sourceRunId: v.optional(v.id("workRuns")),
+    metadata: v.optional(v.any()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    deletedAt: v.optional(v.number()),
+  })
+    .index("by_workspace", ["workspaceId"])
+    .index("by_workspace_key", ["workspaceId", "canonicalKey"])
+    .index("by_source_item", ["sourceItemId"])
+    .index("by_source_run", ["sourceRunId"]),
+
+  memorySettings: defineTable({
+    workspaceId: v.id("workspaces"),
+    enabled: v.boolean(),
+    updatedAt: v.number(),
+  }).index("by_workspace", ["workspaceId"]),
 
   savedViews: defineTable({
     workspaceId: v.optional(v.id("workspaces")),
@@ -847,6 +905,7 @@ export default defineSchema({
       )
     ),
     ownerId: v.optional(v.id("users")),
+    useMemory: v.optional(v.boolean()),
     metadata: v.optional(v.any()),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -1021,6 +1080,7 @@ export default defineSchema({
     classification: v.optional(taskClassification),
     modelProfile: v.optional(v.string()),
     localRouting: v.optional(localRunRouting),
+    useMemory: v.optional(v.boolean()),
     status: v.union(
       v.literal("queued"),
       v.literal("working"),

@@ -5,6 +5,7 @@ import { useClerk, useUser } from "@clerk/nextjs";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { ConnectedServicesSettings } from "@/components/settings/connected-services-settings";
+import { RememberedDetailsSettings } from "@/components/settings/remembered-details-settings";
 import { Mail, Save, User, Camera, Building, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -246,6 +247,8 @@ export default function SettingsPage() {
             </div>
           </form>
         </div>
+
+        <RememberedDetailsSettings />
 
         <ConnectedServicesSettings />
 

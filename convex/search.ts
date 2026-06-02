@@ -4,6 +4,8 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { ensureDocWorkspace, requireCurrentUser } from "./authz";
+import { canUseLibraryContext } from "./documentContextRuntime";
+import { inferMemorySensitivity } from "./memoryModel";
 
 type GroupId = "library" | "versions" | "chats" | "tasks" | "work" | "facts" | "entities";
 
@@ -301,6 +303,8 @@ async function buildKeywordResults(
     includeArchived?: boolean;
     itemId?: Id<"items">;
     workspaceId?: Id<"workspaces">;
+    automaticContext?: boolean;
+    requestSensitivity?: "public" | "internal" | "confidential" | "sensitive";
   },
 ) {
   const terms = queryTerms(args.queryText);
@@ -367,6 +371,7 @@ async function buildKeywordResults(
 
   for (const item of scopedItems) {
     if (!args.includeArchived && (item.status === "archived" || item.status === "deprecated")) continue;
+    if (args.automaticContext && item.status !== "approved" && item.status !== "finalized") continue;
     const searchableText = [
       item.title,
       item.summary,
@@ -398,6 +403,14 @@ async function buildKeywordResults(
   for (const version of itemVersions as Doc<"itemVersions">[]) {
     const item = itemsById.get(version.itemId);
     if (!item || (!args.includeArchived && (item.status === "archived" || item.status === "deprecated"))) continue;
+    if (args.automaticContext && !canUseLibraryContext({
+      id: String(item._id),
+      title: item.title,
+      summary: item.summary,
+      content: version.content ?? "",
+      status: item.status,
+      metadata: item.metadata,
+    }, args.requestSensitivity === "sensitive" ? "restricted" : args.requestSensitivity ?? "internal")) continue;
     const searchableText = [item.title, version.title, version.summary, version.content, version.sourceUrl].join(" ");
     addCandidate(
       candidates,
@@ -424,6 +437,13 @@ async function buildKeywordResults(
       ? (await ctx.db.get(document.currentVersionId)) as Doc<"documentVersions"> | null
       : null;
     const searchableText = [document.title, document.summary, document.kind, currentVersion?.content, currentVersion?.summary].join(" ");
+    if (args.automaticContext && !canUseLibraryContext({
+      id: String(document._id),
+      title: document.title,
+      summary: document.summary,
+      content: currentVersion?.content ?? "",
+      status: document.status,
+    }, args.requestSensitivity === "sensitive" ? "restricted" : args.requestSensitivity ?? "internal")) continue;
     addCandidate(
       candidates,
       {
@@ -569,6 +589,11 @@ async function buildKeywordResults(
   }
 
   for (const fact of scopedFacts) {
+    if (args.automaticContext && (
+      fact.predicate.startsWith("remembered_") ||
+      fact.sensitivity === "sensitive" ||
+      (fact.sensitivity === "confidential" && args.requestSensitivity !== "confidential" && args.requestSensitivity !== "sensitive")
+    )) continue;
     const itemId = fact.itemId ?? fact.sourceItemId;
     addCandidate(
       candidates,
@@ -590,6 +615,8 @@ async function buildKeywordResults(
   }
 
   for (const entity of scopedEntities) {
+    const sourceItem = entity.sourceItemId ? itemsById.get(entity.sourceItemId) : undefined;
+    if (args.automaticContext && sourceItem && sourceItem.status !== "approved" && sourceItem.status !== "finalized") continue;
     addCandidate(
       candidates,
       {
@@ -773,6 +800,8 @@ export const keywordContext = internalQuery({
     itemId: v.optional(v.id("items")),
     limit: v.optional(v.number()),
     workspaceId: v.optional(v.id("workspaces")),
+    automaticContext: v.optional(v.boolean()),
+    requestSensitivity: v.optional(v.union(v.literal("public"), v.literal("internal"), v.literal("confidential"), v.literal("sensitive"))),
   },
   handler: async (ctx, args) => {
     const results = await buildKeywordResults(ctx, {
@@ -781,6 +810,8 @@ export const keywordContext = internalQuery({
       limit: args.limit ?? 12,
       includeArchived: false,
       workspaceId: args.workspaceId,
+      automaticContext: args.automaticContext,
+      requestSensitivity: args.requestSensitivity,
     });
     return {
       groups: groupResults(results.map(withoutScore)),
@@ -808,6 +839,8 @@ export const retrieveContext = internalAction({
     itemId: v.optional(v.id("items")),
     limit: v.optional(v.number()),
     workspaceId: v.optional(v.id("workspaces")),
+    purpose: v.optional(v.union(v.literal("chat"), v.literal("document"), v.literal("workflow"), v.literal("builder"))),
+    useMemory: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<{
     text: string;
@@ -820,7 +853,20 @@ export const retrieveContext = internalAction({
       itemId: args.itemId,
       limit,
       workspaceId: args.workspaceId,
+      automaticContext: true,
+      requestSensitivity: inferMemorySensitivity(args.queryText),
     });
+    const requestSensitivity = inferMemorySensitivity(args.queryText);
+    const memory = args.workspaceId
+      ? await ctx.runQuery(internal.memory.retrieveForTask, {
+          workspaceId: args.workspaceId,
+          queryText: args.queryText,
+          purpose: args.purpose ?? "chat",
+          requestSensitivity,
+          useMemory: args.useMemory,
+          limit,
+        })
+      : { text: "", entries: [] };
 
     const semanticMatches: Array<{ title: string; content: string }> = [];
     try {
@@ -853,6 +899,14 @@ export const retrieveContext = internalAction({
         if (!version) continue;
         const item = itemsById.get(version.itemId);
         if (!item || item.status === "archived" || item.status === "deprecated") continue;
+        if (!canUseLibraryContext({
+          id: String(item._id),
+          title: item.title,
+          summary: item.summary,
+          content: version.content ?? "",
+          status: item.status,
+          metadata: item.metadata,
+        }, requestSensitivity === "sensitive" ? "restricted" : requestSensitivity)) continue;
         semanticMatches.push({
           title: cleanDisplayText(version.title ?? item.title),
           content: cleanDisplayText([version.summary, version.content].filter(Boolean).join("\n")).slice(0, 1200),
@@ -866,6 +920,8 @@ export const retrieveContext = internalAction({
       const documentMatches = await ctx.runAction(internal.memory.queryMemory, {
         queryText: args.queryText,
         limit: Math.min(limit, 4),
+        workspaceId: args.workspaceId,
+        requestSensitivity,
       });
       for (const match of documentMatches) {
         semanticMatches.push({
@@ -877,15 +933,18 @@ export const retrieveContext = internalAction({
       // Existing document embeddings are optional context, not a hard dependency.
     }
 
-    const keywordLines = keyword.groups.flatMap((group) =>
+    const keywordLines = keyword.groups
+      .filter((group) => ["library", "versions", "facts", "entities"].includes(group.id))
+      .flatMap((group) =>
       group.results.slice(0, 4).map((result) => `- ${group.label}: ${result.title}${result.excerpt ? ` — ${result.excerpt}` : ""}`),
-    );
+      );
     const semanticLines = semanticMatches
       .slice(0, 6)
       .map((match) => `- Library: ${match.title}${match.content ? ` — ${match.content}` : ""}`);
 
     return {
       text: [
+        memory.text,
         keywordLines.length ? "Relevant workspace context:\n" + keywordLines.join("\n") : "",
         semanticLines.length ? "Additional Library context:\n" + semanticLines.join("\n") : "",
       ]

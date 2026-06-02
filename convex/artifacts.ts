@@ -1,4 +1,7 @@
 import { mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
 import {
   appendItemVersion,
@@ -31,6 +34,15 @@ const legacySeedTitles = new Set([
 
 function isLegacySeedLibraryItem(doc: { title: string; author: string; traceId?: unknown }) {
   return doc.author === "FounderOS" && doc.traceId === undefined && legacySeedTitles.has(doc.title);
+}
+
+async function scheduleMemoryExtraction(
+  ctx: MutationCtx,
+  itemId?: Id<"items">,
+  versionId?: Id<"itemVersions">,
+) {
+  if (!itemId || !versionId) return;
+  await ctx.scheduler.runAfter(0, internal.memory.extractFromItem, { itemId, versionId });
 }
 
 export const list = query({
@@ -189,6 +201,7 @@ export const create = mutation({
     await ctx.db.patch(docId, { currentVersionId: versionId });
     await ctx.db.patch(itemId, { legacyDocumentId: docId });
     await ctx.db.patch(itemVersionId, { legacyDocumentVersionId: versionId });
+    await scheduleMemoryExtraction(ctx, itemId, itemVersionId);
     await recordAuditEvent(ctx, {
       ...actorFromIdentity(current.identity, current.user),
       workspaceId: current.workspaceId,
@@ -249,6 +262,7 @@ export const update = mutation({
     if (itemVersionId) {
       await ctx.db.patch(itemVersionId, { legacyDocumentVersionId: versionId });
     }
+    await scheduleMemoryExtraction(ctx, doc.itemId, itemVersionId);
 
     await recordAuditEvent(ctx, {
       ...actorFromIdentity(current.identity, current.user),
@@ -430,6 +444,7 @@ export const revert = mutation({
     if (itemVersionId) {
       await ctx.db.patch(itemVersionId, { legacyDocumentVersionId: revertedVersionId });
     }
+    await scheduleMemoryExtraction(ctx, doc.itemId, itemVersionId);
 
     return revertedVersionId;
   },

@@ -11,7 +11,7 @@ FounderOS uses Convex for live workspace data. Some table names preserve earlier
 - `localRunners` records local processes that can lease hidden Work safely from Convex.
 - `items` and `itemVersions` are the unified FounderOS knowledge model.
 - `documents` and `documentVersions` remain the editable Library compatibility layer used by the current UI.
-- `itemRelations`, `entities`, and `facts` store relationships and structured knowledge behind Library search and context.
+- `itemRelations`, `entities`, `facts`, `memoryEntries`, and `memorySettings` store relationships and structured knowledge behind Library search and hidden remembered context.
 - `savedViews` store pinned business views. `workflows` store durable founder-facing business processes.
 - `scheduleItems` with the legacy internal kind `automation` are founder-facing Schedules.
 - `departments`, `agents`, and `playbooks` are internal foundations for assigning work to professional AI roles. Starter `playbooks` are hidden templates behind founder-visible workflows.
@@ -141,7 +141,7 @@ OpenCode subscriptions.
 
 - subject, predicate, object, optional typed value
 - optional entity/item/source links
-- confidence, status, validity window, metadata, and timestamps
+- confidence, status, sensitivity marker, validity window, metadata, and timestamps
 
 `documents`
 
@@ -169,6 +169,17 @@ OpenCode subscriptions.
 - `summary`
 - optional embedding
 
+`memoryEntries`
+
+- stores founder preferences, business facts, decisions, recurring workflows, people, companies, products, and reusable context
+- stores a normalized deduplication key, sensitivity, source Library item or completed work record, and deletion tombstone
+- never acts as a credential store; secret-like values are rejected or redacted before indexing
+
+`memorySettings`
+
+- stores the workspace-level plain-language `Use remembered details` switch
+- defaults to enabled when a workspace has no row
+
 Library queries should hide archived records by default and expose saved outputs by Work item when Home, Work, or the AI sidebar needs result links.
 
 Library item kinds can include documents, files, websites, presentations, tools, task outputs, conversations, decisions, research, customer notes, and records. New code should use `items.kind` for the canonical model, while `documents.kind` stays available for the current Library UI. Department tags are internal metadata only.
@@ -176,6 +187,8 @@ Library item kinds can include documents, files, websites, presentations, tools,
 `documentVersions` power manual edits and generated revisions. Version history should be queried only for the selected item view.
 
 Library should support queryable knowledge behavior. Structured summaries, source links, embeddings, relationship metadata, and retrieval signals may exist internally, but founders should see search results, answers, related items, and source explanations instead of graph mechanics.
+
+Remembered details are the durable operating-context subset of Library knowledge. Safe extraction runs after Library saves, connector imports, and completed work outputs. Settings provides view, refresh, add, edit, delete, and disable controls. Home provides a per-request `Use remembered details` switch. See [Remembered Details](./8_MEMORY_LAYER.md).
 
 ### Compatibility and Migration
 

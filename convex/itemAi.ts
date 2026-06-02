@@ -250,6 +250,8 @@ export const run = action({
       itemId: args.itemId,
       limit: args.includeRelatedContext === false ? 4 : 10,
       workspaceId: snapshot.item.workspaceId,
+      purpose: "document",
+      useMemory: args.includeRelatedContext,
     });
 
     if (args.actionKind === "start_task") {
@@ -582,6 +584,10 @@ export const createRevision = internalMutation({
         await ctx.db.patch(versionId, { legacyDocumentVersionId: documentVersionId });
       }
     }
+    await ctx.scheduler.runAfter(0, internal.memory.extractFromItem, {
+      itemId: args.itemId,
+      versionId,
+    });
 
     await recordAuditEvent(ctx, {
       actorId: "system",

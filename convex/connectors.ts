@@ -229,6 +229,20 @@ const internalConnectors = anyApi.connectors as unknown as {
     metadata?: unknown;
   }, unknown>;
 };
+const internalMemory = anyApi.memory as unknown as {
+  extractFromItem: FunctionReference<"mutation", "internal", {
+    itemId: string;
+    versionId?: string;
+  }, unknown>;
+};
+
+async function scheduleConnectorMemoryExtraction(
+  ctx: MutationCtx,
+  itemId: Id<"items">,
+  versionId: Id<"itemVersions">,
+) {
+  await ctx.scheduler.runAfter(0, internalMemory.extractFromItem, { itemId, versionId });
+}
 
 function isStripeFactMetadata(metadata: unknown) {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false;
@@ -349,6 +363,7 @@ async function upsertStripePreparedItem(
       metadata: imported.metadata,
       updatedAt: args.now,
     });
+    await scheduleConnectorMemoryExtraction(ctx, existing._id, versionId);
 
     return { itemId: existing._id, versionId, storedExternalId: imported.externalId };
   }
@@ -370,6 +385,7 @@ async function upsertStripePreparedItem(
     metadata: imported.metadata,
     createdAt: args.now,
   });
+  await scheduleConnectorMemoryExtraction(ctx, created.itemId, created.versionId);
 
   return { itemId: created.itemId, versionId: created.versionId, storedExternalId: imported.externalId };
 }
@@ -405,6 +421,8 @@ async function replaceStripeFactsForItem(
       value: fact.value,
       confidence: fact.confidence,
       status: fact.status,
+      sensitivity: "confidential",
+      isSensitive: true,
       validFrom: fact.validFrom,
       metadata: fact.metadata,
       createdAt: args.now,
@@ -542,6 +560,7 @@ export const persistGitHubRepositoryContext = internalMutation({
         createdAt: now,
       });
     }
+    await scheduleConnectorMemoryExtraction(ctx, itemId, versionId);
 
     return { itemId, versionId, safeSummary: "Repository context is ready in Library." };
   },
@@ -2482,6 +2501,7 @@ export const importContent = mutation({
         createdAt: now,
       });
     }
+    await scheduleConnectorMemoryExtraction(ctx, itemId, versionId);
 
     await ctx.db.insert("connectorActionLogs", {
       workspaceId: args.workspaceId,
@@ -2648,7 +2668,6 @@ export const executeConnectorAction = action({
         workspaceId: args.workspaceId,
       });
     }
-
     const definition = getConnectorDefinition(args.connectorId);
     const connection = await ctx.runQuery(internalConnectors.getConnectorConnectionForSync, {
       workspaceId: args.workspaceId,

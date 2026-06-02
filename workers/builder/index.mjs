@@ -1254,6 +1254,7 @@ function buildTaskSpec(run, directive, workspace, builderAgent = BUILDER_AGENT) 
       objective: directive.objective,
       runKind: run.kind,
       outputKind,
+      rememberedDetails: directive.memoryContext || undefined,
     },
     productPlan,
     builder: {
@@ -2500,8 +2501,16 @@ async function processRun(client, run) {
     workerToken: workerToken(),
   });
   if (!directive) throw new Error("Task not found.");
+  const memoryContext = await client.query(api.workRuns.getTaskMemoryContext, {
+    runId: run._id,
+    workerToken: workerToken(),
+  });
+  const contextualDirective = {
+    ...directive,
+    memoryContext: memoryContext.text || undefined,
+  };
 
-  const builderAgent = await builderAgentForRun(client, run, directive);
+  const builderAgent = await builderAgentForRun(client, run, contextualDirective);
   const builderAdapter = builderAgent.adapter;
   const builderProvider = builderAgent.provider;
 
@@ -2512,11 +2521,11 @@ async function processRun(client, run) {
   }
 
   if (builderAdapter === "opencode") {
-    await runOpenCodeBuilder(client, run, directive, builderAgent);
+    await runOpenCodeBuilder(client, run, contextualDirective, builderAgent);
   } else if (builderAdapter === "llm") {
-    await runLlmBuilder(client, run, directive);
+    await runLlmBuilder(client, run, contextualDirective);
   } else if (builderAdapter === "codex") {
-    await runCodex(client, run, directive);
+    await runCodex(client, run, contextualDirective);
   } else {
     throw new Error(builderProviderHelp(builderProvider));
   }

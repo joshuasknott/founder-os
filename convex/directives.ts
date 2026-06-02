@@ -64,6 +64,7 @@ export const createDirective = mutation({
     objective: v.string(),
     sessionId: v.optional(v.id("chatSessions")),
     modelProfile: v.optional(v.string()),
+    useMemory: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const current = await requireCurrentUser(ctx);
@@ -89,6 +90,7 @@ export const createDirective = mutation({
       objective: args.objective,
       sessionId: args.sessionId,
       status: "pending_spec",
+      useMemory: args.useMemory,
     });
 
     const now = Date.now();
@@ -105,6 +107,7 @@ export const createDirective = mutation({
       workerKind: classification.workerKind,
       modelProfile,
       localRouting,
+      useMemory: args.useMemory,
       retryCount: 0,
       updatedAt: now,
     });
@@ -119,6 +122,7 @@ export const createDirective = mutation({
       modelProfile,
       localRouting,
       status: "queued",
+      useMemory: args.useMemory,
       title: args.title,
       attemptCount: 0,
       maxAttempts: 3,
@@ -227,6 +231,7 @@ export const addClarification = mutation({
     await ctx.db.patch(args.directiveId, {
       objective: refinement.updatedObjective,
       status: "pending_spec",
+      useMemory: directive.useMemory,
       ...(sessionId ? { sessionId } : { sessionId: undefined }),
     });
 
@@ -243,6 +248,7 @@ export const addClarification = mutation({
       workerKind: classification.workerKind,
       modelProfile,
       localRouting,
+      useMemory: directive.useMemory,
       retryCount: 0,
       updatedAt: now,
     });
@@ -257,6 +263,7 @@ export const addClarification = mutation({
       modelProfile,
       localRouting,
       status: "queued",
+      useMemory: directive.useMemory,
       title: refinement.title,
       trigger: "chat",
       attemptCount: 0,

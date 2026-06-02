@@ -14,6 +14,8 @@ import {
   buildWorkflowObjective,
   workflowFromTemplate,
 } from "./workflowRuntime";
+import { buildMemoryContext } from "./memory";
+import { inferMemorySensitivity } from "./memoryModel";
 
 const cadence = v.union(
   v.literal("once"),
@@ -152,6 +154,7 @@ export async function createWorkflowRun(
     title: plan.title,
     objective: plan.objective,
     status: "pending_spec",
+    useMemory: workflow.useMemory,
   });
 
   const taskIds = new Map<string, Id<"tasks">>();
@@ -170,6 +173,14 @@ export async function createWorkflowRun(
     if (dependencies.length !== step.dependencyKeys.length) {
       throw new Error(`Workflow step "${step.key}" has an invalid dependency.`);
     }
+    const remembered = await buildMemoryContext(ctx, {
+      workspaceId: workflow.workspaceId,
+      queryText: `${step.title}\n${step.description}`,
+      purpose: "workflow",
+      requestSensitivity: inferMemorySensitivity(`${step.title}\n${step.description}`),
+      useMemory: workflow.useMemory,
+      limit: 4,
+    });
     const taskId = await ctx.db.insert("tasks", {
       workspaceId: workflow.workspaceId,
       directiveId,
@@ -184,6 +195,7 @@ export async function createWorkflowRun(
       classification: step.classification,
       workerKind: step.classification.workerKind,
       localRouting: step.localRouting,
+      useMemory: workflow.useMemory,
       retryCount: 0,
       updatedAt: now,
     });
@@ -202,9 +214,11 @@ export async function createWorkflowRun(
       workerKind: step.classification.workerKind,
       classification: step.classification,
       localRouting: step.localRouting,
+      useMemory: workflow.useMemory,
       status: "queued",
       title: step.title,
       summary: `Part of ${workflow.title}.`,
+      internalNotes: remembered.text || undefined,
       attemptCount: 0,
       maxAttempts: 3,
       createdAt: now,
