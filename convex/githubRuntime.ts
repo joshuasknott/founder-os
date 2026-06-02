@@ -350,7 +350,7 @@ export async function fetchGitHubRepositoryContext(args: {
     content,
     sourceUrl: repo.html_url ?? readme?.html_url,
     authorName: "GitHub",
-    tags: ["repository", "product work", ...topics],
+    tags: ["repository", "opencode", ...topics],
     sourceName: fullName,
     externalUpdatedAt: Number.isNaN(updatedAt) ? undefined : updatedAt,
     metadata: {

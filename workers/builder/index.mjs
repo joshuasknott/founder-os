@@ -159,6 +159,7 @@ function buildBuilderAgentEnv(env = process.env) {
     "BUILDER_OPENCODE_AGENT",
     "BUILDER_OPENCODE_ATTACH_URL",
     "BUILDER_MODEL",
+    "FOUNDEROS_OPENCODE_CLASSIFICATION_MODEL",
     "FOUNDEROS_OPENCODE_BUSINESS_MODEL",
     "FOUNDEROS_OPENCODE_PLANNING_MODEL",
     "FOUNDEROS_OPENCODE_CODING_MODEL",
@@ -176,6 +177,7 @@ function buildBuilderAgentEnv(env = process.env) {
     "OPENROUTER_API_KEY",
     "OPENROUTER_BASE_URL",
     "OPENROUTER_MODEL",
+    "FOUNDEROS_ENABLE_DIRECT_ZAI",
     "ZAI_API_KEY",
     "ZAI_MODEL",
     "Z_AI_API_KEY",
@@ -214,6 +216,9 @@ function deepSeekKey() {
 }
 
 function zAiKey() {
+  if ((process.env.FOUNDEROS_ENABLE_DIRECT_ZAI || readLocalEnv("FOUNDEROS_ENABLE_DIRECT_ZAI")) !== "true") {
+    return undefined;
+  }
   return (
     process.env.ZAI_API_KEY ||
     process.env.Z_AI_API_KEY ||
@@ -1236,7 +1241,9 @@ function extractLlmJson(text) {
 async function callLlmBuildModel(prompt) {
   const apiKey = llmApiKey();
   if (!apiKey) {
-    throw new Error("Set BUILDER_LLM_API_KEY, DEEPSEEK_API_KEY, or ZAI_API_KEY before running the LLM builder.");
+    throw new Error(
+      "Set BUILDER_LLM_API_KEY for the manual LLM builder, DEEPSEEK_API_KEY for manual escalation, or FOUNDEROS_ENABLE_DIRECT_ZAI=true with ZAI_API_KEY for the manual direct Z.ai adapter.",
+    );
   }
 
   const response = await fetch(llmChatCompletionsUrl(), {

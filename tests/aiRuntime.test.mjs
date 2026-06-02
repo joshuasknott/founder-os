@@ -42,14 +42,37 @@ function resetRuntime() {
   delete process.env.ZAI_API_KEY;
   delete process.env.Z_AI_API_KEY;
   delete process.env.ZHIPU_API_KEY;
+  delete process.env.FOUNDEROS_ENABLE_DIRECT_ZAI;
   globalThis.fetch = originalFetch;
 }
 
 test.beforeEach(resetRuntime);
 test.afterEach(resetRuntime);
 
-test("chat routes through the core runtime and reports safe usage metadata", async () => {
-  process.env.DEEPSEEK_API_KEY = "test-key";
+test("routine chat does not use a direct Z.ai key unless manual direct mode is enabled", async () => {
+  process.env.ZAI_API_KEY = "test-key";
+  let callCount = 0;
+  globalThis.fetch = async () => {
+    callCount += 1;
+    return Response.json({
+      choices: [{ message: { content: "Direct answer." } }],
+    });
+  };
+
+  await assert.rejects(
+    ai.executeChat({
+      tier: 1,
+      systemPrompt: "Read only.",
+      userPrompt: "What should I do?",
+    }),
+    /FounderOS could not reach the AI service yet/,
+  );
+  assert.equal(callCount, 0);
+});
+
+test("manual direct Z.ai mode reports safe usage metadata without changing founder labels", async () => {
+  process.env.FOUNDEROS_ENABLE_DIRECT_ZAI = "true";
+  process.env.ZAI_API_KEY = "test-key";
   let requestBody;
   globalThis.fetch = async (_url, init) => {
     requestBody = JSON.parse(init.body);
@@ -68,16 +91,17 @@ test("chat routes through the core runtime and reports safe usage metadata", asy
   });
 
   assert.equal(result.content, "Here is a read-only answer.");
-  assert.equal(requestBody.model, "deepseek-chat");
+  assert.equal(requestBody.model, "glm-4.7");
   assert.equal(seenUsage.length, 1);
   assert.equal(seenUsage[0].useCase, "chat");
   assert.equal(seenUsage[0].tokensUsed, 125);
   assert.equal(seenUsage[0].model, "core:chat");
-  assert.equal(seenUsage[0].costUSD > 0, true);
+  assert.equal(seenUsage[0].costUSD >= 0, true);
 });
 
 test("structured classification returns parsed JSON with conservative validation", async () => {
-  process.env.DEEPSEEK_API_KEY = "test-key";
+  process.env.FOUNDEROS_ENABLE_DIRECT_ZAI = "true";
+  process.env.ZAI_API_KEY = "test-key";
   globalThis.fetch = async () =>
     Response.json({
       choices: [
@@ -106,7 +130,58 @@ test("structured classification returns parsed JSON with conservative validation
   assert.equal(result.parsed.confidence, 0.82);
 });
 
-test("classification prefers the hidden GLM air route when Z.ai is configured", async () => {
+test("routine core chat does not spend DeepSeek escalation when opencode is unavailable", async () => {
+  process.env.DEEPSEEK_API_KEY = "test-key";
+  let callCount = 0;
+  globalThis.fetch = async () => {
+    callCount += 1;
+    return Response.json({
+      choices: [{ message: { content: "Escalation answer." } }],
+    });
+  };
+
+  await assert.rejects(
+    ai.executeChat({
+      tier: 2,
+      systemPrompt: "Read only.",
+      userPrompt: "Help me think through priorities.",
+    }),
+    /FounderOS could not reach the AI service yet/,
+  );
+  assert.equal(callCount, 0);
+});
+
+test("high-stakes workflow review can use DeepSeek escalation after GLM routes are unavailable", async () => {
+  process.env.DEEPSEEK_API_KEY = "test-key";
+  let requestBody;
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(init.body);
+    return Response.json({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              title: "Review the decision",
+              summary: "Prepare a careful review before acting.",
+              steps: [{ title: "Review the request", kind: "review", requiresApproval: false }],
+            }),
+          },
+        },
+      ],
+    });
+  };
+
+  const result = await ai.suggestWorkflow({
+    objective: "Review this high-stakes legal contract change",
+  });
+
+  assert.equal(requestBody.model, "deepseek-v4-pro");
+  assert.equal(result.parsed.title, "Review the decision");
+  assert.equal(result.usage.model, "core:workflow_suggestion");
+});
+
+test("classification prefers the hidden GLM air route in manual direct mode", async () => {
+  process.env.FOUNDEROS_ENABLE_DIRECT_ZAI = "true";
   process.env.ZAI_API_KEY = "test-key";
   let requestBody;
   globalThis.fetch = async (_url, init) => {

@@ -128,7 +128,7 @@ function isOAuthService(id: string) {
 function setupTitle(service?: ServiceCard) {
   if (!service) return "Connect service";
   if (service.id === "github") return "Choose repository";
-  if (service.id === "opencode") return "Check OpenCode";
+  if (service.id === "opencode") return "Check opencode";
   return `Connect ${service.safeDisplayName}`;
 }
 
@@ -597,14 +597,14 @@ export function ConnectedServicesSettings() {
             ) : isManagedSetupService(setupService.id) ? (
               <form onSubmit={handleManagedSetupSubmit} className="space-y-4 px-5 py-5">
                 <p className="text-xs leading-5 text-text-secondary">
-                  FounderOS will check this computer and confirm product-building work is ready before saving the connection.
+                  FounderOS will check this computer and confirm opencode is ready before saving this setup.
                 </p>
                 <details className="rounded-lg border border-black/[0.06] bg-surface px-3 py-2">
                   <summary className="cursor-pointer text-xs font-semibold text-text-secondary">
-                    Advanced
+                    Advanced setup
                   </summary>
                   <label className="mt-3 block space-y-1.5 text-xs font-semibold text-text-secondary">
-                    Custom OpenCode command
+                    Local opencode command
                     <input name="command" placeholder="opencode" defaultValue={setupService.safeSettings?.command ?? "opencode"} className="h-10 w-full rounded-lg border border-black/[0.08] bg-white px-3 text-sm font-medium text-text-primary outline-none focus:border-black/25" />
                   </label>
                 </details>

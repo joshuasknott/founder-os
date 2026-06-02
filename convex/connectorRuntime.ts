@@ -528,7 +528,7 @@ export const connectorRegistry: Record<string, ConnectorDefinition> = {
   github: {
     id: "github",
     safeDisplayName: "GitHub",
-    description: "Import repository context for product work.",
+    description: "Import repository context for opencode.",
     authType: "github_app",
     capabilities: ["import_repository_context", "read_business_records", "import_content"],
     requiredScopes: ["github.metadata", "github.contents.read"],
@@ -1005,8 +1005,8 @@ export const connectorRegistry: Record<string, ConnectorDefinition> = {
   },
   opencode: {
     id: "opencode",
-    safeDisplayName: "OpenCode",
-    description: "Run private product-building work and return review artifacts.",
+    safeDisplayName: "opencode",
+    description: "Prepare private opencode work and return review artifacts.",
     authType: "managed",
     capabilities: ["run_code_builder", "write_code", "create_preview_deployment"],
     requiredScopes: ["opencode.run"],
@@ -1451,7 +1451,7 @@ export function testConnectorConnection(
     if (!hasOpenCodeSettings(connection.settings)) {
       return {
         status: "needs_attention",
-        safeMessage: "Choose how FounderOS should call OpenCode before using it.",
+        safeMessage: "Check this computer before FounderOS uses opencode.",
         healthy: false,
       };
     }
@@ -1467,7 +1467,7 @@ export function testConnectorConnection(
 
     return {
       status: "connected",
-      safeMessage: "OpenCode is configured and ready.",
+      safeMessage: "opencode is ready on this computer.",
       healthy: true,
     };
   }

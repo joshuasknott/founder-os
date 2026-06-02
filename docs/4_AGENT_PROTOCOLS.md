@@ -67,15 +67,15 @@ User-facing UI can show a simple owner or current step when it helps, but named 
 
 Backend routing is based on capability, sensitivity, and output contract. It must not be exposed as a founder-facing setting.
 
-- `glm-4.5-air`: classification, simple summaries, and routine low-risk work.
-- `glm-4.7`: default business reasoning for Home, Library, product, marketing, and document work.
-- `glm-5-turbo`: planning, finance, complex synthesis, and strategy.
-- `glm-5.1`: coding, build, and debug work through opencode.
+- `zai-coding-plan/glm-4.5-air`: classification, simple summaries, and routine low-risk work through opencode.
+- `zai-coding-plan/glm-4.7`: default business reasoning for Home, Library, product, marketing, and document work through opencode.
+- `zai-coding-plan/glm-5-turbo`: planning, finance, complex synthesis, and strategy through opencode.
+- `zai-coding-plan/glm-5.1`: coding, build, and debug work through opencode.
 - Free opencode routes: public or low-sensitive redacted drafts only, with GLM review required.
 - Gemini vision: low-sensitive redacted image or screenshot understanding only.
 - DeepSeek V4 Pro: optional escalation, high-stakes review, or hard code rescue after GLM failures.
 
-OpenAI/Copilot routes are optional manual fallbacks only and must not be the default route.
+Paid GLM routing uses the founder's existing opencode subscriptions/auth. A direct `ZAI_API_KEY` is an optional manual compatibility path only, not normal setup. OpenAI/Copilot routes are optional manual fallbacks only and must not be the default route.
 
 ## Language Rules
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
@@ -76,7 +77,7 @@ function primaryActionLabel(service?: ServiceCard) {
   if (service.status === "connected") return "Connected";
   if (service.id === "github" && service.connectionId) return "Save repository";
   if (service.id === "github") return "Install GitHub App";
-  if (service.id === "opencode") return "Check local setup";
+  if (service.id === "opencode") return "Check this computer";
   if (service.id === "vercel") return "Save preview setup";
   return service.status === "needs_attention" ? "Reconnect" : "Connect";
 }
@@ -91,6 +92,7 @@ async function checkOpenCodeLocal(command?: string) {
 }
 
 export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
+  const router = useRouter();
   const updateProfile = useMutation(api.users.updateProfile);
   const updateWorkspaceDetails = useMutation(api.workspaces.updateDetails);
   const completeOnboarding = useMutation(api.workspaces.completeOnboarding);
@@ -176,7 +178,7 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
 
       if (service.id === "opencode") {
         const check = await checkOpenCodeLocal(service.safeSettings?.command);
-        if (!check.ok) throw new Error(check.safeMessage ?? "OpenCode is not ready on this computer yet.");
+        if (!check.ok) throw new Error(check.safeMessage ?? "opencode is not ready on this computer yet.");
         await setupManagedConnection({
           workspaceId: workspace._id,
           connectorId: "opencode",
@@ -289,7 +291,7 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
         connectorIds: connectedIds,
         reviewExternalActions,
       });
-      window.location.assign("/");
+      router.replace("/");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "FounderOS could not finish setup.");
     } finally {

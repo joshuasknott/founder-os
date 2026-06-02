@@ -315,7 +315,7 @@ export default defineSchema({
     .index("by_timestamp", ["timestamp"]),
 
   // ===========================================================================
-  // 1. THE WORKFORCE LAYER (Lean Workforce — 5 Core Agents)
+  // 1. THE WORKFORCE LAYER (hidden internal workers)
   // ===========================================================================
 
   departments: defineTable({

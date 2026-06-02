@@ -295,8 +295,8 @@ export function builderProviderHelp(provider) {
   const canonical = canonicalProvider(provider);
   if (canonical === "opencode") return "opencode should be installed and authenticated for the selected model.";
   if (canonical === "codex") return "Set OPENAI_API_KEY and BUILDER_USE_CODEX=true for the Codex adapter.";
-  if (canonical === "deepseek") return "Set DEEPSEEK_API_KEY for the DeepSeek chat-completions adapter.";
-  if (canonical === "zai") return "Set ZAI_API_KEY for the Z.ai chat-completions adapter.";
+  if (canonical === "deepseek") return "Set DEEPSEEK_API_KEY only for the manual DeepSeek escalation/review adapter.";
+  if (canonical === "zai") return "Set FOUNDEROS_ENABLE_DIRECT_ZAI=true and ZAI_API_KEY only for the manual direct Z.ai adapter.";
   if (canonical === "openrouter") return "Set OPENROUTER_API_KEY and choose an OpenRouter model.";
   if (canonical === "llm") return "Set BUILDER_LLM_API_KEY, BUILDER_LLM_CHAT_COMPLETIONS_URL, and BUILDER_LLM_MODEL.";
   return "Set BUILDER_PROVIDER to simulated, opencode, deepseek, zai, openrouter, llm, or codex.";

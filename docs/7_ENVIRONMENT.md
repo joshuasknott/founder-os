@@ -28,10 +28,10 @@ or AI calls can use them.
 ## Optional accounts by feature
 
 - Google sign-in: enable Google as a social connection in the Clerk dashboard.
-- Hidden AI orchestration: `ZAI_API_KEY` for the default GLM routes. Optional overrides are `ZAI_BASE_URL`, `FOUNDEROS_GLM_45_AIR_MODEL`, `FOUNDEROS_GLM_47_MODEL`, `FOUNDEROS_GLM_5_TURBO_MODEL`, and `FOUNDEROS_GLM_51_MODEL`.
-- Local opencode route defaults: `FOUNDEROS_OPENCODE_BUSINESS_MODEL=zai-coding-plan/glm-4.7`, `FOUNDEROS_OPENCODE_PLANNING_MODEL=zai-coding-plan/glm-5-turbo`, and `FOUNDEROS_OPENCODE_CODING_MODEL=zai-coding-plan/glm-5.1`.
+- Hidden AI orchestration through opencode: local opencode authentication supplies the paid GLM routes. FounderOS does not require a separate `ZAI_API_KEY` for the default path.
+- Local opencode route defaults: `FOUNDEROS_OPENCODE_CLASSIFICATION_MODEL=zai-coding-plan/glm-4.5-air`, `FOUNDEROS_OPENCODE_BUSINESS_MODEL=zai-coding-plan/glm-4.7`, `FOUNDEROS_OPENCODE_PLANNING_MODEL=zai-coding-plan/glm-5-turbo`, and `FOUNDEROS_OPENCODE_CODING_MODEL=zai-coding-plan/glm-5.1`.
 - Gemini vision: `GEMINI_API_KEY` and optional `GEMINI_VISION_MODEL=gemini-3-flash`. This path is only for low-sensitive, redacted image or screenshot understanding.
-- Optional DeepSeek escalation/review: `DEEPSEEK_API_KEY`, optional `DEEPSEEK_BASE_URL`, and `DEEPSEEK_V4_PRO_MODEL`. DeepSeek is not the default when GLM is configured.
+- Optional DeepSeek escalation/review: `DEEPSEEK_API_KEY`, optional `DEEPSEEK_BASE_URL`, and `DEEPSEEK_V4_PRO_MODEL`. DeepSeek is reserved for escalation/review and is not a routine fallback.
 - Optional external embeddings: `GEMINI_API_KEY` plus `FOUNDEROS_ALLOW_EXTERNAL_EMBEDDINGS=true`. The default is local deterministic embeddings unless this is explicitly enabled for public or low-sensitive text.
 - Connector credential encryption: `CONNECTOR_SECRET_ENCRYPTION_KEY`; optional `CONNECTOR_OAUTH_STATE_SECRET`.
 - Google Workspace connector OAuth: `GOOGLE_CONNECTOR_CLIENT_ID`, `GOOGLE_CONNECTOR_CLIENT_SECRET`.
@@ -41,9 +41,9 @@ or AI calls can use them.
   - Install and sign in to opencode on the computer running FounderOS.
   - FounderOS uses `opencode` by default. In Settings, use **Check this computer** to confirm opencode is ready.
   - Advanced builder environment variables are still supported for hosted worker runs when needed: `BUILDER_PROVIDER=opencode`, `BUILDER_OPENCODE_MODEL`, `BUILDER_OPENCODE_AGENT`, and `BUILDER_OPENCODE_ATTACH_URL`. If no model is pinned, coding/build work uses `zai-coding-plan/glm-5.1`.
-- Real builder runs with cheaper chat-completions models when opencode is not used:
-  - DeepSeek preset: `BUILDER_PROVIDER=deepseek` and `DEEPSEEK_API_KEY`.
-  - Z.ai preset: `BUILDER_PROVIDER=zai` and `ZAI_API_KEY`.
+- Direct chat-completions builder adapters are optional legacy/manual paths when opencode is not used:
+  - DeepSeek preset: `BUILDER_PROVIDER=deepseek` and `DEEPSEEK_API_KEY`. Use this only for manual escalation/review or rescue work, not routine chat or default builds.
+  - Z.ai preset: `BUILDER_PROVIDER=zai`, `FOUNDEROS_ENABLE_DIRECT_ZAI=true`, and `ZAI_API_KEY`. This is a manual direct-billing compatibility path, not normal GLM/OpenCode setup.
   - OpenRouter preset: `BUILDER_PROVIDER=openrouter`, `OPENROUTER_API_KEY`, and `OPENROUTER_MODEL`.
   - Any compatible endpoint: `BUILDER_PROVIDER=llm`, `BUILDER_LLM_API_KEY`, `BUILDER_LLM_CHAT_COMPLETIONS_URL`, and `BUILDER_LLM_MODEL`.
 - Real builder runs with the OpenAI Codex SDK: `BUILDER_PROVIDER=codex`, `BUILDER_USE_CODEX=true`, and `OPENAI_API_KEY`.
@@ -64,8 +64,8 @@ Vercel settings are optional and documented in `.env.example`.
 4. For real opencode work, prefer the local build engine:
    install and sign in to opencode, then use **Check this computer** in Settings.
    Worker-only runs can still use `BUILDER_PROVIDER=opencode`, then run `npm run builder`.
-   For direct chat-completions fallback, use `BUILDER_PROVIDER=deepseek`,
-   `BUILDER_PROVIDER=zai`, or `BUILDER_PROVIDER=openrouter` with the matching API key.
+   Direct chat-completions builder presets are manual compatibility paths only;
+   do not use them as routine fallback for normal chat or work.
 5. Start only the other workers you need, for example
    `npm run worker:documents:once`.
 

@@ -265,8 +265,20 @@ function zAiApiKey() {
   return process.env.ZAI_API_KEY ?? process.env.Z_AI_API_KEY ?? process.env.ZHIPU_API_KEY;
 }
 
+function directZaiEnabled() {
+  return process.env.FOUNDEROS_ENABLE_DIRECT_ZAI === "true";
+}
+
 function zAiBaseUrl() {
   return (process.env.ZAI_BASE_URL ?? "https://api.z.ai/api/paas/v4").replace(/\/$/, "");
+}
+
+function directZaiModelForRoute(routeId: HiddenModelRouteId) {
+  return configuredModelForRoute(routeId).replace(/^zai-coding-plan\//, "");
+}
+
+function isSubscriptionGlmRoute(routeId: HiddenModelRouteId) {
+  return routeId.startsWith("zai-coding-plan/");
 }
 
 function deepSeekModelForRoute(routeId: HiddenModelRouteId | undefined, purpose: RoutePurpose) {
@@ -282,9 +294,9 @@ async function callZai(
 ): Promise<CoreAIResult> {
   const startedAt = Date.now();
   const apiKey = zAiApiKey();
-  if (!apiKey) throw new Error("Primary AI key is not configured.");
+  if (!apiKey) throw new Error("Manual direct AI key is not configured.");
 
-  const model = configuredModelForRoute(routeId);
+  const model = directZaiModelForRoute(routeId);
   const response = await fetch(`${zAiBaseUrl()}/chat/completions`, {
     method: "POST",
     headers: {
@@ -306,11 +318,11 @@ async function callZai(
   const data = await readJson<DeepSeekResponse>(response);
 
   if (!response.ok) {
-    throw new Error(data.error?.message ?? `Primary AI request failed (${response.status}).`);
+    throw new Error(data.error?.message ?? `Manual direct AI request failed (${response.status}).`);
   }
 
   const content = data.choices?.[0]?.message?.content?.trim();
-  if (!content) throw new Error("Primary AI returned no content.");
+  if (!content) throw new Error("Manual direct AI returned no content.");
 
   return {
     content,
@@ -331,7 +343,7 @@ async function callDeepSeek(
 ): Promise<CoreAIResult> {
   const startedAt = Date.now();
   const apiKey = process.env.DEEPSEEK_API_KEY;
-  if (!apiKey) throw new Error("Primary AI key is not configured.");
+  if (!apiKey) throw new Error("Escalation AI key is not configured.");
 
   const purpose = routePurpose(options.tier ?? 1, options.useCase);
   const model = deepSeekModelForRoute(routeId, purpose);
@@ -357,11 +369,11 @@ async function callDeepSeek(
   const data = await readJson<DeepSeekResponse>(response);
 
   if (!response.ok) {
-    throw new Error(data.error?.message ?? `Primary AI request failed (${response.status}).`);
+    throw new Error(data.error?.message ?? `Escalation AI request failed (${response.status}).`);
   }
 
   const content = data.choices?.[0]?.message?.content?.trim();
-  if (!content) throw new Error("Primary AI returned no content.");
+  if (!content) throw new Error("Escalation AI returned no content.");
 
   return {
     content,
@@ -428,7 +440,7 @@ async function callSelectedRoute(
   options: TextOutputOptions & { structured?: boolean },
 ) {
   const route = getHiddenModelRoute(routeId);
-  if (route.provider === "zai" && route.channel === "chat_completions") {
+  if (route.provider === "opencode" && isSubscriptionGlmRoute(routeId) && directZaiEnabled()) {
     return await callZai(options, routeId);
   }
   if (route.provider === "deepseek") {
@@ -452,22 +464,10 @@ async function runText(options: TextOutputOptions & { structured?: boolean }): P
     routeSelection.selectedRouteId,
     ...routeSelection.fallbackRouteIds,
   ].filter((routeId, index, routeList) => routeList.indexOf(routeId) === index);
-  let attemptedDeepSeek = false;
 
   for (const routeId of routeIds) {
     try {
-      if (getHiddenModelRoute(routeId).provider === "deepseek") attemptedDeepSeek = true;
       const result = await callSelectedRoute(routeId, options);
-      await options.onUsage?.(result.usage);
-      return result;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  if (!attemptedDeepSeek && process.env.DEEPSEEK_API_KEY && !zAiApiKey()) {
-    try {
-      const result = await callDeepSeek(options);
       await options.onUsage?.(result.usage);
       return result;
     } catch (error) {

@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -21,28 +24,27 @@ function commandParts(commandValue: unknown) {
     : "opencode";
 
   if (/[&|<>`$;\r\n]/.test(raw)) {
-    throw new Error("Use a plain OpenCode command, such as opencode.");
+    throw new Error("Use a plain local opencode command.");
   }
 
   const parts = raw.match(/"[^"]+"|\S+/g)?.map((part) => part.replace(/^"|"$/g, "")) ?? [];
   const executableName = (parts[0] || "opencode").split(/[\\/]/).pop()?.toLowerCase();
   const allowedExecutables = new Set(["opencode", "opencode.exe", "opencode.cmd", "opencode.ps1"]);
   if (!executableName || !allowedExecutables.has(executableName)) {
-    throw new Error("Use the OpenCode command for this local connector.");
+    throw new Error("Use the supported local opencode command.");
   }
 
   return {
     command: parts[0] || "opencode",
-    args: [...parts.slice(1), "--version"],
+    baseArgs: parts.slice(1),
   };
 }
 
-function checkOpenCode(commandValue: unknown) {
-  const { command, args } = commandParts(commandValue);
+function checkOpenCodeVersion(command: string, baseArgs: string[]) {
   return new Promise<{ version?: string }>((resolve, reject) => {
     execFile(
       command,
-      args,
+      [...baseArgs, "--version"],
       {
         windowsHide: true,
         timeout: 8000,
@@ -52,13 +54,65 @@ function checkOpenCode(commandValue: unknown) {
       (error, stdout, stderr) => {
         const output = safeText(stdout) || safeText(stderr);
         if (error) {
-          reject(new Error(output || "OpenCode did not respond."));
+          reject(new Error(output || "opencode did not respond on this computer."));
           return;
         }
         resolve({ version: output });
       },
     );
   });
+}
+
+async function checkOpenCodeReadiness(command: string, baseArgs: string[]) {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "founderos-opencode-check-"));
+  const prompt = [
+    "FounderOS setup check.",
+    "Reply with READY only.",
+    "Do not inspect, create, edit, delete, install, publish, or run any other command.",
+  ].join(" ");
+
+  return new Promise<void>((resolve, reject) => {
+    execFile(
+      command,
+      [
+        ...baseArgs,
+        "run",
+        "--dir",
+        workspaceDir,
+        "--title",
+        "FounderOS setup check",
+        prompt,
+      ],
+      {
+        cwd: workspaceDir,
+        windowsHide: true,
+        timeout: 60000,
+        maxBuffer: 1024 * 1024,
+        shell: process.platform === "win32",
+        env: {
+          ...process.env,
+          CI: process.env.CI ?? "true",
+        },
+      },
+      async (error, stdout, stderr) => {
+        await rm(workspaceDir, { recursive: true, force: true }).catch(() => {});
+        const fullOutput = `${stdout ?? ""}\n${stderr ?? ""}`;
+        const output = safeText(stdout) || safeText(stderr);
+        if (error || !/\bREADY\b/i.test(fullOutput)) {
+          reject(new Error(output || "opencode could not complete a setup check."));
+          return;
+        }
+        resolve();
+      },
+    );
+  });
+}
+
+async function checkOpenCode(commandValue: unknown) {
+  const { command, baseArgs } = commandParts(commandValue);
+  const result = await checkOpenCodeVersion(command, baseArgs);
+  await checkOpenCodeReadiness(command, baseArgs);
+  return result;
 }
 
 export async function POST(request: NextRequest) {
@@ -80,15 +134,15 @@ export async function POST(request: NextRequest) {
       ok: true,
       healthy: true,
       safeMessage: result.version
-        ? "OpenCode is ready on this computer."
-        : "OpenCode is ready on this computer.",
+        ? "opencode is ready on this computer."
+        : "opencode is ready on this computer.",
     });
   } catch (error) {
     return NextResponse.json(
       {
         ok: false,
         healthy: false,
-        safeMessage: safeText(error instanceof Error ? error.message : error) || "OpenCode is not responding locally.",
+        safeMessage: safeText(error instanceof Error ? error.message : error) || "opencode is not responding on this computer.",
       },
       { status: 200 },
     );

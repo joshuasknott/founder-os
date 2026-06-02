@@ -9,13 +9,20 @@ import { api } from "@/convex/_generated/api";
 import type { Doc } from "@/convex/_generated/dataModel";
 import { LoginCard } from "@/components/auth/LoginCard";
 import { OnboardingFlow } from "@/components/auth/OnboardingFlow";
+import { installClerkAuthRefreshGuard } from "@/lib/clerk-auth-refresh-guard";
 import { Loader2 } from "lucide-react";
 
 const convex = new ConvexReactClient(
   process.env.NEXT_PUBLIC_CONVEX_URL as string
 );
 
+const ANY_READY_WORKSPACE_KEY = "founderos:workspace-ready:any";
+
+installClerkAuthRefreshGuard();
+
 export default function ConvexClientProvider({ children }: { children: ReactNode }) {
+  installClerkAuthRefreshGuard();
+
   return (
     <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
       <AuthGate>{children}</AuthGate>
@@ -25,135 +32,231 @@ export default function ConvexClientProvider({ children }: { children: ReactNode
 
 function AuthGate({ children }: { children: ReactNode }) {
   const router = useRouter();
-  const { isLoaded, isSignedIn, sessionId, userId } = useAuth();
+  const { isLoaded, isSignedIn, userId } = useAuth();
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
   const seedWorkspace = useMutation(api.init.seedSwarm);
   const completeOAuthConnection = useAction(api.connectors.completeOAuthConnection);
   const completeGitHubAppConnection = useAction(api.connectors.completeGitHubAppConnection);
-  const [seededSessionId, setSeededSessionId] = useState<string | null>(null);
-  const [seedError, setSeedError] = useState<{ sessionId: string; message: string } | null>(null);
+  const [seededUserId, setSeededUserId] = useState<string | null>(null);
+  const [seedError, setSeedError] = useState<{ userId: string; message: string } | null>(null);
   const [authTimedOut, setAuthTimedOut] = useState(false);
   const [hasPassedGate, setHasPassedGate] = useState(false);
   const [hasLoadedAccount, setHasLoadedAccount] = useState(false);
   const [stableCurrentUser, setStableCurrentUser] = useState<Doc<"users"> | null | undefined>(undefined);
   const [stableWorkspaces, setStableWorkspaces] = useState<Doc<"workspaces">[] | undefined>(undefined);
   const [rememberedReadyUserId, setRememberedReadyUserId] = useState<string | null>(null);
+  const [hasReadyAccountHint, setHasReadyAccountHint] = useState(false);
+  const [hasHydrated, setHasHydrated] = useState(false);
+  const [hasSeenSignedInUser, setHasSeenSignedInUser] = useState(false);
   const [confirmedSignedOut, setConfirmedSignedOut] = useState(false);
-  const seedingSessionRef = useRef<string | null>(null);
+  const isMountedRef = useRef(false);
+  const seedingUserRef = useRef<string | null>(null);
+  const lastSignedInUserIdRef = useRef<string | null>(null);
   const connectorCallbackRef = useRef<string | null>(null);
-  const shouldLoadWorkspace = Boolean(isAuthenticated && sessionId && seededSessionId === sessionId);
+  const shouldLoadWorkspace = Boolean(isAuthenticated && userId && seededUserId === userId);
   const currentUser = useQuery(api.users.current, shouldLoadWorkspace ? {} : "skip");
   const workspaces = useQuery(api.workspaces.get, shouldLoadWorkspace ? {} : "skip");
   const displayedCurrentUser = currentUser ?? stableCurrentUser;
   const displayedWorkspaces = workspaces ?? stableWorkspaces;
   const workspace = displayedWorkspaces?.[0];
-  const error = seedError && seedError.sessionId === sessionId ? seedError.message : null;
-  const isReady = Boolean(isAuthenticated && sessionId && seededSessionId === sessionId);
+  const error = seedError && seedError.userId === userId ? seedError.message : null;
+  const isReady = Boolean(isAuthenticated && userId && seededUserId === userId);
   const workspaceLoaded = Boolean(
     isReady &&
     displayedCurrentUser !== undefined &&
     displayedWorkspaces !== undefined &&
     (!workspace || workspace.onboardingCompletedAt),
   );
+  const shouldShowOnboarding = Boolean(
+    workspace &&
+    !workspace.onboardingCompletedAt &&
+    displayedCurrentUser !== undefined,
+  );
   const hasRememberedReadyWorkspace = Boolean(userId && rememberedReadyUserId === userId);
-  const canKeepAppMounted = hasPassedGate || workspaceLoaded || hasRememberedReadyWorkspace;
+  const canKeepAppMounted = hasPassedGate || workspaceLoaded || hasRememberedReadyWorkspace || hasReadyAccountHint;
+  const canKeepResolvedAccountMounted = canKeepAppMounted || shouldShowOnboarding;
 
   useEffect(() => {
-    if (!userId || typeof window === "undefined") {
-      queueMicrotask(() => setRememberedReadyUserId(null));
-      return;
-    }
-    const storageKey = `founderos:workspace-ready:${userId}`;
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
     queueMicrotask(() => {
-      setRememberedReadyUserId(window.localStorage.getItem(storageKey) === "1" ? userId : null);
+      if (cancelled) return;
+      setHasReadyAccountHint(readReadyAccountHint());
+      setHasHydrated(true);
     });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const hasAnyReadyWorkspace = readReadyAccountHint();
+    if (!userId || typeof window === "undefined") {
+      queueMicrotask(() => {
+        if (cancelled) return;
+        setHasReadyAccountHint(hasAnyReadyWorkspace);
+        setRememberedReadyUserId(null);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+    const hasRememberedWorkspace = readUserReadyWorkspace(userId);
+    queueMicrotask(() => {
+      if (!cancelled) {
+        setHasReadyAccountHint(hasAnyReadyWorkspace);
+        setRememberedReadyUserId(hasRememberedWorkspace ? userId : null);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [userId]);
 
   useEffect(() => {
     if (!isLoaded) return;
     if (isSignedIn) {
-      queueMicrotask(() => setConfirmedSignedOut(false));
-      return;
+      let cancelled = false;
+      queueMicrotask(() => {
+        if (!cancelled) setConfirmedSignedOut(false);
+      });
+      return () => {
+        cancelled = true;
+      };
     }
-    const timeout = window.setTimeout(() => setConfirmedSignedOut(true), canKeepAppMounted ? 1500 : 0);
+    const timeout = window.setTimeout(() => setConfirmedSignedOut(true), canKeepResolvedAccountMounted ? 1500 : 0);
     return () => window.clearTimeout(timeout);
-  }, [canKeepAppMounted, isLoaded, isSignedIn]);
+  }, [canKeepResolvedAccountMounted, isLoaded, isSignedIn]);
 
   useEffect(() => {
     if (confirmedSignedOut) {
-      seedingSessionRef.current = null;
+      let cancelled = false;
+      seedingUserRef.current = null;
+      lastSignedInUserIdRef.current = null;
       queueMicrotask(() => {
+        if (cancelled) return;
         setHasPassedGate(false);
         setHasLoadedAccount(false);
         setStableCurrentUser(undefined);
         setStableWorkspaces(undefined);
-        setSeededSessionId(null);
+        setSeededUserId(null);
         setSeedError(null);
+        setHasReadyAccountHint(false);
+        setHasSeenSignedInUser(false);
+        clearReadyAccountHint();
       });
+      return () => {
+        cancelled = true;
+      };
     }
   }, [confirmedSignedOut]);
 
   useEffect(() => {
-    const isWaitingForAuth = !canKeepAppMounted && !hasLoadedAccount && (!isLoaded || (isSignedIn && isConvexAuthLoading));
+    if (!isLoaded || !isSignedIn || !userId) return;
+    let cancelled = false;
+    const previousUserId = lastSignedInUserIdRef.current;
+    if (previousUserId && previousUserId !== userId) {
+      seedingUserRef.current = null;
+      queueMicrotask(() => {
+        if (cancelled) return;
+        setHasPassedGate(false);
+        setHasLoadedAccount(false);
+        setStableCurrentUser(undefined);
+        setStableWorkspaces(undefined);
+        setSeededUserId(null);
+        setSeedError(null);
+      });
+    }
+    lastSignedInUserIdRef.current = userId;
+    queueMicrotask(() => {
+      if (!cancelled) setHasSeenSignedInUser(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoaded, isSignedIn, userId]);
+
+  useEffect(() => {
+    const isWaitingForAuth = !canKeepResolvedAccountMounted && !hasLoadedAccount && (!isLoaded || (isSignedIn && isConvexAuthLoading));
     if (!isWaitingForAuth) {
-      queueMicrotask(() => setAuthTimedOut(false));
-      return;
+      let cancelled = false;
+      queueMicrotask(() => {
+        if (!cancelled) setAuthTimedOut(false);
+      });
+      return () => {
+        cancelled = true;
+      };
     }
     const timeout = window.setTimeout(() => setAuthTimedOut(true), 6000);
     return () => window.clearTimeout(timeout);
-  }, [canKeepAppMounted, hasLoadedAccount, isConvexAuthLoading, isLoaded, isSignedIn]);
+  }, [canKeepResolvedAccountMounted, hasLoadedAccount, isConvexAuthLoading, isLoaded, isSignedIn]);
 
   useEffect(() => {
-    if (!isLoaded || !isSignedIn || !isAuthenticated || !sessionId) {
-      seedingSessionRef.current = null;
+    if (!isLoaded || !isSignedIn || !isAuthenticated || !userId) {
       return;
     }
     if (
-      seededSessionId === sessionId ||
-      seedingSessionRef.current === sessionId ||
-      seedError?.sessionId === sessionId
+      seededUserId === userId ||
+      seedingUserRef.current === userId ||
+      seedError?.userId === userId
     ) {
       return;
     }
 
-    let cancelled = false;
-    seedingSessionRef.current = sessionId;
+    seedingUserRef.current = userId;
     seedWorkspace()
       .then(() => {
-        if (!cancelled) setSeededSessionId(sessionId);
+        if (isMountedRef.current && seedingUserRef.current === userId) {
+          setSeededUserId(userId);
+          setSeedError(null);
+        }
       })
       .catch(() => {
-        if (!cancelled) {
+        if (isMountedRef.current && seedingUserRef.current === userId) {
           setSeedError({
-            sessionId,
+            userId,
             message: "FounderOS could not prepare your workspace yet.",
           });
         }
       });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isAuthenticated, isLoaded, isSignedIn, seedError?.sessionId, seededSessionId, seedWorkspace, sessionId]);
+  }, [isAuthenticated, isLoaded, isSignedIn, seedError?.userId, seededUserId, seedWorkspace, userId]);
 
   useEffect(() => {
     if (!workspaceLoaded) return;
+    let cancelled = false;
     queueMicrotask(() => {
+      if (cancelled) return;
       setHasPassedGate(true);
       if (userId && typeof window !== "undefined") {
-        window.localStorage.setItem(`founderos:workspace-ready:${userId}`, "1");
+        rememberReadyWorkspace(userId);
+        setHasReadyAccountHint(true);
         setRememberedReadyUserId(userId);
       }
     });
+    return () => {
+      cancelled = true;
+    };
   }, [userId, workspaceLoaded]);
 
   useEffect(() => {
     if (!isReady || currentUser === undefined || workspaces === undefined) return;
+    let cancelled = false;
     queueMicrotask(() => {
+      if (cancelled) return;
       setStableCurrentUser(currentUser);
       setStableWorkspaces(workspaces);
       setHasLoadedAccount(true);
     });
+    return () => {
+      cancelled = true;
+    };
   }, [currentUser, isReady, workspaces]);
 
   useEffect(() => {
@@ -180,17 +283,37 @@ function AuthGate({ children }: { children: ReactNode }) {
     });
   }, [completeGitHubAppConnection, completeOAuthConnection, isAuthenticated, isLoaded, isSignedIn, router]);
 
-  if (!canKeepAppMounted && (!isLoaded || (isSignedIn && isConvexAuthLoading)) && authTimedOut) {
+  if (!hasHydrated) {
+    return children;
+  }
+
+  if (!canKeepResolvedAccountMounted && (!isLoaded || (isSignedIn && isConvexAuthLoading)) && authTimedOut) {
     return <AuthUnavailable />;
   }
 
   if (!isLoaded) {
+    if (shouldShowOnboarding) {
+      return (
+        <main className="h-screen w-full overflow-y-auto bg-surface px-4 py-8">
+          <OnboardingFlow user={displayedCurrentUser ?? null} workspace={workspace!} />
+        </main>
+      );
+    }
     if (canKeepAppMounted) return children;
     return <PreparingWorkspace label="Checking your account" />;
   }
 
   if (!isSignedIn) {
-    if (canKeepAppMounted && !confirmedSignedOut) return children;
+    if (hasSeenSignedInUser && canKeepResolvedAccountMounted && !confirmedSignedOut) {
+      if (shouldShowOnboarding) {
+        return (
+          <main className="h-screen w-full overflow-y-auto bg-surface px-4 py-8">
+            <OnboardingFlow user={displayedCurrentUser ?? null} workspace={workspace!} />
+          </main>
+        );
+      }
+      return children;
+    }
     return (
       <main className="flex h-screen w-full items-center justify-center bg-surface px-4">
         <LoginCard fallbackRedirectUrl={connectorCallbackFallbackPath()} />
@@ -201,10 +324,10 @@ function AuthGate({ children }: { children: ReactNode }) {
   // Keep the app shell mounted after the first complete workspace load.
   // Clerk and Convex can briefly refresh tokens or query snapshots in the
   // background; those transitions should not replace the whole app tree.
-  if (workspace && !workspace.onboardingCompletedAt && displayedCurrentUser !== undefined) {
+  if (shouldShowOnboarding) {
     return (
       <main className="h-screen w-full overflow-y-auto bg-surface px-4 py-8">
-        <OnboardingFlow user={displayedCurrentUser} workspace={workspace} />
+        <OnboardingFlow user={displayedCurrentUser ?? null} workspace={workspace!} />
       </main>
     );
   }
@@ -235,14 +358,6 @@ function AuthGate({ children }: { children: ReactNode }) {
     return <PreparingWorkspace label={isConvexAuthLoading ? "Checking your account" : "Preparing your workspace"} />;
   }
 
-  if (workspace && !workspace.onboardingCompletedAt) {
-    return (
-      <main className="h-screen w-full overflow-y-auto bg-surface px-4 py-8">
-        <OnboardingFlow user={displayedCurrentUser} workspace={workspace} />
-      </main>
-    );
-  }
-
   return children;
 }
 
@@ -259,6 +374,43 @@ function connectorCallbackFallbackPath() {
     ((provider === "google_workspace" && code) || (provider === "github" && installationId)),
   );
   return isConnectorCallback ? `${window.location.pathname}${window.location.search}` : "/";
+}
+
+function readReadyAccountHint() {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(ANY_READY_WORKSPACE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function readUserReadyWorkspace(userId: string) {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(`founderos:workspace-ready:${userId}`) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function rememberReadyWorkspace(userId: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(ANY_READY_WORKSPACE_KEY, "1");
+    window.localStorage.setItem(`founderos:workspace-ready:${userId}`, "1");
+  } catch {
+    // The in-memory gate state still keeps the mounted app stable.
+  }
+}
+
+function clearReadyAccountHint() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(ANY_READY_WORKSPACE_KEY);
+  } catch {
+    // Local storage can be unavailable in private or locked-down browsers.
+  }
 }
 
 function PreparingWorkspace({ label }: { label: string }) {

@@ -17,7 +17,7 @@ import {
 
 test("plain founder text removes hidden build details", () => {
   const text = toPlainFounderText(
-    "OpenCode and DeepSeek ran CLI commands on branch codex/test and edited C:\\repo\\app\\page.tsx",
+    "opencode and DeepSeek ran CLI commands on branch codex/test and edited C:\\repo\\app\\page.tsx",
   );
 
   assert.equal(text.includes("Codex"), false);

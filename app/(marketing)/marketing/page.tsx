@@ -403,7 +403,7 @@ function LogoBar() {
     { id: "google_drive", name: "Google Drive" },
     { id: "google_docs", name: "Google Docs" },
     { id: "google_sheets", name: "Google Sheets" },
-    { id: "opencode", name: "OpenCode" },
+    { id: "opencode", name: "opencode" },
     { id: "github", name: "GitHub" },
     { id: "vercel", name: "Vercel" },
   ];
@@ -645,7 +645,7 @@ function ConnectorsShowcase() {
       title: "Code & Hosting",
       icon: GitBranch,
       connectors: [
-        { id: "opencode", name: "OpenCode", desc: "Prepare product-building work privately on your computer.", active: true },
+        { id: "opencode", name: "opencode", desc: "Prepare opencode work privately inside FounderOS.", active: true },
         { id: "github", name: "GitHub", desc: "Read repository context and prepare approved code changes.", active: true },
         { id: "vercel", name: "Vercel", desc: "Create private review links and publish only after approval.", active: true },
       ],
@@ -671,7 +671,7 @@ function ConnectorsShowcase() {
             <span className="text-zinc-500">Natively.</span>
           </h2>
           <p className="mx-auto mt-4 max-w-2xl text-base leading-relaxed text-zinc-400">
-            From Google Workspace to product work, FounderOS plugs into the tools you already use.
+            From Google Workspace to opencode, FounderOS plugs into the tools you already use.
             Every connection is secure, scoped, and approval-protected.
           </p>
         </div>

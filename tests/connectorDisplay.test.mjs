@@ -66,7 +66,7 @@ test("connector display groups services by founder-facing area", () => {
     groups.map((group) => [group.title, group.services.map((service) => service.id)]),
     [
       ["Google Workspace", ["gmail", "google_calendar", "google_drive", "google_docs", "google_sheets"]],
-      ["Product work", ["opencode", "github"]],
+      ["opencode", ["opencode", "github"]],
       ["Website previews", ["vercel"]],
     ],
   );

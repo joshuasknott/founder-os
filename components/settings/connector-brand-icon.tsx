@@ -36,13 +36,10 @@ function SimpleBrandIcon({ icon, className }: { icon: SimpleIcon; className: str
 
 function OpenCodeIcon({ className }: { className: string }) {
   return (
-    <svg viewBox="0 0 84 30" className={className} aria-hidden="true" role="img">
-      <path d="M24 24H6V18H18V12H24V24ZM6 18H0V12H6V18Z" fill="currentColor" fillOpacity="0.2" />
-      <path d="M6 24H24V30H0V18H6V24ZM18 18H6V12H18V18ZM24 12H18V6H0V0H24V12Z" fill="currentColor" />
-      <path d="M54 18V24H36V18H54Z" fill="currentColor" fillOpacity="0.2" />
-      <path d="M54 18H36V24H54V30H30V0H54V18ZM36 12H48V6H36V12Z" fill="currentColor" />
-      <path d="M78 30H66V12H78V30Z" fill="currentColor" fillOpacity="0.2" />
-      <path d="M78 6H66V30H60V0H78V6ZM84 30H78V6H84V30Z" fill="currentColor" />
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" role="img">
+      <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v13A2.5 2.5 0 0 1 17.5 21h-11A2.5 2.5 0 0 1 4 18.5v-13Z" fill="currentColor" fillOpacity="0.12" />
+      <path d="M7.25 8.5h9.5v1.75h-9.5V8.5Zm0 3.15h6.25v1.75H7.25v-1.75Zm0 3.15h4.5v1.75h-4.5V14.8Z" fill="currentColor" />
+      <path d="M16 13.5h1.75v3H20v1.75h-4V13.5Z" fill="currentColor" />
     </svg>
   );
 }

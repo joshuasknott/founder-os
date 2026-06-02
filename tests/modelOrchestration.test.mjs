@@ -29,6 +29,11 @@ test("routes routine classification and business work to different GLM routes", 
     sensitivity: "internal",
   });
   assert.equal(classification.selectedRouteId, "zai-coding-plan/glm-4.5-air");
+  assert.equal(routing.getHiddenModelRoute(classification.selectedRouteId).provider, "opencode");
+  assert.equal(
+    routing.configuredModelForRoute(classification.selectedRouteId),
+    "zai-coding-plan/glm-4.5-air",
+  );
   assert.equal(classification.privacy.allowed, true);
 
   const business = routing.selectModelRoute({

@@ -162,6 +162,56 @@ function useStableDefined<T>(value: T | undefined) {
   return value ?? stableValue;
 }
 
+const GREETING_CACHE_KEY = "founderos:greeting";
+const GREETING_CACHE_TTL_MS = 10 * 60 * 1000;
+const DEFAULT_GREETING = "What are you working on today?";
+let greetingRequest: Promise<string> | null = null;
+
+function readCachedGreeting() {
+  if (typeof window === "undefined") return "";
+  try {
+    const raw = window.sessionStorage.getItem(GREETING_CACHE_KEY);
+    if (!raw) return "";
+    const cached = JSON.parse(raw) as { greeting?: unknown; savedAt?: unknown };
+    if (typeof cached.greeting !== "string" || typeof cached.savedAt !== "number") return "";
+    if (Date.now() - cached.savedAt > GREETING_CACHE_TTL_MS) return "";
+    return cached.greeting;
+  } catch {
+    return "";
+  }
+}
+
+function cacheGreeting(greeting: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(
+      GREETING_CACHE_KEY,
+      JSON.stringify({ greeting, savedAt: Date.now() }),
+    );
+  } catch {
+    // Ignore storage failures; the greeting can fall back safely.
+  }
+}
+
+async function loadGreeting() {
+  const cached = readCachedGreeting();
+  if (cached) return cached;
+  if (!greetingRequest) {
+    greetingRequest = fetch("/api/greeting")
+      .then((res) => res.json())
+      .then((data: { greeting?: string }) => data.greeting || DEFAULT_GREETING)
+      .catch(() => DEFAULT_GREETING)
+      .then((text) => {
+        cacheGreeting(text);
+        return text;
+      })
+      .finally(() => {
+        greetingRequest = null;
+      });
+  }
+  return greetingRequest;
+}
+
 export default function HomePage() {
   return (
     <Suspense fallback={<HomeLoader />}>
@@ -194,6 +244,8 @@ function HomePageContent() {
 
   const createSession = useMutation(api.chat.createSession);
   const sendMessage = useAction(api.chat.sendMessage);
+  const prepareLocalOpenCodeChat = useAction(api.chat.prepareLocalOpenCodeChat);
+  const completeLocalOpenCodeChat = useMutation(api.chat.completeLocalOpenCodeChat);
   const createTask = useMutation(api.directives.createDirective);
   const addClarification = useMutation(api.directives.addClarification);
   const approve = useMutation(api.approvals.approve);
@@ -294,14 +346,16 @@ function HomePageContent() {
   const [greeting, setGreeting] = useState("");
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/greeting")
-      .then((res) => res.json())
-      .then((data: { greeting?: string }) => {
-        if (!cancelled && data.greeting) setGreeting(data.greeting);
-      })
-      .catch(() => {
-        if (!cancelled) setGreeting("What are you working on today?");
+    const cached = readCachedGreeting();
+    if (cached) {
+      queueMicrotask(() => {
+        if (!cancelled) setGreeting(cached);
       });
+      return () => { cancelled = true; };
+    }
+    loadGreeting().then((text) => {
+      if (!cancelled) setGreeting(text);
+    });
     return () => { cancelled = true; };
   }, []);
 
@@ -340,11 +394,38 @@ function HomePageContent() {
 
       if (mode === "chat") {
         if (!defaultWorker) throw new Error("FounderOS is still preparing your AI workers.");
-        await sendMessage({
-          sessionId,
-          agentId: defaultWorker._id,
-          content: trimmed,
-        });
+        try {
+          const prepared = await prepareLocalOpenCodeChat({
+            sessionId,
+            agentId: defaultWorker._id,
+            content: trimmed,
+          });
+          const response = await fetch("/api/local/opencode/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              command: "opencode",
+              systemPrompt: prepared.systemPrompt,
+              userPrompt: prepared.userPrompt,
+            }),
+          });
+          const result = await response.json() as { ok?: boolean; content?: string; safeMessage?: string };
+          if (!response.ok || !result.ok || !result.content) {
+            throw new Error(result.safeMessage ?? "Local opencode chat is not ready.");
+          }
+          await completeLocalOpenCodeChat({
+            sessionId,
+            agentId: defaultWorker._id,
+            userContent: trimmed,
+            assistantContent: result.content,
+          });
+        } catch {
+          await sendMessage({
+            sessionId,
+            agentId: defaultWorker._id,
+            content: trimmed,
+          });
+        }
         router.replace(`/?session=${sessionId}`);
         return;
       }
@@ -368,10 +449,12 @@ function HomePageContent() {
   }, [
     createTask,
     defaultWorker,
+    completeLocalOpenCodeChat,
     ensureConversation,
     input,
     isSending,
     mode,
+    prepareLocalOpenCodeChat,
     router,
     sendMessage,
   ]);

@@ -24,7 +24,7 @@ const activeConnectorIdSet = new Set<string>(activeConnectorIds);
 
 export const serviceGroups = [
   { id: "google", title: "Google Workspace", ids: ["gmail", "google_calendar", "google_drive", "google_docs", "google_sheets"] },
-  { id: "code", title: "Product work", ids: ["opencode", "github"] },
+  { id: "code", title: "opencode", ids: ["opencode", "github"] },
   { id: "hosting", title: "Website previews", ids: ["vercel"] },
 ];
 

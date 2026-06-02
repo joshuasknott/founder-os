@@ -41,6 +41,7 @@ Make every visible connector work standalone before combining connectors into la
 - GitHub repository context import requires a GitHub App installation, chosen repository, `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, and the app to have repository metadata and contents read access.
 - Stripe sync requires `CONNECTOR_SECRET_ENCRYPTION_KEY` and a restricted Stripe key beginning with `rk_test_` or `rk_live_`.
 - opencode through the local build engine requires opencode installed/authenticated locally and the builder worker running with the expected local command.
-- Default GLM routing requires `ZAI_API_KEY`; opencode build routing expects the working `zai-coding-plan/glm-4.7`, `zai-coding-plan/glm-5-turbo`, and `zai-coding-plan/glm-5.1` routes.
+- Default GLM routing uses the opencode subscription routes configured in opencode; it does not require a separate `ZAI_API_KEY`.
+- opencode routing expects the working `zai-coding-plan/glm-4.7`, `zai-coding-plan/glm-5-turbo`, and `zai-coding-plan/glm-5.1` routes.
 - Gemini requires `GEMINI_API_KEY` only for low-sensitive redacted vision work. DeepSeek V4 Pro requires `DEEPSEEK_API_KEY` only when optional escalation or verification is enabled.
 - Background work requires `CONVEX_URL` or `NEXT_PUBLIC_CONVEX_URL` plus `FOUNDEROS_WORKER_TOKEN` for the relevant worker process.

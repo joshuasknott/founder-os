@@ -10,7 +10,7 @@ Current behavior:
 - plans the opencode workflow before building
 - uses a flexible hidden builder-agent adapter
 - prefers opencode for real model-flexible builds when configured
-- supports chat-completions adapters for DeepSeek, Z.ai, OpenRouter, and custom compatible endpoints
+- keeps legacy/manual chat-completions adapters for DeepSeek, Z.ai, OpenRouter, and custom compatible endpoints
 - keeps Codex available as an optional adapter
 - runs the builder in an isolated branch/workspace or safe copied directory
 - passes the builder a structured task spec
@@ -49,13 +49,14 @@ Configuration:
   - `BUILDER_OPENCODE_AGENT`: optional locked-down opencode agent name
   - `BUILDER_OPENCODE_ATTACH_URL`: optional headless opencode server URL
 - Hidden opencode route defaults:
+  - `FOUNDEROS_OPENCODE_CLASSIFICATION_MODEL`: defaults to `zai-coding-plan/glm-4.5-air`
   - `FOUNDEROS_OPENCODE_BUSINESS_MODEL`: defaults to `zai-coding-plan/glm-4.7`
   - `FOUNDEROS_OPENCODE_PLANNING_MODEL`: defaults to `zai-coding-plan/glm-5-turbo`
   - `FOUNDEROS_OPENCODE_CODING_MODEL`: defaults to `zai-coding-plan/glm-5.1`
   - Free opencode models are allowed only for redacted public drafts and require a GLM verifier route. Private build work is automatically moved to the paid GLM route.
-- Chat-completions adapters:
-  - `BUILDER_PROVIDER=deepseek` with `DEEPSEEK_API_KEY`
-  - `BUILDER_PROVIDER=zai` with `ZAI_API_KEY`
+- Optional manual chat-completions adapters:
+  - `BUILDER_PROVIDER=deepseek` with `DEEPSEEK_API_KEY`; use only for manual escalation/review or hard rescue work.
+  - `BUILDER_PROVIDER=zai` with `FOUNDEROS_ENABLE_DIRECT_ZAI=true` and `ZAI_API_KEY`; this is a direct-billing compatibility path, not normal GLM/OpenCode routing.
   - `BUILDER_PROVIDER=openrouter` with `OPENROUTER_API_KEY` and `OPENROUTER_MODEL`
   - `BUILDER_PROVIDER=llm` with `BUILDER_LLM_API_KEY`, `BUILDER_LLM_CHAT_COMPLETIONS_URL`, and `BUILDER_LLM_MODEL`
 - Codex optional adapter:

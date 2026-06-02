@@ -39,7 +39,7 @@ export type HiddenModelRouteId =
   | "gemini/gemini-3-flash-free"
   | "deepseek/deepseek-v4-pro";
 
-export type RouteProvider = "zai" | "opencode" | "gemini" | "deepseek";
+export type RouteProvider = "opencode" | "gemini" | "deepseek";
 
 export type HiddenModelRoute = {
   id: HiddenModelRouteId;
@@ -114,10 +114,10 @@ export const FREE_OPENCODE_DRAFT_ROUTES: HiddenModelRouteId[] = [
 const ROUTES: Record<HiddenModelRouteId, HiddenModelRoute> = {
   [GLM_45_AIR]: {
     id: GLM_45_AIR,
-    provider: "zai",
-    model: "glm-4.5-air",
-    envModelVar: "FOUNDEROS_GLM_45_AIR_MODEL",
-    channel: "chat_completions",
+    provider: "opencode",
+    model: "zai-coding-plan/glm-4.5-air",
+    envModelVar: "FOUNDEROS_OPENCODE_CLASSIFICATION_MODEL",
+    channel: "opencode",
     free: false,
     requiresRedaction: false,
     requiresVerifier: false,
@@ -127,10 +127,10 @@ const ROUTES: Record<HiddenModelRouteId, HiddenModelRoute> = {
   },
   [GLM_47]: {
     id: GLM_47,
-    provider: "zai",
-    model: "glm-4.7",
-    envModelVar: "FOUNDEROS_GLM_47_MODEL",
-    channel: "chat_completions",
+    provider: "opencode",
+    model: "zai-coding-plan/glm-4.7",
+    envModelVar: "FOUNDEROS_OPENCODE_BUSINESS_MODEL",
+    channel: "opencode",
     free: false,
     requiresRedaction: false,
     requiresVerifier: false,
@@ -140,10 +140,10 @@ const ROUTES: Record<HiddenModelRouteId, HiddenModelRoute> = {
   },
   [GLM_5_TURBO]: {
     id: GLM_5_TURBO,
-    provider: "zai",
-    model: "glm-5-turbo",
-    envModelVar: "FOUNDEROS_GLM_5_TURBO_MODEL",
-    channel: "chat_completions",
+    provider: "opencode",
+    model: "zai-coding-plan/glm-5-turbo",
+    envModelVar: "FOUNDEROS_OPENCODE_PLANNING_MODEL",
+    channel: "opencode",
     free: false,
     requiresRedaction: false,
     requiresVerifier: false,
@@ -153,9 +153,9 @@ const ROUTES: Record<HiddenModelRouteId, HiddenModelRoute> = {
   },
   [GLM_51]: {
     id: GLM_51,
-    provider: "zai",
-    model: "glm-5.1",
-    envModelVar: "FOUNDEROS_GLM_51_MODEL",
+    provider: "opencode",
+    model: "zai-coding-plan/glm-5.1",
+    envModelVar: "FOUNDEROS_OPENCODE_CODING_MODEL",
     channel: "opencode",
     free: false,
     requiresRedaction: false,

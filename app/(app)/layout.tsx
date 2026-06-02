@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import type { ComponentProps } from "react";
 import { ClerkProvider } from "@clerk/nextjs";
+import { ClerkAuthRefreshGuard } from "@/components/auth/ClerkAuthRefreshGuard";
 import ConvexClientProvider from "./providers";
 import { Leftnav } from "@/components/layout/Leftnav";
 import "./globals.css";
@@ -8,6 +10,12 @@ export const metadata: Metadata = {
   title: "FounderOS",
   description: "AI business workspace for a founder and one business",
 };
+
+const clerkProviderProps = {
+  // FounderOS gates auth entirely in the client shell. Clerk's default
+  // auth-state router.refresh() remounts that shell during token refreshes.
+  __internal_invokeMiddlewareOnAuthStateChange: false,
+} as unknown as ComponentProps<typeof ClerkProvider>;
 
 export default function AppLayout({
   children,
@@ -25,7 +33,8 @@ export default function AppLayout({
         />
       </head>
       <body className="h-full overflow-hidden bg-surface text-text-primary font-sans antialiased">
-        <ClerkProvider>
+        <ClerkAuthRefreshGuard />
+        <ClerkProvider {...clerkProviderProps}>
           <ConvexClientProvider>
             <div className="relative z-10 flex h-screen w-full flex-col overflow-hidden lg:flex-row">
               <Leftnav />

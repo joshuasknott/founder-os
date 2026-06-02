@@ -80,11 +80,11 @@ FounderOS should quietly maintain relationships between conversations, work, out
 
 The founder-facing principle is simple: FounderOS remembers how work, knowledge, and decisions relate. The UI can show helpful related items, sources, and reasons, but it should not expose graph mechanics, node labels, embeddings, or internal scoring.
 
-## AI Workers
+## AI Work
 
-AI workers should feel like professional staff roles: Chief of Staff, Systems Lead, Preview Designer, Growth Lead, and Operations Steward. The UI may show their names, roles, avatars, and current step.
+FounderOS can use internal workers, model routing, and local build engines behind the scenes. The founder-facing experience should not require choosing agents, providers, models, or execution tools. The UI may show a simple current step or owner when it clarifies progress, but the product model remains Home, Work, Library, Schedules, and Settings.
 
-The UI must not expose raw orchestration, provider logic, model choices, internal logs, or technical state.
+The UI must not expose raw orchestration, provider logic, model choices, internal logs, execution tools, or technical state.
 
 ## Approvals
 

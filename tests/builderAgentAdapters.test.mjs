@@ -45,6 +45,7 @@ test("builder agent selection maps cheaper chat providers to compatible endpoint
   assert.deepEqual(openrouter.apiKeyEnvNames, ["BUILDER_LLM_API_KEY", "OPENROUTER_API_KEY"]);
 
   assert.equal(isLlmBuilderProvider("z.ai"), true);
+  assert.equal(builderProviderHelp("z.ai").includes("FOUNDEROS_ENABLE_DIRECT_ZAI=true"), true);
 });
 
 test("builder agent selection preserves local simulation as the safe default", () => {
