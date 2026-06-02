@@ -38,6 +38,17 @@ export type GitHubIssueDraft = {
   assignees?: unknown;
 };
 
+export type GitHubPullRequestDraft = {
+  title?: unknown;
+  body?: unknown;
+  head?: unknown;
+  base?: unknown;
+  headBranch?: unknown;
+  baseBranch?: unknown;
+  draft?: unknown;
+  maintainerCanModify?: unknown;
+};
+
 export type GitHubCreatedIssue = {
   externalId: string;
   externalType: "issue";
@@ -48,6 +59,21 @@ export type GitHubCreatedIssue = {
   providerId?: number;
   createdAt?: number;
   updatedAt?: number;
+};
+
+export type GitHubCreatedPullRequest = {
+  externalId: string;
+  externalType: "pull_request";
+  title: string;
+  number: number;
+  sourceUrl?: string;
+  repository: string;
+  providerId?: number;
+  createdAt?: number;
+  updatedAt?: number;
+  headBranch: string;
+  baseBranch: string;
+  draft?: boolean;
 };
 
 type GitHubInstallationTokenResponse = {
@@ -91,6 +117,18 @@ type GitHubIssueResponse = {
   html_url?: string;
   created_at?: string;
   updated_at?: string;
+};
+
+type GitHubPullRequestResponse = {
+  id?: number;
+  number?: number;
+  title?: string;
+  html_url?: string;
+  created_at?: string;
+  updated_at?: string;
+  draft?: boolean;
+  head?: { ref?: string; label?: string };
+  base?: { ref?: string };
 };
 
 function cleanString(value: unknown, maxLength = 500) {
@@ -137,6 +175,28 @@ function cleanIssueList(value: unknown, maxItems = 20) {
     .filter(Boolean)
     .slice(0, maxItems) as string[];
   return items.length > 0 ? items : undefined;
+}
+
+function cleanPullRequestBranch(value: unknown, label: "head" | "base") {
+  if (typeof value !== "string") return undefined;
+  const cleaned = value.trim().replace(/^refs\/heads\//, "").slice(0, 244);
+  if (!cleaned) return undefined;
+  const branchPattern = "[A-Za-z0-9][A-Za-z0-9._/-]{0,243}";
+  const qualifiedHeadPattern = new RegExp(`^[A-Za-z0-9_.-]+:${branchPattern}$`);
+  const plainBranchPattern = new RegExp(`^${branchPattern}$`);
+  const valid = label === "head"
+    ? plainBranchPattern.test(cleaned) || qualifiedHeadPattern.test(cleaned)
+    : plainBranchPattern.test(cleaned);
+  if (
+    !valid ||
+    cleaned.includes("..") ||
+    cleaned.endsWith(".") ||
+    cleaned.endsWith("/") ||
+    /(^|\/)\.($|\/)/.test(cleaned)
+  ) {
+    return undefined;
+  }
+  return cleaned;
 }
 
 function base64UrlEncode(value: string | Uint8Array) {
@@ -303,6 +363,35 @@ export function normalizeGitHubIssueDraft(draft: GitHubIssueDraft) {
   };
 }
 
+export function normalizeGitHubPullRequestRepositorySettings(settings: GitHubRepositorySettings) {
+  const owner = cleanRepositoryPart(settings.repositoryOwner ?? settings.organizationName);
+  const name = cleanRepositoryPart(settings.repositoryName);
+  const installationId = cleanRepositoryPart(settings.installationId);
+  if (!installationId) throw new Error("Install GitHub before creating pull requests.");
+  if (!owner || !name) throw new Error("Choose the repository before creating pull requests.");
+  return { installationId, owner, name };
+}
+
+export function normalizeGitHubPullRequestDraft(draft: GitHubPullRequestDraft) {
+  const title = cleanString(draft.title, 256);
+  if (!title) throw new Error("Add a pull request title before FounderOS creates it.");
+  const head = cleanPullRequestBranch(draft.head ?? draft.headBranch, "head");
+  if (!head) throw new Error("Choose the branch with your changes before creating the pull request.");
+  const base = cleanPullRequestBranch(draft.base ?? draft.baseBranch, "base");
+  if (!base) throw new Error("Choose the base branch before creating the pull request.");
+  if (head === base) throw new Error("Choose different branches before creating the pull request.");
+  const body = cleanIssueBody(draft.body);
+  const normalized = {
+    title,
+    head,
+    base,
+    ...(body ? { body } : {}),
+    ...(typeof draft.draft === "boolean" ? { draft: draft.draft } : {}),
+    ...(typeof draft.maintainerCanModify === "boolean" ? { maintainer_can_modify: draft.maintainerCanModify } : {}),
+  };
+  return normalized;
+}
+
 function shouldKeepTreePath(path: string) {
   if (
     /(^|\/)(\.git|node_modules|dist|build|coverage|\.next|out|vendor|tmp|temp)\//i.test(path) ||
@@ -411,6 +500,78 @@ export async function createGitHubIssue(args: {
     providerId: created.id,
     createdAt: Number.isNaN(createdAt) ? undefined : createdAt,
     updatedAt: Number.isNaN(updatedAt) ? undefined : updatedAt,
+  };
+}
+
+export async function createGitHubPullRequest(args: {
+  appId?: string;
+  privateKey?: string;
+  installationId: string;
+  repositoryOwner: string;
+  repositoryName: string;
+  pullRequest: GitHubPullRequestDraft;
+  request: ConnectorRequest;
+}): Promise<GitHubCreatedPullRequest> {
+  const repository = normalizeGitHubPullRequestRepositorySettings({
+    installationId: args.installationId,
+    repositoryOwner: args.repositoryOwner,
+    repositoryName: args.repositoryName,
+  });
+  const pullRequest = normalizeGitHubPullRequestDraft(args.pullRequest);
+  const token = await createGitHubInstallationToken({
+    appId: args.appId,
+    privateKey: args.privateKey,
+    installationId: repository.installationId,
+    request: args.request,
+  });
+  const owner = encodeURIComponent(repository.owner);
+  const name = encodeURIComponent(repository.name);
+  const response = await args.request(
+    githubUrl(`/repos/${owner}/${name}/pulls`),
+    {
+      method: "POST",
+      headers: githubHeaders(token),
+      body: JSON.stringify(pullRequest),
+    },
+  );
+
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new Error("GitHub needs permission to create pull requests for this repository.");
+    }
+    if (response.status === 404) {
+      throw new Error("GitHub could not access the selected repository.");
+    }
+    if (response.status === 409) {
+      throw new Error("GitHub could not compare those branches yet.");
+    }
+    if (response.status === 422) {
+      throw new Error("Check the pull request title and branches before trying again.");
+    }
+    throw new Error("GitHub could not create the pull request.");
+  }
+
+  const created = await response.json() as GitHubPullRequestResponse;
+  if (typeof created.number !== "number") {
+    throw new Error("GitHub did not confirm the pull request was created.");
+  }
+
+  const repositoryName = `${repository.owner}/${repository.name}`;
+  const createdAt = Date.parse(created.created_at ?? "");
+  const updatedAt = Date.parse(created.updated_at ?? "");
+  return {
+    externalId: `${repositoryName}#${created.number}`,
+    externalType: "pull_request",
+    title: cleanString(created.title, 256) ?? pullRequest.title,
+    number: created.number,
+    sourceUrl: created.html_url,
+    repository: repositoryName,
+    providerId: created.id,
+    createdAt: Number.isNaN(createdAt) ? undefined : createdAt,
+    updatedAt: Number.isNaN(updatedAt) ? undefined : updatedAt,
+    headBranch: cleanString(created.head?.label ?? created.head?.ref, 244) ?? pullRequest.head,
+    baseBranch: cleanString(created.base?.ref, 244) ?? pullRequest.base,
+    draft: created.draft,
   };
 }
 

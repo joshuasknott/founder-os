@@ -161,11 +161,18 @@ test("github and website preview connections keep approval boundaries", () => {
     connectorId: "github",
     actionType: "create_pull_request",
     connection: githubConnection,
-    approvalGranted: true,
   });
   assert.equal(pullRequest.allowed, false);
-  assert.equal(pullRequest.reason, "blocked_by_policy");
-  assert.equal(pullRequest.safeMessage, "GitHub pull requests are not live yet.");
+  assert.equal(pullRequest.reason, "approval_required");
+  assert.equal(pullRequest.safeMessage, "This needs your approval first.");
+  assert.equal(pullRequest.sensitiveActionKind, "change_live_asset");
+
+  assert.equal(runtime.evaluateConnectorActionRequest({
+    connectorId: "github",
+    actionType: "create_pull_request",
+    connection: githubConnection,
+    approvalGranted: true,
+  }).allowed, true);
 
   const pendingIssue = runtime.evaluateConnectorActionRequest({
     connectorId: "github",

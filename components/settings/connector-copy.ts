@@ -47,8 +47,8 @@ export const connectorCopy: Record<string, ConnectorCopy> = {
     label: "GitHub",
     group: "opencode",
     setup: "Install GitHub App",
-    useCase: "Import repository context and create approved issues.",
-    detail: "FounderOS can save repository context to Library and create approved issues when the GitHub App is installed and a repository is chosen. Pull requests are not live yet.",
+    useCase: "Import repository context and create approved issues and pull requests.",
+    detail: "FounderOS can save repository context to Library and create approved issues and pull requests when the GitHub App is installed, a repository is chosen, and you approve the action.",
   },
   opencode: {
     label: "opencode",

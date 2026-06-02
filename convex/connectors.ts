@@ -53,10 +53,13 @@ import {
 } from "./googleWorkspaceRuntime";
 import {
   createGitHubIssue,
+  createGitHubPullRequest,
   fetchGitHubRepositoryContext,
   normalizeGitHubIssueRepositorySettings,
+  normalizeGitHubPullRequestRepositorySettings,
   normalizeGitHubRepositorySettings,
   type GitHubCreatedIssue,
+  type GitHubCreatedPullRequest,
   type GitHubRepositoryImport,
 } from "./githubRuntime";
 
@@ -210,6 +213,14 @@ const internalConnectors = anyApi.connectors as unknown as {
     directiveId?: string;
     runId?: string;
     issue: unknown;
+  }, unknown>;
+  persistGitHubPullRequestResult: FunctionReference<"mutation", "internal", {
+    workspaceId: string;
+    connectionId?: string;
+    requestedBy?: string;
+    directiveId?: string;
+    runId?: string;
+    pullRequest: unknown;
   }, unknown>;
   persistStripeSync: FunctionReference<"mutation", "internal", {
     workspaceId: string;
@@ -468,6 +479,20 @@ function isGitHubCreatedIssue(value: unknown): value is GitHubCreatedIssue {
   );
 }
 
+function isGitHubCreatedPullRequest(value: unknown): value is GitHubCreatedPullRequest {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const source = value as Record<string, unknown>;
+  return (
+    typeof source.externalId === "string" &&
+    source.externalType === "pull_request" &&
+    typeof source.title === "string" &&
+    typeof source.number === "number" &&
+    typeof source.repository === "string" &&
+    typeof source.headBranch === "string" &&
+    typeof source.baseBranch === "string"
+  );
+}
+
 export const persistGitHubRepositoryContext = internalMutation({
   args: {
     workspaceId: v.id("workspaces"),
@@ -632,6 +657,126 @@ export const persistGitHubIssueResult = internalMutation({
     }
 
     return { safeSummary, providerMetadata };
+  },
+});
+
+export const persistGitHubPullRequestResult = internalMutation({
+  args: {
+    workspaceId: v.id("workspaces"),
+    connectionId: v.optional(v.id("connectorConnections")),
+    requestedBy: v.optional(v.string()),
+    directiveId: v.optional(v.id("directives")),
+    runId: v.optional(v.id("workRuns")),
+    pullRequest: v.any(),
+  },
+  handler: async (ctx, args) => {
+    if (!isGitHubCreatedPullRequest(args.pullRequest)) {
+      throw new Error("GitHub did not confirm the pull request was created.");
+    }
+
+    const now = Date.now();
+    const safeSummary = `Created pull request #${args.pullRequest.number}: ${args.pullRequest.title}`;
+    const providerMetadata = {
+      connectorId: "github",
+      action: "create_pull_request",
+      externalId: args.pullRequest.externalId,
+      providerId: args.pullRequest.providerId,
+      pullRequestNumber: args.pullRequest.number,
+      repository: args.pullRequest.repository,
+      providerUrl: args.pullRequest.sourceUrl,
+      headBranch: args.pullRequest.headBranch,
+      baseBranch: args.pullRequest.baseBranch,
+      draft: args.pullRequest.draft,
+      createdAt: args.pullRequest.createdAt,
+      updatedAt: args.pullRequest.updatedAt,
+    };
+    const content = [
+      `# Pull request #${args.pullRequest.number}: ${args.pullRequest.title}`,
+      "",
+      safeSummary,
+      "",
+      `Repository: ${args.pullRequest.repository}`,
+      `From: ${args.pullRequest.headBranch}`,
+      `Into: ${args.pullRequest.baseBranch}`,
+      args.pullRequest.sourceUrl ? `Link: ${args.pullRequest.sourceUrl}` : undefined,
+    ].filter(Boolean).join("\n");
+
+    const existing = (
+      await ctx.db
+        .query("items")
+        .withIndex("by_external", (q) =>
+          q.eq("source", "connector").eq("externalId", args.pullRequest.externalId),
+        )
+        .collect()
+    ).find((item) => item.workspaceId === args.workspaceId);
+
+    let itemId;
+    let versionId;
+    if (existing) {
+      itemId = existing._id;
+      versionId = await appendItemVersion(ctx, {
+        itemId,
+        title: `Pull request #${args.pullRequest.number}: ${args.pullRequest.title}`,
+        summary: safeSummary,
+        content,
+        format: "markdown",
+        sourceUrl: args.pullRequest.sourceUrl,
+        createdBy: "GitHub",
+        createdAt: now,
+        metadata: providerMetadata,
+      });
+      await ctx.db.patch(itemId, {
+        title: `Pull request #${args.pullRequest.number}: ${args.pullRequest.title}`,
+        kind: "record",
+        status: "active",
+        author: "GitHub",
+        summary: safeSummary,
+        sourceUrl: args.pullRequest.sourceUrl,
+        tags: ["repository", "pull request"],
+        metadata: providerMetadata,
+        traceId: args.directiveId ?? existing.traceId,
+        runId: args.runId ?? existing.runId,
+        updatedAt: now,
+      });
+    } else {
+      const created = await createItemWithVersion(ctx, {
+        workspaceId: args.workspaceId,
+        title: `Pull request #${args.pullRequest.number}: ${args.pullRequest.title}`,
+        kind: "record",
+        status: "active",
+        source: "connector",
+        author: "GitHub",
+        summary: safeSummary,
+        content,
+        format: "markdown",
+        traceId: args.directiveId,
+        runId: args.runId,
+        sourceUrl: args.pullRequest.sourceUrl,
+        externalId: args.pullRequest.externalId,
+        tags: ["repository", "pull request"],
+        metadata: providerMetadata,
+        createdAt: now,
+      });
+      itemId = created.itemId;
+      versionId = created.versionId;
+    }
+
+    if (args.runId) {
+      await ctx.db.insert("workArtifacts", {
+        runId: args.runId,
+        directiveId: args.directiveId,
+        title: `Pull request #${args.pullRequest.number}`,
+        kind: "external_pull_request",
+        summary: safeSummary,
+        url: args.pullRequest.sourceUrl,
+        libraryItemId: itemId,
+        metadata: providerMetadata,
+        createdAt: now,
+      });
+    }
+    await scheduleConnectorMemoryExtraction(ctx, itemId, versionId);
+
+    return { safeSummary, providerMetadata, itemId, versionId };
   },
 });
 
@@ -2691,6 +2836,37 @@ async function executeGitHubConnectorAction(args: {
     organizationName: typeof settings.organizationName === "string" ? settings.organizationName : undefined,
   };
 
+  if (args.actionType === "create_pull_request") {
+    const payload = actionPayloadRecord(args.payload);
+    const pullRequest = actionPayloadRecord(payload.pullRequest ?? payload.pull_request ?? payload);
+    const repository = normalizeGitHubPullRequestRepositorySettings(repositorySettings);
+    const created = await createGitHubPullRequest({
+      appId: process.env.GITHUB_APP_ID,
+      privateKey: process.env.GITHUB_APP_PRIVATE_KEY,
+      installationId: repository.installationId,
+      repositoryOwner: repository.owner,
+      repositoryName: repository.name,
+      pullRequest,
+      request: connectorRequest,
+    });
+    const persisted = await args.ctx.runMutation(internalConnectors.persistGitHubPullRequestResult, {
+      workspaceId: args.workspaceId,
+      connectionId: args.logBase.connectionId,
+      requestedBy: args.logBase.requestedBy,
+      directiveId: args.logBase.directiveId,
+      runId: args.logBase.runId,
+      pullRequest: created,
+    }) as { safeSummary?: string; providerMetadata?: unknown };
+
+    return {
+      status: "completed" as const,
+      safeSummary: persisted.safeSummary ?? `Created pull request #${created.number}: ${created.title}`,
+      externalId: created.externalId,
+      providerUrl: created.sourceUrl,
+      metadata: persisted.providerMetadata,
+    };
+  }
+
   if (args.actionType === "create_issue") {
     const payload = actionPayloadRecord(args.payload);
     const issue = actionPayloadRecord(payload.issue ?? payload);
@@ -2809,6 +2985,23 @@ export const executeConnectorAction = action({
         safeSummary: evaluation.safeMessage,
       });
       return evaluation;
+    }
+
+    if (args.connectorId === "github" && args.actionType === "create_pull_request" && (!args.approvalId || !args.runId)) {
+      const safeMessage = "This needs your approval first.";
+      await ctx.runMutation(internalConnectors.logConnectorAction, {
+        ...logBase,
+        status: "approval_required",
+        approvalRequired: true,
+        safeSummary: safeMessage,
+      });
+      return {
+        allowed: false,
+        approvalRequired: true,
+        reason: "approval_required" as const,
+        safeMessage,
+        sensitiveActionKind: evaluation.sensitiveActionKind,
+      };
     }
 
     try {
