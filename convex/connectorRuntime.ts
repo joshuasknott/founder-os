@@ -528,11 +528,11 @@ export const connectorRegistry: Record<string, ConnectorDefinition> = {
   github: {
     id: "github",
     safeDisplayName: "GitHub",
-    description: "Import repository context for opencode.",
+    description: "Import repository context and create approved issues.",
     authType: "github_app",
-    capabilities: ["import_repository_context", "read_business_records", "import_content"],
+    capabilities: ["import_repository_context", "read_business_records", "write_business_records", "import_content"],
     requiredScopes: ["github.metadata", "github.contents.read"],
-    scopeLabels: ["Import repository context"],
+    scopeLabels: ["Import repository context", "Create approved issues"],
     connectionStatus: "not_connected",
     approvalPolicy: "per_sensitive_action",
     actions: [
@@ -557,12 +557,11 @@ export const connectorRegistry: Record<string, ConnectorDefinition> = {
       {
         type: "create_issue",
         safeLabel: "Create issues",
-        requiredCapabilities: ["write_business_records"],
-        requiredScopes: [],
-        approval: "blocked",
+        requiredCapabilities: ["write_business_records", "change_live_asset"],
+        requiredScopes: ["github.metadata"],
+        approval: "always",
         sensitiveActionKind: "change_live_asset",
         handlerKey: "github.create_issue",
-        blockedSafeMessage: "GitHub issues are not live yet.",
       },
     ],
   },
@@ -1401,7 +1400,11 @@ function hasVercelProjectSettings(settings?: unknown) {
 
 function hasGitHubInstallSettings(settings?: unknown) {
   const sanitized = sanitizeGitHubConnectionSettings(settings);
-  return Boolean(sanitized.installationId && (sanitized.repositoryName || sanitized.organizationName || sanitized.repositoryOwner));
+  return Boolean(
+    sanitized.installationId &&
+    sanitized.repositoryName &&
+    (sanitized.organizationName || sanitized.repositoryOwner),
+  );
 }
 
 function hasPostHogProjectSettings(settings?: unknown) {

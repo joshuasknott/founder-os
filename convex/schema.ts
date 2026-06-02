@@ -329,6 +329,7 @@ export default defineSchema({
     safeSummary: v.string(),
     safeError: v.optional(v.string()),
     internalErrorCode: v.optional(v.string()),
+    providerMetadata: v.optional(v.any()),
     createdAt: v.number(),
     completedAt: v.optional(v.number()),
   })

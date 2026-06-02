@@ -31,6 +31,25 @@ export type GitHubRepositoryImport = {
   };
 };
 
+export type GitHubIssueDraft = {
+  title?: unknown;
+  body?: unknown;
+  labels?: unknown;
+  assignees?: unknown;
+};
+
+export type GitHubCreatedIssue = {
+  externalId: string;
+  externalType: "issue";
+  title: string;
+  number: number;
+  sourceUrl?: string;
+  repository: string;
+  providerId?: number;
+  createdAt?: number;
+  updatedAt?: number;
+};
+
 type GitHubInstallationTokenResponse = {
   token?: string;
   expires_at?: string;
@@ -65,6 +84,15 @@ type GitHubTreeResponse = {
   truncated?: boolean;
 };
 
+type GitHubIssueResponse = {
+  id?: number;
+  number?: number;
+  title?: string;
+  html_url?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
 function cleanString(value: unknown, maxLength = 500) {
   if (typeof value !== "string") return undefined;
   const cleaned = value
@@ -87,6 +115,28 @@ function cleanMarkdown(value: unknown, maxLength = MAX_README_CHARS) {
     .replace(/\b[A-Za-z0-9+/]{48,}={0,2}\b/g, "private detail")
     .trim()
     .slice(0, maxLength);
+}
+
+function cleanIssueBody(value: unknown, maxLength = 65000) {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") return undefined;
+  const cleaned = value
+    .replace(/\r\n/g, "\n")
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "private credential")
+    .replace(/\b(ghp|ghs|github_pat|sk|pk|rk|ya29)[-._A-Za-z0-9]{8,}\b/gi, "private credential")
+    .replace(/\b[A-Za-z0-9+/]{48,}={0,2}\b/g, "private detail")
+    .trim()
+    .slice(0, maxLength);
+  return cleaned || undefined;
+}
+
+function cleanIssueList(value: unknown, maxItems = 20) {
+  if (!Array.isArray(value)) return undefined;
+  const items = value
+    .map((item) => cleanString(item, 80))
+    .filter(Boolean)
+    .slice(0, maxItems) as string[];
+  return items.length > 0 ? items : undefined;
 }
 
 function base64UrlEncode(value: string | Uint8Array) {
@@ -153,7 +203,7 @@ function privateKeyDerFromPem(privateKey: string) {
     .replace(/-----BEGIN [^-]+-----/g, "")
     .replace(/-----END [^-]+-----/g, "")
     .replace(/\s+/g, "");
-  if (!body) throw new Error("GitHub import is not configured yet.");
+  if (!body) throw new Error("GitHub is not configured yet.");
   const derBytes = base64ToBytes(body);
   return isPkcs1 ? pkcs1ToPkcs8(derBytes) : derBytes;
 }
@@ -230,6 +280,29 @@ export function normalizeGitHubRepositorySettings(settings: GitHubRepositorySett
   return { installationId, owner, name };
 }
 
+export function normalizeGitHubIssueRepositorySettings(settings: GitHubRepositorySettings) {
+  const owner = cleanRepositoryPart(settings.repositoryOwner ?? settings.organizationName);
+  const name = cleanRepositoryPart(settings.repositoryName);
+  const installationId = cleanRepositoryPart(settings.installationId);
+  if (!installationId) throw new Error("Install GitHub before creating issues.");
+  if (!owner || !name) throw new Error("Choose the repository before creating GitHub issues.");
+  return { installationId, owner, name };
+}
+
+export function normalizeGitHubIssueDraft(draft: GitHubIssueDraft) {
+  const title = cleanString(draft.title, 256);
+  if (!title) throw new Error("Add an issue title before FounderOS creates it.");
+  const body = cleanIssueBody(draft.body);
+  const labels = cleanIssueList(draft.labels);
+  const assignees = cleanIssueList(draft.assignees);
+  return {
+    title,
+    ...(body ? { body } : {}),
+    ...(labels ? { labels } : {}),
+    ...(assignees ? { assignees } : {}),
+  };
+}
+
 function shouldKeepTreePath(path: string) {
   if (
     /(^|\/)(\.git|node_modules|dist|build|coverage|\.next|out|vendor|tmp|temp)\//i.test(path) ||
@@ -259,7 +332,7 @@ export async function createGitHubInstallationToken(args: {
   const appId = args.appId?.trim();
   const privateKey = args.privateKey?.trim();
   if (!appId || !privateKey) {
-    throw new Error("GitHub import is not configured yet.");
+    throw new Error("GitHub is not configured yet.");
   }
 
   const jwt = await signGitHubJwt({ appId, privateKey });
@@ -273,6 +346,72 @@ export async function createGitHubInstallationToken(args: {
   );
   if (!result.token) throw new Error("GitHub did not confirm repository access.");
   return result.token;
+}
+
+export async function createGitHubIssue(args: {
+  appId?: string;
+  privateKey?: string;
+  installationId: string;
+  repositoryOwner: string;
+  repositoryName: string;
+  issue: GitHubIssueDraft;
+  request: ConnectorRequest;
+}): Promise<GitHubCreatedIssue> {
+  const repository = normalizeGitHubIssueRepositorySettings({
+    installationId: args.installationId,
+    repositoryOwner: args.repositoryOwner,
+    repositoryName: args.repositoryName,
+  });
+  const issue = normalizeGitHubIssueDraft(args.issue);
+  const token = await createGitHubInstallationToken({
+    appId: args.appId,
+    privateKey: args.privateKey,
+    installationId: repository.installationId,
+    request: args.request,
+  });
+  const owner = encodeURIComponent(repository.owner);
+  const name = encodeURIComponent(repository.name);
+  const response = await args.request(
+    githubUrl(`/repos/${owner}/${name}/issues`),
+    {
+      method: "POST",
+      headers: githubHeaders(token),
+      body: JSON.stringify(issue),
+    },
+  );
+
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new Error("GitHub needs permission to create issues for this repository.");
+    }
+    if (response.status === 404) {
+      throw new Error("GitHub could not access the selected repository.");
+    }
+    if (response.status === 422) {
+      throw new Error("Check the issue title, labels, and assignees before trying again.");
+    }
+    throw new Error("GitHub could not create the issue.");
+  }
+
+  const created = await response.json() as GitHubIssueResponse;
+  if (typeof created.number !== "number") {
+    throw new Error("GitHub did not confirm the issue was created.");
+  }
+
+  const repositoryName = `${repository.owner}/${repository.name}`;
+  const createdAt = Date.parse(created.created_at ?? "");
+  const updatedAt = Date.parse(created.updated_at ?? "");
+  return {
+    externalId: `${repositoryName}#${created.number}`,
+    externalType: "issue",
+    title: cleanString(created.title, 256) ?? issue.title,
+    number: created.number,
+    sourceUrl: created.html_url,
+    repository: repositoryName,
+    providerId: created.id,
+    createdAt: Number.isNaN(createdAt) ? undefined : createdAt,
+    updatedAt: Number.isNaN(updatedAt) ? undefined : updatedAt,
+  };
 }
 
 export async function fetchGitHubRepositoryContext(args: {

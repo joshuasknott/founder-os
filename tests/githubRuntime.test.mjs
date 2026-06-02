@@ -137,3 +137,140 @@ test("github repository settings require an installation and chosen repository",
     { installationId: "123", owner: "founder", name: "repo" },
   );
 });
+
+test("github issue creation posts through the installation and returns trace metadata", async () => {
+  const privateKey = await testPrivateKeyPem();
+  const requests = [];
+  const request = async (input, init) => {
+    requests.push({ input, init });
+
+    if (input.includes("/access_tokens")) {
+      return {
+        ok: true,
+        status: 201,
+        json: async () => ({ token: "ghs_installation_token" }),
+      };
+    }
+
+    if (input.endsWith("/repos/founder/founder-os/issues")) {
+      assert.equal(init.method, "POST");
+      assert.equal(init.headers.Authorization, "Bearer ghs_installation_token");
+      assert.deepEqual(JSON.parse(init.body), {
+        title: "Fix onboarding checklist",
+        body: "Users need a clearer first run.",
+        labels: ["bug", "onboarding"],
+        assignees: ["josh"],
+      });
+      return {
+        ok: true,
+        status: 201,
+        json: async () => ({
+          id: 123456,
+          number: 42,
+          title: "Fix onboarding checklist",
+          html_url: "https://github.com/founder/founder-os/issues/42",
+          created_at: "2026-06-02T09:30:00Z",
+          updated_at: "2026-06-02T09:30:00Z",
+        }),
+      };
+    }
+
+    throw new Error(`Unexpected request ${input}`);
+  };
+
+  const created = await runtime.createGitHubIssue({
+    appId: "12345",
+    privateKey,
+    installationId: "999",
+    repositoryOwner: "founder",
+    repositoryName: "founder-os",
+    issue: {
+      title: "Fix onboarding checklist",
+      body: "Users need a clearer first run.",
+      labels: ["bug", "onboarding"],
+      assignees: ["josh"],
+    },
+    request,
+  });
+
+  assert.equal(created.externalId, "founder/founder-os#42");
+  assert.equal(created.externalType, "issue");
+  assert.equal(created.number, 42);
+  assert.equal(created.sourceUrl, "https://github.com/founder/founder-os/issues/42");
+  assert.equal(created.providerId, 123456);
+  assert.equal(requests.some((entry) => entry.input.includes("/access_tokens")), true);
+});
+
+test("github issue creation fails honestly when app config is missing", async () => {
+  await assert.rejects(
+    () => runtime.createGitHubIssue({
+      installationId: "999",
+      repositoryOwner: "founder",
+      repositoryName: "founder-os",
+      issue: { title: "Fix onboarding" },
+      request: async () => {
+        throw new Error("should not request GitHub");
+      },
+    }),
+    /GitHub is not configured yet/,
+  );
+});
+
+test("github issue creation requires a selected repository", () => {
+  assert.throws(
+    () => runtime.normalizeGitHubIssueRepositorySettings({ installationId: "999", repositoryName: "founder-os" }),
+    /Choose the repository/,
+  );
+});
+
+test("github issue creation reports provider permission failure plainly", async () => {
+  const privateKey = await testPrivateKeyPem();
+  const request = async (input) => {
+    if (input.includes("/access_tokens")) {
+      return {
+        ok: true,
+        status: 201,
+        json: async () => ({ token: "ghs_installation_token" }),
+      };
+    }
+
+    return {
+      ok: false,
+      status: 403,
+      json: async () => ({ message: "Resource not accessible by integration" }),
+    };
+  };
+
+  await assert.rejects(
+    () => runtime.createGitHubIssue({
+      appId: "12345",
+      privateKey,
+      installationId: "999",
+      repositoryOwner: "founder",
+      repositoryName: "founder-os",
+      issue: { title: "Fix onboarding" },
+      request,
+    }),
+    /GitHub needs permission to create issues/,
+  );
+});
+
+test("github issue creation blocks invalid issue input before calling GitHub", async () => {
+  let called = false;
+  await assert.rejects(
+    () => runtime.createGitHubIssue({
+      appId: "12345",
+      privateKey: "not-needed",
+      installationId: "999",
+      repositoryOwner: "founder",
+      repositoryName: "founder-os",
+      issue: { title: " " },
+      request: async () => {
+        called = true;
+        throw new Error("should not request GitHub");
+      },
+    }),
+    /Add an issue title/,
+  );
+  assert.equal(called, false);
+});

@@ -40,6 +40,7 @@ import type * as items from "../items.js";
 import type * as localRunner from "../localRunner.js";
 import type * as localRunnerRuntime from "../localRunnerRuntime.js";
 import type * as memory from "../memory.js";
+import type * as memoryModel from "../memoryModel.js";
 import type * as modelOrchestration from "../modelOrchestration.js";
 import type * as modelProfiles from "../modelProfiles.js";
 import type * as projects from "../projects.js";
@@ -95,6 +96,7 @@ declare const fullApi: ApiFromModules<{
   localRunner: typeof localRunner;
   localRunnerRuntime: typeof localRunnerRuntime;
   memory: typeof memory;
+  memoryModel: typeof memoryModel;
   modelOrchestration: typeof modelOrchestration;
   modelProfiles: typeof modelProfiles;
   projects: typeof projects;

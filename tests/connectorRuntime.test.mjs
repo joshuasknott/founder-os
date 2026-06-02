@@ -167,6 +167,29 @@ test("github and website preview connections keep approval boundaries", () => {
   assert.equal(pullRequest.reason, "blocked_by_policy");
   assert.equal(pullRequest.safeMessage, "GitHub pull requests are not live yet.");
 
+  const pendingIssue = runtime.evaluateConnectorActionRequest({
+    connectorId: "github",
+    actionType: "create_issue",
+    connection: githubConnection,
+  });
+  assert.equal(pendingIssue.allowed, false);
+  assert.equal(pendingIssue.reason, "approval_required");
+  assert.equal(pendingIssue.sensitiveActionKind, "change_live_asset");
+
+  assert.equal(runtime.evaluateConnectorActionRequest({
+    connectorId: "github",
+    actionType: "create_issue",
+    connection: githubConnection,
+    approvalGranted: true,
+  }).allowed, true);
+
+  assert.equal(runtime.testConnectorConnection(runtime.getConnectorDefinition("github"), {
+    status: "connected",
+    credentialRef: "vault:github",
+    grantedScopes: ["github.metadata", "github.contents.read"],
+    settings: { installationId: "123", repositoryName: "os" },
+  }).status, "needs_attention");
+
   const vercel = runtime.getConnectorDefinition("vercel");
   const vercelSettings = runtime.sanitizeConnectorConnectionSettings("vercel", {
     projectId: " prj_abc ",
