@@ -106,6 +106,10 @@ export function isFreeOpenCodeModel(model) {
   return FREE_OPENCODE_DRAFT_ROUTES.has(cleanString(model) ?? "");
 }
 
+function isDeepSeekModel(model) {
+  return /\bdeepseek\b/i.test(cleanString(model) ?? "");
+}
+
 function freeOpenCodeAllowed(args) {
   const lowEnough = args.sensitivity === "public" || args.sensitivity === "low";
   return lowEnough && args.outputContract === "public_draft" && args.redacted === true;
@@ -140,6 +144,19 @@ export function selectOpenCodeModelForRun({
     };
   }
 
+  if (requestedModel && isDeepSeekModel(requestedModel)) {
+    return {
+      model: defaultModel,
+      requestedModel,
+      sensitivity,
+      outputContract,
+      verifierModel: outputContract === "code_changes" ? DEFAULT_OPENCODE_PLANNING_MODEL : DEFAULT_OPENCODE_BUSINESS_MODEL,
+      freeRouteBlocked: isFreeOpenCodeModel(requestedModel),
+      freeRouteAllowed: false,
+      deepSeekBlocked: true,
+    };
+  }
+
   if (requestedModel) {
     return {
       model: requestedModel,
@@ -149,6 +166,7 @@ export function selectOpenCodeModelForRun({
       verifierModel: isFreeOpenCodeModel(requestedModel) ? DEFAULT_OPENCODE_BUSINESS_MODEL : DEFAULT_OPENCODE_PLANNING_MODEL,
       freeRouteBlocked: false,
       freeRouteAllowed: isFreeOpenCodeModel(requestedModel) ? freeAllowed : undefined,
+      deepSeekBlocked: false,
     };
   }
 
@@ -159,6 +177,7 @@ export function selectOpenCodeModelForRun({
     verifierModel: outputContract === "code_changes" ? DEFAULT_OPENCODE_PLANNING_MODEL : DEFAULT_OPENCODE_BUSINESS_MODEL,
     freeRouteBlocked: false,
     freeRouteAllowed: undefined,
+    deepSeekBlocked: false,
   };
 }
 

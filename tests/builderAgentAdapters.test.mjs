@@ -130,6 +130,26 @@ test("hidden builder route blocks free opencode models for private work", () => 
   assert.equal(selected.sensitivity, "confidential");
 });
 
+test("hidden builder route blocks DeepSeek override for normal build work", () => {
+  const selected = selectOpenCodeModelForRun({
+    run: {
+      kind: "code_preview",
+      title: "Create a website",
+    },
+    directive: {
+      objective: "Create a private website preview for the founder to review",
+    },
+    env: {
+      BUILDER_OPENCODE_MODEL: "deepseek/deepseek-v4-pro",
+    },
+  });
+
+  assert.equal(selected.requestedModel, "deepseek/deepseek-v4-pro");
+  assert.equal(selected.model, "zai-coding-plan/glm-5.1");
+  assert.equal(selected.deepSeekBlocked, true);
+  assert.equal(selected.verifierModel, "zai-coding-plan/glm-5-turbo");
+});
+
 test("hidden builder route allows redacted low-sensitive public drafts through free routes", () => {
   const selected = selectOpenCodeModelForRun({
     run: {

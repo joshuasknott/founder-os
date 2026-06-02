@@ -235,12 +235,16 @@ function zAiKey() {
 }
 
 function llmApiKey() {
+  if (BUILDER_PROVIDER === "zai") {
+    return zAiKey();
+  }
+
   const names = BUILDER_AGENT.apiKeyEnvNames ?? ["BUILDER_LLM_API_KEY"];
   for (const name of names) {
     const value = process.env[name] || readLocalEnv(name);
     if (value) return value;
   }
-  return BUILDER_PROVIDER === "zai" ? zAiKey() : deepSeekKey();
+  return deepSeekKey();
 }
 
 function llmChatCompletionsUrl() {
@@ -1269,6 +1273,7 @@ function buildTaskSpec(run, directive, workspace, builderAgent = BUILDER_AGENT) 
       outputContract: builderAgent.orchestration?.outputContract,
       verifierRoute: builderAgent.orchestration?.verifierModel,
       freeRouteBlocked: builderAgent.orchestration?.freeRouteBlocked,
+      deepSeekBlocked: builderAgent.orchestration?.deepSeekBlocked,
     },
     workspace: {
       isolation: workspace.isolation,

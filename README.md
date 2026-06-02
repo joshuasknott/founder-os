@@ -56,6 +56,8 @@ Create a Clerk JWT template named `convex`, then set the same issuer domain on
 the Convex deployment with `npx convex env set CLERK_JWT_ISSUER_DOMAIN <issuer>`.
 
 See [.env.example](.env.example) and [Environment Setup](docs/7_ENVIRONMENT.md) for the full list including hidden model routes, worker providers, and connector credentials.
+Use [Acceptance Runbook](docs/9_ACCEPTANCE_RUNBOOK.md) for the exact end-to-end
+operator setup and manual walkthrough.
 
 ### Run
 
@@ -136,3 +138,4 @@ tests/            # Test files
 - [Connector Runtime](docs/5_CONNECTOR_RUNTIME.md)
 - [Environment Setup](docs/7_ENVIRONMENT.md)
 - [Remembered Details](docs/8_MEMORY_LAYER.md)
+- [Acceptance Runbook](docs/9_ACCEPTANCE_RUNBOOK.md)
