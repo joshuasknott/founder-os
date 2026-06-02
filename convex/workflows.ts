@@ -3,13 +3,17 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
 import {
-  classifyTaskObjective,
   normalizePlainWorkerMessage,
   type TaskClassification,
 } from "./taskRuntime";
 import { itemKind, workflowKind, workflowStatus } from "./itemValidators";
 import { actorFromIdentity, ensureDocWorkspace, requireCurrentUser, requireWorkspaceAccess } from "./authz";
 import { recordAuditEvent } from "./audit";
+import {
+  buildWorkflowExecutionPlan,
+  buildWorkflowObjective,
+  workflowFromTemplate,
+} from "./workflowRuntime";
 
 const cadence = v.union(
   v.literal("once"),
@@ -80,6 +84,7 @@ async function chooseAssignedAgent(
   ctx: MutationCtx,
   classification: TaskClassification,
   workspaceId: Id<"workspaces">,
+  preferredName?: string,
 ): Promise<Doc<"agents"> | null> {
   const departments = await ctx.db
     .query("departments")
@@ -96,6 +101,10 @@ async function chooseAssignedAgent(
     )
   ).flat();
   if (agents.length === 0) return null;
+  if (preferredName) {
+    const preferred = agents.find((agent) => agent.name === preferredName && agent.isActive);
+    if (preferred) return preferred;
+  }
 
   const preferredRouting: Record<TaskClassification["workerKind"], Array<Doc<"agents">["routingRequest"]>> = {
     builder: ["coding", "reasoning"],
@@ -114,111 +123,113 @@ async function chooseAssignedAgent(
   );
 }
 
-function renderTemplate(value: string, inputs: Record<string, unknown>) {
-  return value.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_match, key: string) => {
-    const input = inputs[key];
-    if (input === undefined || input === null) return "";
-    return String(input);
-  });
-}
+type WorkflowActor = {
+  actorId: string;
+  actorName: string;
+  actorType: "user" | "worker" | "system";
+};
 
-function workflowPrompt(workflow: Doc<"workflows">, inputValues: Record<string, unknown>) {
-  const inputLines = (workflow.inputs ?? [])
-    .map((input) => {
-      const value = inputValues[input.key] ?? input.defaultValue;
-      return value === undefined || value === "" ? null : `${input.label}: ${String(value)}`;
-    })
-    .filter(Boolean);
-  const stepLines = workflow.steps.map((step, index) => {
-    const config = metadataObject(step.config);
-    const prompt = typeof config.prompt === "string" ? renderTemplate(config.prompt, inputValues) : undefined;
-    return `${index + 1}. ${step.title}${prompt ? ` - ${prompt}` : ""}`;
-  });
-  const outputLines = (workflow.outputs ?? []).map((output) => `- ${output.label}: ${output.description ?? output.kind}`);
-  const approvalLines = (workflow.approvalRules ?? []).map((rule) => `- ${rule.actionKind}: ${rule.description ?? rule.policy}`);
-
-  return [
-    workflow.description ?? `Run the ${workflow.title} workflow.`,
-    inputLines.length ? `Inputs:\n${inputLines.join("\n")}` : null,
-    stepLines.length ? `Steps:\n${stepLines.join("\n")}` : null,
-    outputLines.length ? `Expected outputs:\n${outputLines.join("\n")}` : null,
-    approvalLines.length ? `Approval rules:\n${approvalLines.join("\n")}` : null,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-}
-
-async function createWorkflowRun(
+export async function createWorkflowRun(
   ctx: MutationCtx,
   workflow: Doc<"workflows">,
   inputValues: Record<string, unknown>,
   trigger: "manual" | "schedule",
-  actor: Awaited<ReturnType<typeof requireCurrentUser>>,
+  actor: WorkflowActor,
   scheduleItemId?: Id<"scheduleItems">,
+  scheduledFor?: number,
 ) {
   if (!workflow.workspaceId) throw new Error("Workflow workspace is missing.");
   const now = Date.now();
-  const objective = workflowPrompt(workflow, inputValues);
-  const title = trigger === "schedule" ? `Scheduled: ${workflow.title}` : workflow.title;
-  const classification = classifyTaskObjective({ title, objective });
-  const assignedAgent = await chooseAssignedAgent(ctx, classification, workflow.workspaceId);
+  const plan = buildWorkflowExecutionPlan({
+    workflow,
+    inputs: inputValues,
+    trigger,
+  });
+  if (plan.steps.length === 0) throw new Error("Workflow must include at least one step.");
 
   const directiveId = await ctx.db.insert("directives", {
     workspaceId: workflow.workspaceId,
-    title,
-    objective,
+    title: plan.title,
+    objective: plan.objective,
     status: "pending_spec",
   });
 
-  const taskId = await ctx.db.insert("tasks", {
-    workspaceId: workflow.workspaceId,
-    directiveId,
-    title,
-    description: objective,
-    ...(assignedAgent ? { assignedAgentId: assignedAgent._id } : {}),
-    status: "queued",
-    autonomyLevel: autonomyForClassification(classification),
-    dependencies: [],
-    classification,
-    workerKind: classification.workerKind,
-    retryCount: 0,
-    updatedAt: now,
-  });
+  const taskIds = new Map<string, Id<"tasks">>();
+  const runIds: Id<"workRuns">[] = [];
+  for (const step of plan.steps) {
+    const config = metadataObject(workflow.steps.find((candidate) => candidate.key === step.key)?.config);
+    const assignedAgent = await chooseAssignedAgent(
+      ctx,
+      step.classification,
+      workflow.workspaceId,
+      typeof config.assignedAgentName === "string" ? config.assignedAgentName : undefined,
+    );
+    const dependencies = step.dependencyKeys
+      .map((key) => taskIds.get(key))
+      .filter((taskId): taskId is Id<"tasks"> => Boolean(taskId));
+    if (dependencies.length !== step.dependencyKeys.length) {
+      throw new Error(`Workflow step "${step.key}" has an invalid dependency.`);
+    }
+    const taskId = await ctx.db.insert("tasks", {
+      workspaceId: workflow.workspaceId,
+      directiveId,
+      workflowId: workflow._id,
+      workflowStepKey: step.key,
+      title: step.title,
+      description: step.description,
+      ...(assignedAgent ? { assignedAgentId: assignedAgent._id } : {}),
+      status: "queued",
+      autonomyLevel: autonomyForClassification(step.classification),
+      dependencies,
+      classification: step.classification,
+      workerKind: step.classification.workerKind,
+      localRouting: step.localRouting,
+      retryCount: 0,
+      updatedAt: now,
+    });
+    taskIds.set(step.key, taskId);
 
-  const runId = await ctx.db.insert("workRuns", {
-    workspaceId: workflow.workspaceId,
-    directiveId,
-    taskId,
-    scheduleItemId,
-    workflowId: workflow._id,
-    trigger,
-    kind: classification.runKind,
-    workerKind: classification.workerKind,
-    classification,
-    status: "queued",
-    title,
-    summary: `Started from workflow: ${workflow.title}.`,
-    attemptCount: 0,
-    maxAttempts: 3,
-    createdAt: now,
-    updatedAt: now,
-  });
+    const runId = await ctx.db.insert("workRuns", {
+      workspaceId: workflow.workspaceId,
+      directiveId,
+      taskId,
+      scheduleItemId,
+      workflowId: workflow._id,
+      workflowStepKey: step.key,
+      scheduledFor,
+      trigger,
+      kind: step.classification.runKind,
+      workerKind: step.classification.workerKind,
+      classification: step.classification,
+      localRouting: step.localRouting,
+      status: "queued",
+      title: step.title,
+      summary: `Part of ${workflow.title}.`,
+      attemptCount: 0,
+      maxAttempts: 3,
+      createdAt: now,
+      updatedAt: now,
+    });
+    runIds.push(runId);
 
-  await ctx.db.insert("workRunUpdates", {
-    runId,
-    message: normalizePlainWorkerMessage(`Queued workflow: ${workflow.title}`),
-    tone: "info",
-    createdAt: now,
-  });
+    await ctx.db.insert("workRunUpdates", {
+      runId,
+      message: normalizePlainWorkerMessage(`Queued: ${step.title}`),
+      tone: "info",
+      createdAt: now,
+    });
+  }
 
-  for (const rule of workflow.approvalRules ?? []) {
-    if (rule.policy !== "always") continue;
+  const gatedRunId = runIds[0];
+  const gatedTaskId = plan.steps[0] ? taskIds.get(plan.steps[0].key) : undefined;
+  for (const rule of plan.approvalGates) {
+    if (!gatedRunId) continue;
     await ctx.db.insert("approvalQueue", {
       workspaceId: workflow.workspaceId,
       type: "shadow_approval",
       directiveId,
-      taskId,
-      runId,
+      taskId: gatedTaskId,
+      runId: gatedRunId,
       actionKind: rule.actionKind,
       actionTitle: `${workflow.title}: approval rule`,
       actionDescription: rule.description ?? "This workflow requires approval before this action.",
@@ -228,13 +239,18 @@ async function createWorkflowRun(
         {
           event: "requested",
           at: now,
-          actor: actor.user.name,
+          actor: actor.actorName,
           actionKind: rule.actionKind,
           message: "Workflow approval rule.",
         },
       ],
       autonomyLevel: 2,
     });
+  }
+  if (plan.approvalGates.length > 0 && gatedRunId) {
+    await ctx.db.patch(gatedRunId, { status: "waiting_for_approval", updatedAt: now });
+    if (gatedTaskId) await ctx.db.patch(gatedTaskId, { status: "shadow_pending", updatedAt: now });
+    await ctx.db.patch(directiveId, { status: "awaiting_approval" });
   }
 
   await ctx.db.patch(workflow._id, {
@@ -247,17 +263,97 @@ async function createWorkflowRun(
   });
 
   await recordAuditEvent(ctx, {
-    ...actorFromIdentity(actor.identity, actor.user),
+    ...actor,
     workspaceId: workflow.workspaceId,
     action: "workflow.run_queued",
     resourceType: "workflow",
     resourceId: String(workflow._id),
     summary: `Queued workflow: ${workflow.title}.`,
-    metadata: { runId, trigger, scheduleItemId },
+    metadata: { runIds, trigger, scheduleItemId },
   });
 
-  return runId;
+  return runIds[0];
 }
+
+export const listTemplates = query({
+  args: {},
+  handler: async (ctx) => {
+    const { workspaceId } = await requireCurrentUser(ctx);
+    const departments = await ctx.db
+      .query("departments")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .collect();
+    const departmentIds = new Set(departments.map((department) => department._id));
+    const workflows = await ctx.db
+      .query("workflows")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .collect();
+    const addedPlaybookIds = new Set(
+      workflows
+        .filter((workflow) => workflow.status !== "archived" && workflow.sourcePlaybookId)
+        .map((workflow) => workflow.sourcePlaybookId),
+    );
+    return (await ctx.db.query("playbooks").collect())
+      .filter((playbook) => departmentIds.has(playbook.departmentId) && playbook.isStarter && playbook.templateKey)
+      .map((playbook) => ({
+        key: playbook.templateKey!,
+        title: playbook.name,
+        description: playbook.description,
+        isAdded: addedPlaybookIds.has(playbook._id),
+      }))
+      .sort((a, b) => a.title.localeCompare(b.title));
+  },
+});
+
+export const createFromTemplate = mutation({
+  args: {
+    templateKey: v.string(),
+    title: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
+    const departments = await ctx.db
+      .query("departments")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", current.workspaceId))
+      .collect();
+    const departmentIds = new Set(departments.map((department) => department._id));
+    const template = (await ctx.db
+      .query("playbooks")
+      .withIndex("by_template_key", (q) => q.eq("templateKey", args.templateKey))
+      .collect())
+      .find((playbook) => departmentIds.has(playbook.departmentId) && playbook.isStarter);
+    if (!template) throw new Error("Starter workflow not found.");
+
+    const now = Date.now();
+    const definition = workflowFromTemplate(template, args.title);
+    const workflowId = await ctx.db.insert("workflows", {
+      workspaceId: current.workspaceId,
+      sourcePlaybookId: template._id,
+      ownerId: current.user._id,
+      title: definition.title,
+      description: definition.description,
+      kind: definition.kind as Doc<"workflows">["kind"],
+      status: "active",
+      inputs: definition.inputs,
+      steps: definition.steps,
+      outputs: definition.outputs,
+      approvalRules: definition.approvalRules,
+      metadata: definition.metadata,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "workflow.created_from_template",
+      resourceType: "workflow",
+      resourceId: String(workflowId),
+      summary: `Added workflow: ${definition.title}.`,
+      metadata: { templateKey: args.templateKey, sourcePlaybookId: template._id },
+    });
+    return workflowId;
+  },
+});
 
 export const list = query({
   args: {
@@ -455,7 +551,13 @@ export const run = mutation({
     const current = await requireWorkspaceAccess(ctx, existing?.workspaceId, ["Owner", "Contributor"]);
     const workflow = ensureDocWorkspace(existing, current.workspaceId, "Workflow");
     if (workflow.status === "archived") throw new Error("Workflow is archived.");
-    return await createWorkflowRun(ctx, workflow, metadataObject(args.inputs), "manual", current);
+    return await createWorkflowRun(
+      ctx,
+      workflow,
+      metadataObject(args.inputs),
+      "manual",
+      actorFromIdentity(current.identity, current.user),
+    );
   },
 });
 
@@ -475,7 +577,7 @@ export const schedule = mutation({
       .withIndex("by_workspace", (q) => q.eq("workspaceId", current.workspaceId))
       .first();
     const now = Date.now();
-    const prompt = workflowPrompt(workflow, {});
+    const prompt = buildWorkflowObjective(workflow, {});
 
     const existing = await ctx.db
       .query("scheduleItems")

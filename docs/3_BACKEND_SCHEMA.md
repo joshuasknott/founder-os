@@ -12,9 +12,9 @@ FounderOS uses Convex for live workspace data. Some table names preserve earlier
 - `items` and `itemVersions` are the unified FounderOS knowledge model.
 - `documents` and `documentVersions` remain the editable Library compatibility layer used by the current UI.
 - `itemRelations`, `entities`, and `facts` store relationships and structured knowledge behind Library search and context.
-- `savedViews` and `workflows` store pinned business views and repeatable business processes.
+- `savedViews` store pinned business views. `workflows` store durable founder-facing business processes.
 - `scheduleItems` with the legacy internal kind `automation` are founder-facing Schedules.
-- `departments`, `agents`, and `playbooks` are internal foundations for assigning work to professional AI roles.
+- `departments`, `agents`, and `playbooks` are internal foundations for assigning work to professional AI roles. Starter `playbooks` are hidden templates behind founder-visible workflows.
 - `projects` and `buildActivities` remain backend foundations but are not primary user-facing Home concepts.
 - Context relationships, embeddings, and retrieval metadata are hidden foundations for Library search, sidebar help, and pinned intelligent views.
 
@@ -27,6 +27,7 @@ FounderOS uses Convex for live workspace data. Some table names preserve earlier
 - internal business areas
 - the AI worker roster
 - task playbooks
+- hidden starter workflow templates
 
 It must not clear existing user data and must not seed fake Library items, fake projects, fake schedules, or fake build activity.
 
@@ -197,6 +198,8 @@ New integrations and workers should write to `items` directly when they do not n
 
 Schedules are stored as plain business requests such as daily priorities. The UI should show cadence and time in normal language, not cron syntax.
 
+Every Schedule points to a `workflowId`. Older prompt-only schedules are migrated to a compatible single-step workflow the next time they run. Schedule execution must call the workflow runtime rather than creating standalone backend work directly.
+
 Schedule results should write to Work and Library when useful. A recurring request that needs review should create a Review item rather than quietly taking an external action.
 
 ## Pinned Intelligent Views
@@ -207,9 +210,23 @@ The UI can show a short title, count, and item list. Internal query definitions,
 
 ## Workflows
 
-`workflows` store repeatable business processes such as automations, playbooks, checklists, research processes, task pipelines, and integrations. A workflow defines a trigger and ordered steps, and each step can declare the kind of Library item it produces.
+`workflows` are the durable founder-facing process layer. A workflow defines a trigger, ordered steps, expected Library outputs, and approval rules. The founder can add a starter workflow, save a custom workflow, run one now, or put one on a Schedule without seeing backend mechanics.
 
-Workflow execution should create Work and Library records through the same item model, with approval gates reserved for external, destructive, or spend-related actions.
+`playbooks` remain hidden reusable templates. Starter playbooks carry a stable `templateKey`, workflow defaults, and an internal task matrix. Creating a workflow from a starter copies that template into a workspace-owned `workflow` row and records `sourcePlaybookId`; later runs use the copied workflow so founder edits remain durable.
+
+Workflow execution creates one visible `directive`, then internal `tasks` and `workRuns` for the ordered steps. Later steps stay queued until their dependency tasks complete. Work groups those records back into one founder-facing card with plain progress, review needs, approvals, and saved Library outputs.
+
+Approval gates are reserved for external, destructive, or spend-related actions. Rules with `policy: "always"` pause execution before the first step. Rules with `policy: "when_external"` describe the boundary but only create a real approval when the external action is requested.
+
+Seeded starter templates:
+
+- Create Website
+- Create Document
+- Weekly Review
+- Marketing Asset
+- Inbox Follow-up
+- Investor Update
+- Product Research
 
 ## Approvals
 

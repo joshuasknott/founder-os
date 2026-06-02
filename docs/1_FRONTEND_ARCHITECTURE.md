@@ -112,7 +112,10 @@ Completed tasks, conversations, schedules, and decisions should be reachable for
 
 ## Schedules
 
-Schedules are recurring work. The route is `/schedules`.
+Schedules are recurring work. The route is `/schedules`. It also hosts the
+founder-facing workflow list: reusable business processes that can run now or
+be put on a schedule. Hidden templates, task matrices, queues, and runtime
+records must not appear in UI copy.
 
 Schedules should show:
 
@@ -166,4 +169,4 @@ Settings copy should stay plain-language. It should not expose provider routing,
 
 The frontend should prefer Convex data over local mock arrays. Local React state is appropriate for temporary UI state such as selected mode, draft text, open panels, and selected item IDs.
 
-Initialization creates only the minimum real workspace foundation: workspace, owner, internal business areas, AI worker roster, and task playbooks. It must not seed fake projects, schedules, build activity, or Library records.
+Initialization creates only the minimum real workspace foundation: workspace, owner, internal business areas, AI worker roster, task playbooks, and hidden starter workflow templates. It must not seed fake projects, schedules, build activity, or Library records.

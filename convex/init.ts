@@ -105,8 +105,22 @@ export const isSeeded = query({
     const playbook = (await ctx.db.query("playbooks").collect()).find((candidate) =>
       departmentIds.includes(candidate.departmentId),
     );
+    const starterTemplateKeys = new Set(
+      (await ctx.db.query("playbooks").collect())
+        .filter((candidate) => departmentIds.includes(candidate.departmentId) && candidate.isStarter)
+        .map((candidate) => candidate.templateKey),
+    );
+    const hasStarterTemplates = [
+      "create_website",
+      "create_document",
+      "weekly_review",
+      "marketing_asset",
+      "inbox_follow_up",
+      "investor_update",
+      "product_research",
+    ].every((key) => starterTemplateKeys.has(key));
 
-    return workspace !== null && strategyDepartment !== null && agent !== null && playbook !== null;
+    return workspace !== null && strategyDepartment !== null && agent !== null && playbook !== null && hasStarterTemplates;
   },
 });
 
@@ -208,8 +222,9 @@ export const seedSwarm = mutation({
     const productId = departmentIds.get("Product");
     const growthId = departmentIds.get("Growth");
     const operationsId = departmentIds.get("Operations");
+    const researchId = departmentIds.get("Research");
 
-    if (!workspace || !strategyId || !productId || !growthId || !operationsId) {
+    if (!workspace || !strategyId || !productId || !growthId || !operationsId || !researchId) {
       throw new Error("Unable to initialize FounderOS workspace.");
     }
 
@@ -407,6 +422,149 @@ export const seedSwarm = mutation({
             autonomyLevel: 1,
             dependencies: ["1"],
           },
+        ],
+      },
+      {
+        name: "Create Website",
+        templateKey: "create_website",
+        departmentId: productId,
+        description: "Creates a private website preview, prepares review notes, and waits for approval before anything goes live.",
+        workflowKind: "process" as const,
+        isStarter: true,
+        inputs: [
+          { key: "brief", label: "Website brief", type: "text" as const, required: false },
+        ],
+        outputs: [
+          { key: "preview", label: "Website preview", kind: "website" as const, description: "A private website preview saved for review." },
+        ],
+        approvalRules: [
+          { actionKind: "publish_preview" as const, policy: "when_external" as const, description: "Publishing the website waits for your approval." },
+        ],
+        taskMatrix: [
+          { key: "define", title: "Define website outcome", descriptionTemplate: "Clarify the audience, offer, and primary action. {{brief}}", assignedAgentId: "Orion", autonomyLevel: 1, dependencies: [] },
+          { key: "create", title: "Create website preview", descriptionTemplate: "Build a private website preview from the approved direction.", assignedAgentId: "Cipher", autonomyLevel: 2, dependencies: ["define"], outputItemKind: "website" as const },
+          { key: "review", title: "Prepare website review", descriptionTemplate: "Summarize the preview and the decisions needed before publishing.", assignedAgentId: "Atlas", autonomyLevel: 1, dependencies: ["create"] },
+        ],
+      },
+      {
+        name: "Create Document",
+        templateKey: "create_document",
+        departmentId: growthId,
+        description: "Produces a private business document draft and saves a review version in Library.",
+        workflowKind: "process" as const,
+        isStarter: true,
+        inputs: [
+          { key: "brief", label: "Document brief", type: "text" as const, required: false },
+        ],
+        outputs: [
+          { key: "document", label: "Document draft", kind: "doc" as const, description: "A private document draft saved in Library." },
+        ],
+        taskMatrix: [
+          { key: "context", title: "Gather document context", descriptionTemplate: "Find relevant Library context for this document. {{brief}}", assignedAgentId: "Sentinel", autonomyLevel: 1, dependencies: [] },
+          { key: "draft", title: "Draft document", descriptionTemplate: "Create the requested business document draft.", assignedAgentId: "Nova", autonomyLevel: 1, dependencies: ["context"], outputItemKind: "doc" as const },
+          { key: "review", title: "Prepare document review", descriptionTemplate: "Save the draft and summarize what needs review.", assignedAgentId: "Sentinel", autonomyLevel: 1, dependencies: ["draft"] },
+        ],
+      },
+      {
+        name: "Weekly Review",
+        templateKey: "weekly_review",
+        departmentId: strategyId,
+        description: "Reviews recent work, open decisions, and priorities, then saves a concise founder briefing.",
+        workflowKind: "checklist" as const,
+        isStarter: true,
+        outputs: [
+          { key: "briefing", label: "Weekly briefing", kind: "brief" as const, description: "A concise weekly review saved in Library." },
+        ],
+        metadata: { suggestedCadence: "weekly" },
+        taskMatrix: [
+          { key: "review", title: "Review the week", descriptionTemplate: "Review completed work, waiting decisions, and scheduled items.", assignedAgentId: "Sentinel", autonomyLevel: 1, dependencies: [] },
+          { key: "priorities", title: "Set next priorities", descriptionTemplate: "Identify the most important priorities and risks for the next week.", assignedAgentId: "Orion", autonomyLevel: 1, dependencies: ["review"] },
+          { key: "briefing", title: "Save weekly briefing", descriptionTemplate: "Prepare and save a concise weekly founder briefing.", assignedAgentId: "Orion", autonomyLevel: 1, dependencies: ["priorities"], outputItemKind: "brief" as const },
+        ],
+      },
+      {
+        name: "Marketing Asset",
+        templateKey: "marketing_asset",
+        departmentId: growthId,
+        description: "Creates a private marketing draft and leaves publishing as a separate approval-protected decision.",
+        workflowKind: "process" as const,
+        isStarter: true,
+        inputs: [
+          { key: "brief", label: "Campaign brief", type: "text" as const, required: false },
+        ],
+        outputs: [
+          { key: "asset", label: "Marketing draft", kind: "created_output" as const, description: "A private marketing asset saved for review." },
+        ],
+        approvalRules: [
+          { actionKind: "post_externally" as const, policy: "when_external" as const, description: "External posting waits for your approval." },
+        ],
+        taskMatrix: [
+          { key: "audience", title: "Define campaign audience", descriptionTemplate: "Clarify the audience, message, and desired response. {{brief}}", assignedAgentId: "Nova", autonomyLevel: 1, dependencies: [] },
+          { key: "draft", title: "Create marketing draft", descriptionTemplate: "Create the requested private marketing asset.", assignedAgentId: "Nova", autonomyLevel: 1, dependencies: ["audience"], outputItemKind: "created_output" as const },
+          { key: "review", title: "Prepare marketing review", descriptionTemplate: "Summarize the draft and any publishing decision.", assignedAgentId: "Orion", autonomyLevel: 1, dependencies: ["draft"] },
+        ],
+      },
+      {
+        name: "Inbox Follow-up",
+        templateKey: "inbox_follow_up",
+        departmentId: growthId,
+        description: "Reviews relevant inbox context, drafts a follow-up, and keeps sending behind an approval decision.",
+        workflowKind: "process" as const,
+        isStarter: true,
+        inputs: [
+          { key: "brief", label: "Follow-up brief", type: "text" as const, required: false },
+        ],
+        outputs: [
+          { key: "email", label: "Follow-up draft", kind: "email" as const, description: "A private email draft saved for review." },
+        ],
+        approvalRules: [
+          { actionKind: "send_email" as const, policy: "when_external" as const, description: "Sending the follow-up waits for your approval." },
+        ],
+        taskMatrix: [
+          { key: "context", title: "Review inbox context", descriptionTemplate: "Review the relevant thread and relationship context. {{brief}}", assignedAgentId: "Nova", autonomyLevel: 1, dependencies: [] },
+          { key: "draft", title: "Draft inbox follow-up", descriptionTemplate: "Prepare a clear private follow-up email draft.", assignedAgentId: "Nova", autonomyLevel: 1, dependencies: ["context"], outputItemKind: "email" as const },
+          { key: "review", title: "Prepare send review", descriptionTemplate: "Summarize the draft and leave sending for founder approval.", assignedAgentId: "Orion", autonomyLevel: 1, dependencies: ["draft"] },
+        ],
+      },
+      {
+        name: "Investor Update",
+        templateKey: "investor_update",
+        departmentId: growthId,
+        description: "Gathers company context, drafts an investor update, and keeps outreach behind approval.",
+        workflowKind: "process" as const,
+        isStarter: true,
+        inputs: [
+          { key: "period", label: "Reporting period", type: "text" as const, required: false },
+        ],
+        outputs: [
+          { key: "update", label: "Investor update", kind: "doc" as const, description: "A private investor update draft saved in Library." },
+        ],
+        approvalRules: [
+          { actionKind: "send_email" as const, policy: "when_external" as const, description: "Sending the investor update waits for your approval." },
+        ],
+        taskMatrix: [
+          { key: "context", title: "Gather investor update context", descriptionTemplate: "Collect progress, metrics, risks, and asks for {{period}}.", assignedAgentId: "Sentinel", autonomyLevel: 1, dependencies: [] },
+          { key: "draft", title: "Draft investor update", descriptionTemplate: "Create a concise investor update draft.", assignedAgentId: "Nova", autonomyLevel: 1, dependencies: ["context"], outputItemKind: "doc" as const },
+          { key: "review", title: "Prepare investor review", descriptionTemplate: "Save the update and summarize what needs review before outreach.", assignedAgentId: "Orion", autonomyLevel: 1, dependencies: ["draft"] },
+        ],
+      },
+      {
+        name: "Product Research",
+        templateKey: "product_research",
+        departmentId: researchId,
+        description: "Researches a product question, compares evidence, and saves a reusable recommendation.",
+        workflowKind: "research" as const,
+        isStarter: true,
+        inputs: [
+          { key: "question", label: "Research question", type: "text" as const, required: false },
+        ],
+        outputs: [
+          { key: "research", label: "Research recommendation", kind: "research" as const, description: "A reusable product research summary saved in Library." },
+        ],
+        taskMatrix: [
+          { key: "question", title: "Frame research question", descriptionTemplate: "Define the product research question and decision criteria. {{question}}", assignedAgentId: "Orion", autonomyLevel: 1, dependencies: [] },
+          { key: "compare", title: "Compare product evidence", descriptionTemplate: "Gather relevant evidence and compare the strongest options.", assignedAgentId: "Nova", autonomyLevel: 1, dependencies: ["question"] },
+          { key: "recommend", title: "Save product recommendation", descriptionTemplate: "Save the findings, recommendation, and open questions.", assignedAgentId: "Sentinel", autonomyLevel: 1, dependencies: ["compare"], outputItemKind: "research" as const },
         ],
       },
     ];

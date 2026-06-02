@@ -1,5 +1,5 @@
 import { mutation, query } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
 import {
@@ -14,7 +14,6 @@ import {
   canLeaseRun,
   failRunState,
   finishRunPatch,
-  founderVisibleStatusForRun,
   inferLocalSensitivity,
   leaseIsValid,
   leaseRunPatch,
@@ -24,6 +23,7 @@ import {
   type TaskClassification,
   type WorkRunKind,
 } from "./taskRuntime";
+import { projectFounderVisibleWorkflowStatus, taskDependenciesAreComplete } from "./workflowRuntime";
 import { selectDocumentContextCandidates } from "./documentContextRuntime";
 import { actorFromIdentity, ensureDocWorkspace, requireCurrentUser, requireWorkerToken, workerActor } from "./authz";
 import { recordAuditEvent } from "./audit";
@@ -107,21 +107,6 @@ const taskClassification = v.object({
 });
 
 type WorkPageStatus = FounderVisibleWorkStatus;
-
-function statusForWorkPage(status: string): WorkPageStatus {
-  if (
-    status === "queued" ||
-    status === "working" ||
-    status === "needs_review" ||
-    status === "waiting_for_approval" ||
-    status === "completed" ||
-    status === "failed" ||
-    status === "stopped"
-  ) {
-    return founderVisibleStatusForRun(status);
-  }
-  return "failed";
-}
 
 function labelForWorkPage(status: WorkPageStatus) {
   const labels: Record<WorkPageStatus, string> = {
@@ -684,9 +669,21 @@ export const leaseNext = mutation({
       });
     }
 
-    const candidate = [...queued, ...working].find((run) =>
-      canLeaseRun(run, acceptedKinds, now),
-    );
+    let candidate: Doc<"workRuns"> | undefined;
+    for (const run of [...queued, ...working]) {
+      if (!canLeaseRun(run, acceptedKinds, now)) continue;
+      if (run.taskId) {
+        const task = await ctx.db.get(run.taskId);
+        const directiveTasks = await ctx.db
+          .query("tasks")
+          .withIndex("by_directive", (q) => q.eq("directiveId", run.directiveId))
+          .collect();
+        const tasksById = new Map(directiveTasks.map((candidateTask) => [String(candidateTask._id), candidateTask]));
+        if (!taskDependenciesAreComplete(task, tasksById)) continue;
+      }
+      candidate = run;
+      break;
+    }
     if (!candidate) return null;
 
     const leaseId = `${args.workerId}:${now}:${Math.random().toString(36).slice(2)}`;
@@ -1279,46 +1276,10 @@ export const getWorkPage = query({
   args: {},
   handler: async (ctx) => {
     const { workspaceId } = await requireCurrentUser(ctx);
-    const activeRuns = [
-      ...(await ctx.db
-        .query("workRuns")
-        .withIndex("by_workspace_status", (q) => q.eq("workspaceId", workspaceId).eq("status", "queued"))
-        .order("desc")
-        .take(20)),
-      ...(await ctx.db
-        .query("workRuns")
-        .withIndex("by_workspace_status", (q) => q.eq("workspaceId", workspaceId).eq("status", "working"))
-        .order("desc")
-        .take(20)),
-      ...(await ctx.db
-        .query("workRuns")
-        .withIndex("by_workspace_status", (q) => q.eq("workspaceId", workspaceId).eq("status", "failed"))
-        .order("desc")
-        .take(10)),
-      ...(await ctx.db
-        .query("workRuns")
-        .withIndex("by_workspace_status", (q) => q.eq("workspaceId", workspaceId).eq("status", "stopped"))
-        .order("desc")
-        .take(10)),
-    ];
-
-    const readyRuns = (await ctx.db
+    const runs = await ctx.db
       .query("workRuns")
-      .withIndex("by_workspace_status", (q) => q.eq("workspaceId", workspaceId).eq("status", "needs_review"))
-      .order("desc")
-      .take(40));
-
-    const approvalRuns = (await ctx.db
-      .query("workRuns")
-      .withIndex("by_workspace_status", (q) => q.eq("workspaceId", workspaceId).eq("status", "waiting_for_approval"))
-      .order("desc")
-      .take(40));
-
-    const completedRuns = (await ctx.db
-      .query("workRuns")
-      .withIndex("by_workspace_status", (q) => q.eq("workspaceId", workspaceId).eq("status", "completed"))
-      .order("desc")
-      .take(40));
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .collect();
 
     const pendingApprovals = [
       ...(await ctx.db
@@ -1331,43 +1292,72 @@ export const getWorkPage = query({
         .collect()),
     ];
 
-    const pendingApprovalsByRun = new Map(
-      pendingApprovals
-        .filter((approval) => approval.runId)
-        .map((approval) => [approval.runId, approval]),
-    );
+    const groupedRuns = new Map<string, Doc<"workRuns">[]>();
+    for (const run of runs) {
+      const key = String(run.directiveId);
+      groupedRuns.set(key, [...(groupedRuns.get(key) ?? []), run]);
+    }
 
-    async function toWorkItem(run: (typeof activeRuns)[number]) {
+    async function toWorkItem(directiveRuns: Doc<"workRuns">[]) {
+      const orderedRuns = [...directiveRuns].sort((a, b) => b.updatedAt - a.updatedAt);
+      const projection = projectFounderVisibleWorkflowStatus(orderedRuns);
+      const statusOrder = ["waiting_for_approval", "needs_review", "failed", "stopped", "working", "queued", "completed"];
+      const run = statusOrder
+        .map((status) => orderedRuns.find((candidate) => candidate.status === status))
+        .find(Boolean) ?? orderedRuns[0];
       const directive = await ctx.db.get(run.directiveId);
+      const workflow = run.workflowId ? await ctx.db.get(run.workflowId) : null;
       const latestUpdate = await ctx.db
         .query("workRunUpdates")
         .withIndex("by_run", (q) => q.eq("runId", run._id))
         .order("desc")
         .first();
-      const artifact = await ctx.db
-        .query("workArtifacts")
-        .withIndex("by_run", (q) => q.eq("runId", run._id))
-        .first();
-      const approval = pendingApprovalsByRun.get(run._id);
-      const plainStatus = statusForWorkPage(run.status);
-      const libraryItemId = run.outputItemId ?? artifact?.libraryItemId;
+      const outputs = await Promise.all(
+        orderedRuns.map(async (candidate) => {
+          const artifact = await ctx.db
+            .query("workArtifacts")
+            .withIndex("by_run", (q) => q.eq("runId", candidate._id))
+            .first();
+          const itemId = candidate.outputItemId ?? artifact?.libraryItemId;
+          if (!itemId) return null;
+          const item = await ctx.db.get(itemId);
+          return {
+            id: itemId,
+            title: item?.title ?? artifact?.title ?? candidate.title,
+            href: `/library/${itemId}`,
+          };
+        }),
+      );
+      const savedOutputs = [...new Map(
+        outputs.filter((output): output is NonNullable<typeof output> => Boolean(output))
+          .map((output) => [String(output.id), output]),
+      ).values()];
+      const approval = pendingApprovals.find((candidate) =>
+        candidate.runId && orderedRuns.some((candidateRun) => candidateRun._id === candidate.runId),
+      );
+      const libraryItemId = savedOutputs[0]?.id;
 
       return {
         id: run._id,
         taskId: run.directiveId,
         sessionId: directive?.sessionId,
-        title: run.title,
+        workflowId: run.workflowId,
+        title: workflow?.title ?? directive?.title ?? run.title,
         kind: run.kind,
         objective: directive?.objective,
         summary: run.summary,
         latestUpdate: latestUpdate?.message ?? run.failureReason,
-        status: plainStatus,
-        statusLabel: labelForWorkPage(plainStatus),
-        previewUrl: run.previewUrl,
+        status: projection.status,
+        statusLabel: labelForWorkPage(projection.status),
+        progressLabel: projection.progressLabel,
+        completedSteps: projection.progress.completed,
+        totalSteps: projection.progress.total,
+        previewUrl: orderedRuns.find((candidate) => candidate.previewUrl)?.previewUrl,
         libraryItemId,
         libraryHref: libraryItemId ? `/library/${libraryItemId}` : undefined,
-        createdAt: run.createdAt,
-        updatedAt: run.updatedAt,
+        savedOutputs,
+        createdAt: Math.min(...orderedRuns.map((candidate) => candidate.createdAt)),
+        updatedAt: Math.max(...orderedRuns.map((candidate) => candidate.updatedAt)),
         approval: approval
           ? {
               id: approval._id,
@@ -1379,19 +1369,13 @@ export const getWorkPage = query({
       };
     }
 
+    const items = await Promise.all([...groupedRuns.values()].map(toWorkItem));
+    const sorted = items.sort((a, b) => b.updatedAt - a.updatedAt);
     return {
-      active: (await Promise.all(activeRuns.map(toWorkItem))).sort(
-        (a, b) => b.updatedAt - a.updatedAt,
-      ),
-      readyForReview: (await Promise.all(readyRuns.map(toWorkItem))).sort(
-        (a, b) => b.updatedAt - a.updatedAt,
-      ),
-      pendingApprovals: (await Promise.all(approvalRuns.map(toWorkItem))).sort(
-        (a, b) => b.updatedAt - a.updatedAt,
-      ),
-      completed: (await Promise.all(completedRuns.map(toWorkItem))).sort(
-        (a, b) => b.updatedAt - a.updatedAt,
-      ),
+      active: sorted.filter((item) => ["queued", "working", "failed"].includes(item.status)).slice(0, 40),
+      readyForReview: sorted.filter((item) => item.status === "needs review").slice(0, 40),
+      pendingApprovals: sorted.filter((item) => item.status === "needs approval").slice(0, 40),
+      completed: sorted.filter((item) => item.status === "done").slice(0, 40),
     };
   },
 });

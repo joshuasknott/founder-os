@@ -223,20 +223,34 @@ export const approve = mutation({
 
     if (approval.runId) {
       const run = await ctx.db.get(approval.runId);
-      await ctx.db.patch(approval.runId, approvalDecisionRunPatch("approved", now));
-      if (run?.taskId) {
-        await ctx.db.patch(run.taskId, {
-          status: approvalDecisionTaskStatus("approved"),
-          updatedAt: now,
+      const remainingApprovals = [
+        ...(await ctx.db
+          .query("approvalQueue")
+          .withIndex("by_run_status", (q) => q.eq("runId", approval.runId).eq("status", "pending"))
+          .collect()),
+        ...(await ctx.db
+          .query("approvalQueue")
+          .withIndex("by_run_status", (q) => q.eq("runId", approval.runId).eq("status", "shadow_pending"))
+          .collect()),
+      ].filter((candidate) => candidate._id !== args.approvalId);
+      if (remainingApprovals.length === 0) {
+        await ctx.db.patch(approval.runId, approvalDecisionRunPatch("approved", now));
+        if (run?.taskId) {
+          await ctx.db.patch(run.taskId, {
+            status: approvalDecisionTaskStatus("approved"),
+            updatedAt: now,
+          });
+        }
+        await ctx.db.patch(approval.directiveId, {
+          status: "in_progress",
         });
       }
-      await ctx.db.patch(approval.directiveId, {
-        status: "in_progress",
-      });
       await ctx.db.insert("workRunUpdates", {
         runId: approval.runId,
-        message: `Approved: ${approval.actionTitle ?? "Continue this step"}`,
-        tone: "progress",
+        message: remainingApprovals.length === 0
+          ? `Approved: ${approval.actionTitle ?? "Continue this step"}`
+          : `Approved: ${approval.actionTitle ?? "Continue this step"}. Another approval is still needed.`,
+        tone: remainingApprovals.length === 0 ? "progress" : "blocked",
         createdAt: now,
       });
     }

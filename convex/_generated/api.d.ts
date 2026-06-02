@@ -26,6 +26,7 @@ import type * as connectors from "../connectors.js";
 import type * as crons from "../crons.js";
 import type * as deploymentRuntime from "../deploymentRuntime.js";
 import type * as directives from "../directives.js";
+import type * as documentContextRuntime from "../documentContextRuntime.js";
 import type * as githubRuntime from "../githubRuntime.js";
 import type * as googleWorkspaceRuntime from "../googleWorkspaceRuntime.js";
 import type * as http from "../http.js";
@@ -51,6 +52,7 @@ import type * as taskRuntime from "../taskRuntime.js";
 import type * as telemetry from "../telemetry.js";
 import type * as users from "../users.js";
 import type * as workRuns from "../workRuns.js";
+import type * as workflowRuntime from "../workflowRuntime.js";
 import type * as workflows from "../workflows.js";
 import type * as workspaces from "../workspaces.js";
 
@@ -79,6 +81,7 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   deploymentRuntime: typeof deploymentRuntime;
   directives: typeof directives;
+  documentContextRuntime: typeof documentContextRuntime;
   githubRuntime: typeof githubRuntime;
   googleWorkspaceRuntime: typeof googleWorkspaceRuntime;
   http: typeof http;
@@ -104,6 +107,7 @@ declare const fullApi: ApiFromModules<{
   telemetry: typeof telemetry;
   users: typeof users;
   workRuns: typeof workRuns;
+  workflowRuntime: typeof workflowRuntime;
   workflows: typeof workflows;
   workspaces: typeof workspaces;
 }>;

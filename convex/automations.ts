@@ -5,13 +5,11 @@ import { v } from "convex/values";
 import { actorFromIdentity, ensureDocWorkspace, isAuthorizedWorkerToken, requireCurrentUser, requireWorkspaceAccess, workerActor } from "./authz";
 import { recordAuditEvent } from "./audit";
 import {
-  classifyTaskObjective,
   nextScheduledRunAt,
-  normalizePlainWorkerMessage,
   scheduleIsDue,
   type ScheduleCadence,
-  type TaskClassification,
 } from "./taskRuntime";
+import { createWorkflowRun } from "./workflows";
 
 const cadence = v.union(
   v.literal("once"),
@@ -19,50 +17,6 @@ const cadence = v.union(
   v.literal("weekdays"),
   v.literal("weekly"),
 );
-
-function autonomyForClassification(classification: TaskClassification): 1 | 2 | 3 {
-  if (classification.workerKind === "builder") return 3;
-  if (classification.requiresReview) return 2;
-  return 1;
-}
-
-async function chooseAssignedAgent(
-  ctx: MutationCtx,
-  classification: TaskClassification,
-  workspaceId: Id<"workspaces">,
-): Promise<Doc<"agents"> | null> {
-  const departments = await ctx.db
-    .query("departments")
-    .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
-    .collect();
-  const agents = (
-    await Promise.all(
-      departments.map((department) =>
-        ctx.db
-          .query("agents")
-          .withIndex("by_department", (q) => q.eq("departmentId", department._id))
-          .collect(),
-      ),
-    )
-  ).flat();
-  if (agents.length === 0) return null;
-
-  const preferredRouting: Record<TaskClassification["workerKind"], Array<Doc<"agents">["routingRequest"]>> = {
-    builder: ["coding", "reasoning"],
-    document: ["long-context", "reasoning", "triage"],
-    design: ["creative", "reasoning"],
-    communications: ["triage", "creative", "reasoning"],
-    generic: ["triage", "reasoning"],
-  };
-
-  return (
-    agents.find((agent) =>
-      preferredRouting[classification.workerKind].includes(agent.routingRequest),
-    ) ??
-    agents.find((agent) => agent.isActive) ??
-    agents[0]
-  );
-}
 
 async function createScheduleRun(
   ctx: MutationCtx,
@@ -74,61 +28,51 @@ async function createScheduleRun(
   if (!schedule.workspaceId) throw new Error("Schedule workspace is missing.");
 
   const now = Date.now();
-  const classification = classifyTaskObjective({
-    title: schedule.title,
-    objective: schedule.prompt,
-  });
-  const assignedAgent = await chooseAssignedAgent(ctx, classification, schedule.workspaceId);
-  const title = trigger === "manual" ? schedule.title : `Scheduled: ${schedule.title}`;
-
-  const directiveId = await ctx.db.insert("directives", {
-    workspaceId: schedule.workspaceId,
-    title,
-    objective: schedule.prompt,
-    status: "pending_spec",
-  });
-
-  const taskId = await ctx.db.insert("tasks", {
-    workspaceId: schedule.workspaceId,
-    directiveId,
-    title,
-    description: schedule.prompt,
-    ...(assignedAgent ? { assignedAgentId: assignedAgent._id } : {}),
-    status: "queued",
-    autonomyLevel: autonomyForClassification(classification),
-    dependencies: [],
-    classification,
-    workerKind: classification.workerKind,
-    retryCount: 0,
-    updatedAt: now,
-  });
-
-  const runId = await ctx.db.insert("workRuns", {
-    workspaceId: schedule.workspaceId,
-    directiveId,
-    taskId,
-    scheduleItemId: schedule._id,
-    workflowId: schedule.workflowId,
-    scheduledFor: schedule.nextRunAt ?? schedule.startAt,
-    trigger,
-    kind: classification.runKind,
-    workerKind: classification.workerKind,
-    classification,
-    status: "queued",
-    title,
-    summary: `Scheduled from ${schedule.title}.`,
-    attemptCount: 0,
-    maxAttempts: 3,
-    createdAt: now,
-    updatedAt: now,
-  });
-
-  await ctx.db.insert("workRunUpdates", {
-    runId,
-    message: normalizePlainWorkerMessage(`Queued: ${title}`),
-    tone: "info",
-    createdAt: now,
-  });
+  let workflow = schedule.workflowId ? await ctx.db.get(schedule.workflowId) : null;
+  if (!workflow) {
+    const workflowId = await ctx.db.insert("workflows", {
+      workspaceId: schedule.workspaceId,
+      title: schedule.title,
+      description: schedule.prompt,
+      kind: "automation",
+      status: "active",
+      inputs: [],
+      steps: [
+        {
+          key: "run_request",
+          title: schedule.title,
+          kind: "prompt",
+          config: { prompt: schedule.prompt },
+          outputItemKind: "task_output",
+        },
+      ],
+      outputs: [
+        {
+          key: "result",
+          label: "Saved output",
+          kind: "task_output",
+          description: "The saved result from this scheduled workflow.",
+        },
+      ],
+      approvalRules: [],
+      metadata: { source: "legacy_schedule_migration" },
+      createdAt: now,
+      updatedAt: now,
+    });
+    await ctx.db.patch(schedule._id, { workflowId, updatedAt: now });
+    workflow = await ctx.db.get(workflowId);
+  }
+  if (!workflow) throw new Error("Schedule workflow is missing.");
+  const runId = await createWorkflowRun(
+    ctx,
+    workflow,
+    {},
+    trigger === "schedule" ? "schedule" : "manual",
+    workerActor(trigger === "manual" ? "founder" : "schedule-runner"),
+    schedule._id,
+    schedule.nextRunAt ?? schedule.startAt,
+  );
+  if (!runId) throw new Error("Schedule workflow has no steps.");
 
   const cadenceValue = (schedule.cadence ?? "once") as ScheduleCadence;
   const nextRunAt = nextScheduledRunAt({
@@ -151,7 +95,7 @@ async function createScheduleRun(
     action: "schedule.run_queued",
     resourceType: "schedule",
     resourceId: String(schedule._id),
-    summary: `Queued scheduled work: ${title}.`,
+    summary: `Queued scheduled workflow: ${schedule.title}.`,
     metadata: { runId, trigger },
   });
 

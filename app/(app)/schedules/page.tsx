@@ -49,6 +49,13 @@ type WorkflowRow = Doc<"workflows"> & {
   recentRuns: Doc<"workRuns">[];
 };
 
+type StarterWorkflow = {
+  key: string;
+  title: string;
+  description: string;
+  isAdded: boolean;
+};
+
 function formatScheduleTime(item: ScheduleItem) {
   const cadence = item.cadence === "daily"
     ? "Every day"
@@ -108,6 +115,7 @@ export default function SchedulesPage() {
 function SchedulesPageContent() {
   const schedules = useQuery(api.automations.list) as ScheduleItem[] | undefined;
   const workflows = useQuery(api.workflows.list, {}) as WorkflowRow[] | undefined;
+  const starterWorkflows = useQuery(api.workflows.listTemplates, {}) as StarterWorkflow[] | undefined;
   const createSchedule = useMutation(api.automations.create);
   const pauseSchedule = useMutation(api.automations.pause);
   const resumeSchedule = useMutation(api.automations.resume);
@@ -116,6 +124,7 @@ function SchedulesPageContent() {
   const saveWorkflow = useMutation(api.workflows.save);
   const runWorkflow = useMutation(api.workflows.run);
   const scheduleWorkflow = useMutation(api.workflows.schedule);
+  const addStarterWorkflow = useMutation(api.workflows.createFromTemplate);
 
   const [title, setTitle] = useState("Send me priorities");
   const [prompt, setPrompt] = useState("Send me my priorities for the day.");
@@ -212,7 +221,12 @@ function SchedulesPageContent() {
     setStatus("Saved request scheduled.");
   };
 
-  if (!schedules || !workflows) return <PageLoader />;
+  const addStarter = async (templateKey: string) => {
+    await addStarterWorkflow({ templateKey });
+    setStatus("Workflow added.");
+  };
+
+  if (!schedules || !workflows || !starterWorkflows) return <PageLoader />;
 
   return (
     <div className="min-h-full px-4 py-6 sm:px-8">
@@ -223,7 +237,7 @@ function SchedulesPageContent() {
               Schedules
             </h1>
             <p className="mt-1 text-sm text-text-secondary">
-              Recurring work and saved requests FounderOS can run again.
+              Recurring work and workflows FounderOS can run again.
             </p>
           </div>
           {status && <p className="text-xs font-medium text-text-secondary">{status}</p>}
@@ -278,7 +292,33 @@ function SchedulesPageContent() {
         <section className="rounded-lg border border-black/[0.06] bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center gap-2">
             <Bookmark size={16} />
-            <h2 className="text-sm font-semibold text-text-primary">Saved Requests</h2>
+            <h2 className="text-sm font-semibold text-text-primary">Starter workflows</h2>
+          </div>
+          <p className="mb-3 text-xs leading-5 text-text-secondary">
+            Add a useful starting point, then run it now or put it on a schedule.
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {starterWorkflows.map((workflow) => (
+              <div key={workflow.key} className="rounded-lg border border-black/[0.06] bg-surface/70 p-3">
+                <p className="text-sm font-semibold text-text-primary">{workflow.title}</p>
+                <p className="mt-1 text-xs leading-5 text-text-secondary">{workflow.description}</p>
+                <button
+                  type="button"
+                  onClick={() => void addStarter(workflow.key)}
+                  disabled={workflow.isAdded}
+                  className="mt-3 rounded-lg border border-black/[0.08] bg-white px-3 py-1.5 text-xs font-semibold text-text-secondary hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {workflow.isAdded ? "Added" : "Add workflow"}
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-black/[0.06] bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center gap-2">
+            <Bookmark size={16} />
+            <h2 className="text-sm font-semibold text-text-primary">Save a workflow</h2>
           </div>
           <div className="grid gap-2 md:grid-cols-[1fr_1.4fr_auto]">
             <input
@@ -307,15 +347,15 @@ function SchedulesPageContent() {
 
         <section className="overflow-hidden rounded-lg border border-black/[0.06] bg-white shadow-sm">
           <div className="flex items-center justify-between border-b border-black/[0.05] px-4 py-3">
-            <h2 className="text-sm font-semibold text-text-primary">Reusable Work</h2>
+            <h2 className="text-sm font-semibold text-text-primary">Your workflows</h2>
             <span className="text-xs text-text-muted">{workflows.length}</span>
           </div>
           {workflows.length === 0 ? (
             <div className="p-8 text-center">
               <Edit3 size={18} className="mx-auto text-text-muted" />
-              <p className="mt-3 text-sm font-semibold text-text-primary">No saved requests yet</p>
+              <p className="mt-3 text-sm font-semibold text-text-primary">No workflows yet</p>
               <p className="mt-1 text-xs leading-5 text-text-secondary">
-                Save a repeatable request when a pattern is worth reusing.
+                Add a starter or save a repeatable request above.
               </p>
             </div>
           ) : (
@@ -336,7 +376,7 @@ function SchedulesPageContent() {
                       <p className="mt-1 line-clamp-2 text-xs leading-5 text-text-secondary">{workflow.description}</p>
                     )}
                     <p className="mt-2 text-[11px] text-text-muted">
-                      {workflow.steps.length} step{workflow.steps.length === 1 ? "" : "s"} - {workflow.schedules.length} schedule{workflow.schedules.length === 1 ? "" : "s"}
+                      {workflow.schedules.length} schedule{workflow.schedules.length === 1 ? "" : "s"} - Ready to run
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">

@@ -22,6 +22,7 @@ import {
   localRunnerOfflinePatch,
 } from "./localRunnerRuntime";
 import { saveRunOutputToLibrary } from "./workRuns";
+import { taskDependenciesAreComplete } from "./workflowRuntime";
 
 const localRunnerCapability = v.union(
   v.literal("coding"),
@@ -310,6 +311,15 @@ export const leaseNext = mutation({
     let candidateRouting: LocalRunRouting | null = null;
     for (const run of [...queued, ...working]) {
       if (!canLeaseRun(run, allWorkRunKinds, now)) continue;
+      if (run.taskId) {
+        const task = await ctx.db.get(run.taskId);
+        const directiveTasks = await ctx.db
+          .query("tasks")
+          .withIndex("by_directive", (q) => q.eq("directiveId", run.directiveId))
+          .collect();
+        const tasksById = new Map(directiveTasks.map((candidateTask) => [String(candidateTask._id), candidateTask]));
+        if (!taskDependenciesAreComplete(task, tasksById)) continue;
+      }
       const routing = await routingForRun(ctx, run);
       if (
         !runnerCanHandleRouting(

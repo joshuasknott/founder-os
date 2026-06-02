@@ -41,6 +41,12 @@ type WorkItem = {
   libraryHref?: string;
   createdAt: number;
   updatedAt: number;
+  progressLabel: string;
+  savedOutputs: Array<{
+    id: Id<"items">;
+    title: string;
+    href: string;
+  }>;
   approval: {
     id: Id<"approvalQueue">;
     actionKind?: string;
@@ -418,6 +424,7 @@ function WorkRow({
             <p className="mt-1 line-clamp-3 text-xs leading-5 text-text-secondary">{description}</p>
           )}
           <p className="mt-2 text-[11px] text-text-muted">Updated {formatTime(item.updatedAt)}</p>
+          <p className="mt-1 text-[11px] font-medium text-text-secondary">{item.progressLabel}</p>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Link
@@ -437,15 +444,16 @@ function WorkRow({
                 Open preview
               </a>
             )}
-            {item.libraryHref && (
+            {item.savedOutputs.slice(0, 3).map((output) => (
               <Link
-                href={item.libraryHref}
+                key={output.id}
+                href={output.href}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-black/[0.08] bg-white px-3 py-1.5 text-xs font-semibold text-text-secondary hover:text-text-primary"
               >
                 <FileText size={13} />
-                Library
+                {cleanDisplayText(output.title)}
               </Link>
-            )}
+            ))}
             {item.approval && onApprove && onDecline && (
               <>
                 <button

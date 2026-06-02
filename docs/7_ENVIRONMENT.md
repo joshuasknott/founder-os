@@ -96,6 +96,18 @@ Vercel settings are optional and documented in `.env.example`.
 6. Start the local runner with `npm run local-runner`.
 7. Legacy worker-only runs remain available when needed, for example `npm run builder` or `npm run worker:documents:once`.
 
+## Workflow rollout
+
+After deploying a schema version that adds starter workflows, run
+`init.seedSwarm` once for each existing workspace from the Convex dashboard or
+through the normal initialization path. The mutation is idempotent: it adds
+missing hidden starter templates without clearing existing workflows,
+schedules, Library items, or work history.
+
+Founder-created Schedules now point to workflows. Existing prompt-only schedules
+remain supported and are linked to a compatible workflow automatically on their
+next run. No manual data rewrite is required.
+
 Direct chat-completions builder presets are manual compatibility paths only; do
 not use them as routine fallback for normal chat or work.
 

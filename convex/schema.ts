@@ -400,16 +400,63 @@ export default defineSchema({
     name: v.string(),
     departmentId: v.id("departments"),
     description: v.string(),
+    templateKey: v.optional(v.string()),
+    workflowKind: v.optional(workflowKind),
+    inputs: v.optional(
+      v.array(
+        v.object({
+          key: v.string(),
+          label: v.string(),
+          type: v.union(
+            v.literal("text"),
+            v.literal("number"),
+            v.literal("date"),
+            v.literal("select"),
+            v.literal("boolean")
+          ),
+          required: v.boolean(),
+          defaultValue: v.optional(v.any()),
+          options: v.optional(v.array(v.string())),
+        })
+      )
+    ),
+    outputs: v.optional(
+      v.array(
+        v.object({
+          key: v.string(),
+          label: v.string(),
+          kind: itemKind,
+          description: v.optional(v.string()),
+        })
+      )
+    ),
+    approvalRules: v.optional(
+      v.array(
+        v.object({
+          actionKind: sensitiveActionKind,
+          policy: v.union(v.literal("always"), v.literal("when_external"), v.literal("over_threshold")),
+          threshold: v.optional(v.number()),
+          description: v.optional(v.string()),
+        })
+      )
+    ),
+    isStarter: v.optional(v.boolean()),
+    metadata: v.optional(v.any()),
     taskMatrix: v.array(
       v.object({
+        key: v.optional(v.string()),
         title: v.string(),
         descriptionTemplate: v.string(),
         assignedAgentId: v.string(),
         autonomyLevel: v.number(),
         dependencies: v.array(v.string()),
+        kind: v.optional(v.string()),
+        outputItemKind: v.optional(itemKind),
       })
     ),
-  }).index("by_department", ["departmentId"]),
+  })
+    .index("by_department", ["departmentId"])
+    .index("by_template_key", ["templateKey"]),
 
   // ===========================================================================
   // 2. THE EXECUTION LAYER (Deterministic State Machine)
@@ -441,6 +488,8 @@ export default defineSchema({
   tasks: defineTable({
     workspaceId: v.optional(v.id("workspaces")),
     directiveId: v.id("directives"),
+    workflowId: v.optional(v.id("workflows")),
+    workflowStepKey: v.optional(v.string()),
     title: v.string(),
     description: v.string(),
     assignedAgentId: v.optional(v.id("agents")),
@@ -744,6 +793,7 @@ export default defineSchema({
 
   workflows: defineTable({
     workspaceId: v.optional(v.id("workspaces")),
+    sourcePlaybookId: v.optional(v.id("playbooks")),
     title: v.string(),
     description: v.optional(v.string()),
     kind: workflowKind,
@@ -956,6 +1006,7 @@ export default defineSchema({
     taskId: v.optional(v.id("tasks")),
     scheduleItemId: v.optional(v.id("scheduleItems")),
     workflowId: v.optional(v.id("workflows")),
+    workflowStepKey: v.optional(v.string()),
     scheduledFor: v.optional(v.number()),
     trigger: v.optional(
       v.union(
