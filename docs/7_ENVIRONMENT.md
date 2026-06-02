@@ -38,12 +38,13 @@ or AI calls can use them.
 - Google Workspace connector OAuth: `GOOGLE_CONNECTOR_CLIENT_ID`, `GOOGLE_CONNECTOR_CLIENT_SECRET`.
 - GitHub App install flow and webhook ingestion: `GITHUB_APP_NAME`, `GITHUB_WEBHOOK_SECRET`; optional app variables `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`.
 - Vercel private keys are entered in Settings and stored through the encrypted connector credential path.
-- Preferred real opencode runs through the local build engine:
+- Preferred real opencode runs through the local runner:
   - Install and sign in to opencode on the computer running FounderOS.
-  - FounderOS uses `opencode` by default for local build work when `BUILDER_PROVIDER=opencode`.
-  - `npm run local-runner` validates the local opencode command and auth before advertising coding capability when `LOCAL_RUNNER_REQUIRE_OPENCODE=true`.
+  - Home chat is queued in Convex, leased by `npm run local-runner`, and answered through the paid GLM business route by default.
+  - FounderOS uses `opencode` for local build work when `BUILDER_PROVIDER=opencode`.
+  - `npm run local-runner` validates the local opencode command and auth before advertising Home chat, planning, or coding capability.
   - In Settings, use **Check this computer** to confirm opencode is ready for chat-side local checks.
-  - Advanced builder environment variables are still supported for hosted worker runs when needed: `BUILDER_PROVIDER=opencode`, `BUILDER_OPENCODE_MODEL`, `BUILDER_OPENCODE_AGENT`, and `BUILDER_OPENCODE_ATTACH_URL`. If no model is pinned, coding/build work uses `zai-coding-plan/glm-5.1`.
+  - Advanced builder environment variables are still supported for hosted worker runs when needed: `BUILDER_PROVIDER=opencode`, `BUILDER_OPENCODE_MODEL`, `BUILDER_OPENCODE_AGENT`, and `BUILDER_OPENCODE_ATTACH_URL`. If no model is pinned, Home chat uses `zai-coding-plan/glm-4.7` and coding/build work uses `zai-coding-plan/glm-5.1`.
 - Direct chat-completions builder adapters are optional legacy/manual paths when opencode is not used:
   - DeepSeek preset: `BUILDER_PROVIDER=deepseek` and `DEEPSEEK_API_KEY`. Use this only for manual escalation/review or rescue work, not routine chat or default builds.
   - Z.ai preset: `BUILDER_PROVIDER=zai`, `FOUNDEROS_ENABLE_DIRECT_ZAI=true`, and `ZAI_API_KEY`. This is a manual direct-billing compatibility path, not normal GLM/OpenCode setup.
@@ -55,19 +56,23 @@ or AI calls can use them.
 ## Local runner defaults
 
 The local runner is the preferred hidden execution process. It registers in the
-`localRunners` table, renews a heartbeat, leases matching `workRuns`, delegates
-to the existing builder/document/design/communications/generic handlers, and
-writes plain progress/results back through the same Work and Library paths.
+`localRunners` table, renews a heartbeat, leases hidden Home chat jobs from
+`chatJobs`, then leases matching `workRuns`. Home chat replies are written back
+to `chatMessages`; task-like requests also create an attached `directive`,
+`task`, and `workRun`. Work results continue through the same Work and Library
+paths.
 
 Common settings:
 
 - `LOCAL_RUNNER_ID`: stable machine id. Defaults to `local:<process id>`.
-- `LOCAL_RUNNER_CAPABILITIES`: comma-separated hidden capabilities. Defaults to `coding,document,design,communication,schedule,data,generic`.
+- `LOCAL_RUNNER_CAPABILITIES`: comma-separated hidden capabilities. Defaults to `business_reasoning,coding,document,design,communication,schedule,data,generic`.
 - `LOCAL_RUNNER_OUTPUT_CONTRACTS`: defaults to `plain_text,structured_json,library_item,code_changes,public_draft`.
 - `LOCAL_RUNNER_MAX_SENSITIVITY`: defaults to `restricted`.
 - `LOCAL_RUNNER_APPROVAL_CAPABILITIES`: sensitive actions this runner can prepare or resume.
 - `LOCAL_RUNNER_REQUIRE_OPENCODE=true`: fail startup if opencode is not installed and authenticated.
 - `LOCAL_RUNNER_SKIP_OPENCODE_CHECK=true`: skip the startup check only for development or simulated runs.
+- `FOUNDEROS_OPENCODE_CHAT_MODEL`: optional Home chat route override. Leave unset for the default paid GLM business route. Routine chat blocks DeepSeek and free opencode routes unless the input is public/low-risk and the verifier policy explicitly allows that class of route.
+- `FOUNDEROS_OPENCODE_CHAT_TIMEOUT_MS`: defaults to `120000`.
 
 Founder-facing UI does not expose local runner records, capabilities, providers,
 models, routing, leases, logs, or tool calls. Work only projects the plain
@@ -86,13 +91,27 @@ Vercel settings are optional and documented in `.env.example`.
 1. Run `npm install` if dependencies are missing.
 2. Start Convex with `npx convex dev` and keep it running.
 3. In another terminal, run `npm run dev`.
-4. For real opencode work, install and sign in to opencode on this computer.
-5. Set `BUILDER_PROVIDER=opencode`, `LOCAL_RUNNER_REQUIRE_OPENCODE=true`, and a stable `LOCAL_RUNNER_ID`.
+4. Install and sign in to opencode on this computer.
+5. Set `LOCAL_RUNNER_REQUIRE_OPENCODE=true` and a stable `LOCAL_RUNNER_ID`. For build work, also set `BUILDER_PROVIDER=opencode`.
 6. Start the local runner with `npm run local-runner`.
 7. Legacy worker-only runs remain available when needed, for example `npm run builder` or `npm run worker:documents:once`.
 
 Direct chat-completions builder presets are manual compatibility paths only; do
 not use them as routine fallback for normal chat or work.
+
+## Home chat troubleshooting
+
+- If a Home message appears but no reply arrives, confirm `npm run local-runner`
+  is running with the same Convex URL and worker token as the app.
+- If the runner starts without Home chat capability, run `opencode --version`,
+  sign in to opencode, and restart the runner. With
+  `LOCAL_RUNNER_REQUIRE_OPENCODE=true`, startup fails instead of silently
+  dropping Home chat capability.
+- If a routine chat override points at a free route or DeepSeek, FounderOS falls
+  back to the paid GLM business route. Sensitive material is never routed to
+  free/public models.
+- Do not set `ZAI_API_KEY` for normal Home chat. The normal GLM path is the
+  local opencode subscription.
 
 The builder always works in an isolated workspace unless `BUILDER_ISOLATION_MODE=workspace`
 is explicitly set. It saves review versions to Library, runs configured checks,

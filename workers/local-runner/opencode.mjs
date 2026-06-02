@@ -4,6 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const MAX_SAFE_TEXT = 220;
+const DEFAULT_OPENCODE_CHAT_MODEL = "zai-coding-plan/glm-4.7";
+const FREE_OPENCODE_MODELS = new Set([
+  "opencode/deepseek-v4-flash-free",
+  "opencode/nemotron-3-super-free",
+  "opencode/minimax-m3-free",
+  "opencode/mimo-v2.5-free",
+  "opencode/big-pickle",
+]);
 
 export function safeText(value, maxLength = MAX_SAFE_TEXT) {
   return String(value ?? "")
@@ -42,7 +50,8 @@ export function opencodeCommandParts(commandValue) {
 
 function execFileResult(command, args, options = {}) {
   return new Promise((resolve) => {
-    execFile(
+    const execFileImpl = options.execFileImpl ?? execFile;
+    execFileImpl(
       command,
       args,
       {
@@ -63,6 +72,170 @@ function execFileResult(command, args, options = {}) {
       },
     );
   });
+}
+
+function optionArg(value, label) {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  if (/[\r\n]/.test(value)) throw new Error(`Use a plain ${label}.`);
+  return value.trim().slice(0, 200);
+}
+
+function attachArg(value) {
+  const attachUrl = optionArg(value, "attach URL");
+  if (!attachUrl) return undefined;
+  const url = new URL(attachUrl);
+  const hostname = url.hostname.toLowerCase();
+  const isLocalHttp =
+    url.protocol === "http:" &&
+    (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1");
+  if (url.protocol !== "https:" && !isLocalHttp) {
+    throw new Error("Use a local FounderOS attach URL.");
+  }
+  return url.toString();
+}
+
+function cleanPromptText(value, maxLength) {
+  return String(value ?? "")
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "private credential")
+    .replace(/\b(sk|pk|rk|ghp|github_pat|ya29)[-_A-Za-z0-9]{8,}\b/gi, "private credential")
+    .replace(/\s+\n/g, "\n")
+    .trim()
+    .slice(0, maxLength);
+}
+
+export function safeFounderReply(value, maxLength = 8000) {
+  return cleanPromptText(value, maxLength)
+    .replace(/\bOpenCode\b|\bCodex\b|\bDeepSeek\b|\bOpenRouter\b|\bZ\.ai\b|\bZAI\b/gi, "FounderOS")
+    .replace(/\bmodel(s)?\b|\bprovider(s)?\b|\broute(s)?\b/gi, "setting$1")
+    .replace(/\btool calls?\b|\bterminal\b|\bcommand line\b|\bstdout\b|\bstderr\b/gi, "workspace")
+    .trim();
+}
+
+export function isFreeOpenCodeModel(model) {
+  return FREE_OPENCODE_MODELS.has(String(model ?? "").trim());
+}
+
+function isDeepSeekRoutineModel(model) {
+  return /\bdeepseek\b/i.test(String(model ?? ""));
+}
+
+export function selectOpenCodeChatModel({
+  requestedModel,
+  routeModel,
+  sensitivity = "internal",
+  allowFreeRoute = false,
+  verifierRequired = false,
+  env = process.env,
+} = {}) {
+  const configured = optionArg(requestedModel, "chat setting") ||
+    optionArg(env.FOUNDEROS_OPENCODE_BUSINESS_MODEL, "chat setting") ||
+    optionArg(routeModel, "chat setting") ||
+    DEFAULT_OPENCODE_CHAT_MODEL;
+  const routeDefault = optionArg(routeModel, "chat setting") || DEFAULT_OPENCODE_CHAT_MODEL;
+  const lowEnough = sensitivity === "public" || sensitivity === "low";
+  const freeAllowed = allowFreeRoute === true && verifierRequired === true && lowEnough;
+
+  if (isFreeOpenCodeModel(configured) && !freeAllowed) {
+    return {
+      model: routeDefault,
+      requestedModel: configured,
+      freeRouteBlocked: true,
+      deepSeekBlocked: false,
+    };
+  }
+
+  if (isDeepSeekRoutineModel(configured) && !freeAllowed) {
+    return {
+      model: routeDefault,
+      requestedModel: configured,
+      freeRouteBlocked: isFreeOpenCodeModel(configured),
+      deepSeekBlocked: true,
+    };
+  }
+
+  return {
+    model: configured,
+    requestedModel: configured,
+    freeRouteBlocked: false,
+    deepSeekBlocked: false,
+  };
+}
+
+export function buildOpenCodeChatPrompt({ systemPrompt, userPrompt, requiresWork = false }) {
+  const system = cleanPromptText(systemPrompt, 12000);
+  const user = cleanPromptText(userPrompt, 4000);
+  if (!system || !user) {
+    throw new Error("FounderOS needs a current prompt.");
+  }
+
+  return [
+    system,
+    "",
+    "Answer in FounderOS chat mode. Stay read-only. Do not edit files, run tasks, publish, send messages, schedule events, or mention hidden systems.",
+    requiresWork
+      ? "This request has already been added to Work. Acknowledge that plainly and help the founder understand the next useful step without claiming the work is finished."
+      : "Give a concise, practical response for the founder.",
+    "",
+    "Founder message:",
+    user,
+  ].join("\n");
+}
+
+export async function runOpenCodeChat({
+  commandValue,
+  model,
+  agent,
+  attachUrl,
+  systemPrompt,
+  userPrompt,
+  requiresWork,
+  timeoutMs = 120000,
+  execFileImpl,
+} = {}) {
+  const { command, baseArgs } = opencodeCommandParts(commandValue);
+  const selectedModel = optionArg(model, "chat setting") || DEFAULT_OPENCODE_CHAT_MODEL;
+  const selectedAgent = optionArg(agent, "agent");
+  const selectedAttachUrl = attachArg(attachUrl);
+  const workspaceDir = await mkdtemp(join(tmpdir(), "founderos-opencode-chat-"));
+  const prompt = buildOpenCodeChatPrompt({ systemPrompt, userPrompt, requiresWork });
+  const commandArgs = [
+    ...baseArgs,
+    "run",
+    "--dir",
+    workspaceDir,
+    "--title",
+    "FounderOS chat",
+    "--model",
+    selectedModel,
+    ...(selectedAgent ? ["--agent", selectedAgent] : []),
+    ...(selectedAttachUrl ? ["--attach", selectedAttachUrl] : []),
+    prompt,
+  ];
+
+  try {
+    const result = await execFileResult(command, commandArgs, {
+      cwd: workspaceDir,
+      timeoutMs,
+      maxBuffer: 2 * 1024 * 1024,
+      execFileImpl,
+      env: {
+        ...process.env,
+        CI: process.env.CI ?? "true",
+      },
+    });
+    const content = safeFounderReply(result.stdout) || safeFounderReply(result.stderr);
+    if (!result.ok || !content) {
+      throw new Error(content || "FounderOS did not return a chat response.");
+    }
+
+    return {
+      content,
+      model: selectedModel,
+    };
+  } finally {
+    await rm(workspaceDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 export async function checkOpenCode(commandValue) {

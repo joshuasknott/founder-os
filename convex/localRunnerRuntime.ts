@@ -8,6 +8,7 @@ import type {
 export const DEFAULT_LOCAL_RUNNER_HEARTBEAT_TTL_MS = 45 * 1000;
 
 const DEFAULT_RUNNER_CAPABILITIES: LocalRunnerCapability[] = [
+  "business_reasoning",
   "coding",
   "document",
   "design",

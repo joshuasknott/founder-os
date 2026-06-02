@@ -67,14 +67,20 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Workers
 
-The local runner is the preferred path for delegated work on a founder's
-computer. It registers with Convex, heartbeats while running, leases hidden Work
-items, then delegates to the existing handlers:
+The local runner is the preferred path for Home chat intake and delegated work
+on a founder's computer. It registers with Convex, heartbeats while running,
+leases hidden Home chat jobs first, leases hidden Work items next, then writes
+plain progress and results back:
 
 ```bash
 npm run local-runner       # Local runner (continuous)
 npm run local-runner:once  # Local runner (single lease)
 ```
+
+For real Home chat, install and sign in to `opencode`, set
+`LOCAL_RUNNER_REQUIRE_OPENCODE=true`, and keep routine chat on the default paid
+GLM business route (`zai-coding-plan/glm-4.7`). Do not set `ZAI_API_KEY` for the
+normal path; DeepSeek is escalation/review only.
 
 The legacy individual workers are still supported for compatibility:
 

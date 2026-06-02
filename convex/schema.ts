@@ -168,6 +168,13 @@ const chatMessageCard = v.object({
   directiveId: v.optional(v.id("directives")),
 });
 
+const chatJobStatus = v.union(
+  v.literal("queued"),
+  v.literal("working"),
+  v.literal("completed"),
+  v.literal("failed")
+);
+
 export default defineSchema({
   // ===========================================================================
   // 0. THE BUSINESS SHELL (Workspace -> internal areas -> Library -> Versions)
@@ -552,6 +559,46 @@ export default defineSchema({
     agentName: v.optional(v.string()),
     card: v.optional(chatMessageCard),
   }).index("by_session", ["sessionId"]),
+
+  chatJobs: defineTable({
+    workspaceId: v.optional(v.id("workspaces")),
+    sessionId: v.id("chatSessions"),
+    agentId: v.id("agents"),
+    userMessageId: v.optional(v.id("chatMessages")),
+    directiveId: v.optional(v.id("directives")),
+    taskId: v.optional(v.id("tasks")),
+    runId: v.optional(v.id("workRuns")),
+    status: chatJobStatus,
+    content: v.string(),
+    systemPrompt: v.string(),
+    userPrompt: v.string(),
+    agentName: v.string(),
+    safeProgress: v.string(),
+    sensitivity: localRunnerSensitivity,
+    localRouting: localRunRouting,
+    routeId: v.string(),
+    opencodeModel: v.string(),
+    verifierRequired: v.boolean(),
+    allowFreeRoute: v.boolean(),
+    requiresWork: v.boolean(),
+    classification: v.optional(taskClassification),
+    attemptCount: v.optional(v.number()),
+    maxAttempts: v.optional(v.number()),
+    failureReason: v.optional(v.string()),
+    lastError: v.optional(v.string()),
+    leaseId: v.optional(v.string()),
+    leaseOwner: v.optional(v.string()),
+    leaseExpiresAt: v.optional(v.number()),
+    localRunnerId: v.optional(v.string()),
+    assistantMessageId: v.optional(v.id("chatMessages")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    failedAt: v.optional(v.number()),
+  })
+    .index("by_session", ["sessionId"])
+    .index("by_status", ["status"])
+    .index("by_workspace_status", ["workspaceId", "status"]),
 
   // ===========================================================================
   // 4. THE INTELLIGENCE LAYER (Sovereign Knowledge Vault — RAG)

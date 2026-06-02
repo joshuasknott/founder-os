@@ -4,8 +4,10 @@ import { fileURLToPath } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api.js";
 import { checkOpenCode, safeText } from "./opencode.mjs";
+import { processChatJob } from "./chat.mjs";
 
 const DEFAULT_CAPABILITIES = [
+  "business_reasoning",
   "coding",
   "document",
   "design",
@@ -47,6 +49,13 @@ const VALID_CAPABILITIES = new Set([
 const VALID_OUTPUT_CONTRACTS = new Set(DEFAULT_OUTPUT_CONTRACTS);
 const VALID_SENSITIVITIES = new Set(["public", "low", "internal", "confidential", "restricted"]);
 const VALID_APPROVAL_CAPABILITIES = new Set(DEFAULT_APPROVAL_CAPABILITIES);
+const OPENCODE_REQUIRED_CAPABILITIES = new Set([
+  "business_reasoning",
+  "planning",
+  "product_marketing_docs",
+  "coding",
+  "debugging",
+]);
 
 const POLL_INTERVAL_MS = Number(envValue("LOCAL_RUNNER_POLL_INTERVAL_MS") ?? 5000);
 const HEARTBEAT_TTL_MS = Number(envValue("LOCAL_RUNNER_HEARTBEAT_TTL_MS") ?? 45 * 1000);
@@ -115,8 +124,7 @@ function builderProvider() {
 
 function shouldValidateOpenCode(capabilities) {
   if (envFlag("LOCAL_RUNNER_SKIP_OPENCODE_CHECK")) return false;
-  if (!capabilities.includes("coding") && !capabilities.includes("debugging")) return false;
-  return envFlag("LOCAL_RUNNER_REQUIRE_OPENCODE") || builderProvider() === "opencode";
+  return capabilities.some((capability) => OPENCODE_REQUIRED_CAPABILITIES.has(capability));
 }
 
 async function openCodeReadiness(capabilities) {
@@ -144,7 +152,7 @@ async function openCodeReadiness(capabilities) {
     return {
       opencodeReady: false,
       opencodeSafeMessage: message,
-      capabilities: capabilities.filter((capability) => capability !== "coding" && capability !== "debugging"),
+      capabilities: capabilities.filter((capability) => !OPENCODE_REQUIRED_CAPABILITIES.has(capability)),
     };
   }
 }
@@ -246,6 +254,15 @@ async function leaseNext(client) {
   });
 }
 
+async function leaseNextChatJob(client) {
+  return await client.mutation(api.chat.leaseNextLocalRunnerJob, {
+    runnerId: RUNNER_ID,
+    leaseMs: LEASE_MS,
+    heartbeatTtlMs: HEARTBEAT_TTL_MS,
+    workerToken: workerToken(),
+  });
+}
+
 async function failRun(client, run, error) {
   const message = error instanceof Error ? error.message : String(error);
   await client.mutation(api.localRunner.fail, {
@@ -275,6 +292,21 @@ async function processWithHeartbeat(client, settings, run, handler) {
 
 async function tick(client, settings, handlers) {
   await heartbeat(client, settings, undefined, "Waiting for work.");
+  const chatJob = await leaseNextChatJob(client);
+  if (chatJob) {
+    try {
+      await processChatJob(client, chatJob, {
+        api,
+        runnerId: RUNNER_ID,
+        workerToken: workerToken(),
+        heartbeatTtlMs: HEARTBEAT_TTL_MS,
+      });
+    } catch (error) {
+      console.error(`Local runner chat failed: ${safeText(error instanceof Error ? error.message : error)}`);
+    }
+    return true;
+  }
+
   const run = await leaseNext(client);
   if (!run) return false;
 

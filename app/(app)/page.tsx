@@ -46,6 +46,14 @@ type Message = {
   _creationTime: number;
 };
 
+type ChatActivity = {
+  status: "queued" | "working";
+  safeProgress: string;
+  directiveId?: Id<"directives">;
+  runId?: Id<"workRuns">;
+  updatedAt: number;
+};
+
 type WorkRun = {
   _id: Id<"workRuns">;
   title: string;
@@ -236,6 +244,10 @@ function HomePageContent() {
     api.chat.getMessages,
     sessionParam ? { sessionId: sessionParam } : "skip",
   ) as Message[] | undefined;
+  const chatActivity = useQuery(
+    api.chat.getSessionActivity,
+    sessionParam ? { sessionId: sessionParam } : "skip",
+  ) as ChatActivity | null | undefined;
 
   const workRuns = useQuery(
     api.workRuns.getRunsAndUpdates,
@@ -243,9 +255,7 @@ function HomePageContent() {
   ) as WorkRun[] | undefined;
 
   const createSession = useMutation(api.chat.createSession);
-  const sendMessage = useAction(api.chat.sendMessage);
-  const prepareLocalOpenCodeChat = useAction(api.chat.prepareLocalOpenCodeChat);
-  const completeLocalOpenCodeChat = useMutation(api.chat.completeLocalOpenCodeChat);
+  const sendHomeMessage = useAction(api.chat.sendHomeMessage);
   const createTask = useMutation(api.directives.createDirective);
   const addClarification = useMutation(api.directives.addClarification);
   const approve = useMutation(api.approvals.approve);
@@ -394,39 +404,15 @@ function HomePageContent() {
 
       if (mode === "chat") {
         if (!defaultWorker) throw new Error("FounderOS is still preparing your AI workers.");
-        try {
-          const prepared = await prepareLocalOpenCodeChat({
-            sessionId,
-            agentId: defaultWorker._id,
-            content: trimmed,
-          });
-          const response = await fetch("/api/local/opencode/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              command: "opencode",
-              systemPrompt: prepared.systemPrompt,
-              userPrompt: prepared.userPrompt,
-            }),
-          });
-          const result = await response.json() as { ok?: boolean; content?: string; safeMessage?: string };
-          if (!response.ok || !result.ok || !result.content) {
-            throw new Error(result.safeMessage ?? "Local opencode chat is not ready.");
-          }
-          await completeLocalOpenCodeChat({
-            sessionId,
-            agentId: defaultWorker._id,
-            userContent: trimmed,
-            assistantContent: result.content,
-          });
-        } catch {
-          await sendMessage({
-            sessionId,
-            agentId: defaultWorker._id,
-            content: trimmed,
-          });
+        const result = await sendHomeMessage({
+          sessionId,
+          agentId: defaultWorker._id,
+          content: trimmed,
+        }) as { directiveId?: Id<"directives">; requiresWork?: boolean };
+        if (result.requiresWork) {
+          setNotice("Added to Work. I'll keep you posted on progress.");
         }
-        router.replace(`/?session=${sessionId}`);
+        router.replace(result.directiveId ? `/?session=${sessionId}&task=${result.directiveId}` : `/?session=${sessionId}`);
         return;
       }
 
@@ -449,14 +435,12 @@ function HomePageContent() {
   }, [
     createTask,
     defaultWorker,
-    completeLocalOpenCodeChat,
     ensureConversation,
     input,
     isSending,
     mode,
-    prepareLocalOpenCodeChat,
     router,
-    sendMessage,
+    sendHomeMessage,
   ]);
 
   const handleRequestChanges = useCallback(async (content: string) => {
@@ -552,7 +536,7 @@ function HomePageContent() {
               </div>
             </div>
           ) : (
-            <ConversationPanel messages={messages ?? []} />
+            <ConversationPanel messages={messages ?? []} activity={chatActivity ?? null} />
           )}
 
           {taskParam && workRuns === undefined && (
@@ -854,7 +838,7 @@ function HomeLoader() {
   );
 }
 
-function ConversationPanel({ messages }: { messages: Message[] }) {
+function ConversationPanel({ messages, activity }: { messages: Message[]; activity: ChatActivity | null }) {
   // Sort chronologically — oldest at top, newest at bottom (like ChatGPT)
   const sorted = useMemo(
     () => [...messages].sort((a, b) => a._creationTime - b._creationTime),
@@ -896,6 +880,20 @@ function ConversationPanel({ messages }: { messages: Message[] }) {
           </div>
         );
       })}
+      {activity && (
+        <div className="flex gap-3 justify-start animate-slide-up">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-black/[0.06] bg-white text-xs font-semibold text-text-primary">
+            F
+          </div>
+          <div className="max-w-[82%] rounded-2xl border border-black/[0.06] bg-white px-4 py-3 text-sm leading-6 text-text-primary shadow-sm">
+            <p className="mb-1 text-[11px] font-semibold text-text-muted">FounderOS</p>
+            <div className="flex items-center gap-2 text-text-secondary">
+              <Loader2 size={14} className="animate-spin" />
+              <span>{cleanDisplayText(activity.safeProgress)}</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

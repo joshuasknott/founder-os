@@ -16,6 +16,7 @@ import type * as audit from "../audit.js";
 import type * as authz from "../authz.js";
 import type * as automations from "../automations.js";
 import type * as chat from "../chat.js";
+import type * as chatRuntime from "../chatRuntime.js";
 import type * as commandCenter from "../commandCenter.js";
 import type * as connectorAuthRuntime from "../connectorAuthRuntime.js";
 import type * as connectorContent from "../connectorContent.js";
@@ -68,6 +69,7 @@ declare const fullApi: ApiFromModules<{
   authz: typeof authz;
   automations: typeof automations;
   chat: typeof chat;
+  chatRuntime: typeof chatRuntime;
   commandCenter: typeof commandCenter;
   connectorAuthRuntime: typeof connectorAuthRuntime;
   connectorContent: typeof connectorContent;
