@@ -459,7 +459,10 @@ const classifierRules: Array<{
     requiresReview: false,
     signals: [
       "brief",
+      "memo",
       "plan",
+      "sop",
+      "standard operating procedure",
       "checklist",
       "proposal",
       "meeting notes",

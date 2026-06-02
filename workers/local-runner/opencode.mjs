@@ -104,6 +104,16 @@ function cleanPromptText(value, maxLength) {
     .slice(0, maxLength);
 }
 
+function cleanDocumentText(value, maxLength) {
+  return String(value ?? "")
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [redacted credential]")
+    .replace(/\b(sk|pk|rk|ghp|github_pat|ya29)[-_A-Za-z0-9]{8,}\b/gi, "[redacted credential]")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim()
+    .slice(0, maxLength);
+}
+
 export function safeFounderReply(value, maxLength = 8000) {
   return cleanPromptText(value, maxLength)
     .replace(/\bOpenCode\b|\bCodex\b|\bDeepSeek\b|\bOpenRouter\b|\bZ\.ai\b|\bZAI\b/gi, "FounderOS")
@@ -231,6 +241,63 @@ export async function runOpenCodeChat({
 
     return {
       content,
+      model: selectedModel,
+    };
+  } finally {
+    await rm(workspaceDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export async function runOpenCodeDocument({
+  commandValue,
+  model,
+  agent,
+  attachUrl,
+  prompt,
+  title = "FounderOS document",
+  timeoutMs = 180000,
+  execFileImpl,
+} = {}) {
+  const { command, baseArgs } = opencodeCommandParts(commandValue);
+  const selectedModel = optionArg(model, "document setting") || DEFAULT_OPENCODE_CHAT_MODEL;
+  const selectedAgent = optionArg(agent, "agent");
+  const selectedAttachUrl = attachArg(attachUrl);
+  const workspaceDir = await mkdtemp(join(tmpdir(), "founderos-opencode-document-"));
+  const cleanPrompt = cleanPromptText(prompt, 28000);
+  if (!cleanPrompt) throw new Error("FounderOS needs a document request.");
+
+  const commandArgs = [
+    ...baseArgs,
+    "run",
+    "--dir",
+    workspaceDir,
+    "--title",
+    optionArg(title, "document title") || "FounderOS document",
+    "--model",
+    selectedModel,
+    ...(selectedAgent ? ["--agent", selectedAgent] : []),
+    ...(selectedAttachUrl ? ["--attach", selectedAttachUrl] : []),
+    cleanPrompt,
+  ];
+
+  try {
+    const result = await execFileResult(command, commandArgs, {
+      cwd: workspaceDir,
+      timeoutMs,
+      maxBuffer: 4 * 1024 * 1024,
+      execFileImpl,
+      env: {
+        ...process.env,
+        CI: process.env.CI ?? "true",
+      },
+    });
+    const content = cleanDocumentText(result.stdout, 50000) || cleanDocumentText(result.stderr, 50000);
+    if (!result.ok || !content) {
+      throw new Error(safeText(content) || "FounderOS did not return a document.");
+    }
+
+    return {
+      content: content.replace(/^```(?:markdown|md)?\s*/i, "").replace(/\s*```$/, "").trim(),
       model: selectedModel,
     };
   } finally {

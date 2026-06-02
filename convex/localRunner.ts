@@ -497,7 +497,12 @@ export const complete = mutation({
           summary: args.summary,
           content: args.content,
           previewUrl: args.previewUrl,
-          metadata: args.metadata,
+          metadata: {
+            ...((args.metadata && typeof args.metadata === "object" && !Array.isArray(args.metadata))
+              ? args.metadata
+              : {}),
+            ...(status === "needs_review" ? { needsReview: true } : {}),
+          },
         });
 
     if (run.taskId) {

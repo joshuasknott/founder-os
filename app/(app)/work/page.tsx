@@ -11,6 +11,7 @@ import {
   Clock3,
   ExternalLink,
   FileText,
+  FilePlus2,
   Loader2,
   PauseCircle,
   PlayCircle,
@@ -54,6 +55,8 @@ type WorkPageData = {
   pendingApprovals: WorkItem[];
   completed: WorkItem[];
 };
+
+const documentTypes = ["Memo", "Brief", "Plan", "SOP", "Email draft", "Proposal", "Strategy document"];
 
 function cleanDisplayText(value?: string) {
   if (!value) return "";
@@ -188,7 +191,11 @@ function WorkPageContent() {
   const data = useQuery(api.workRuns.getWorkPage) as WorkPageData | undefined;
   const approve = useMutation(api.approvals.approve);
   const deny = useMutation(api.approvals.deny);
+  const createTask = useMutation(api.directives.createDirective);
   const [notice, setNotice] = useState<string | null>(null);
+  const [documentType, setDocumentType] = useState("Memo");
+  const [documentRequest, setDocumentRequest] = useState("");
+  const [isRequestingDocument, setIsRequestingDocument] = useState(false);
 
   const totals = useMemo(() => {
     if (!data) return null;
@@ -212,6 +219,24 @@ function WorkPageContent() {
     setNotice("Declined. The item is back for review.");
   };
 
+  const requestDocument = async () => {
+    const details = documentRequest.trim();
+    if (!details || isRequestingDocument) return;
+    setIsRequestingDocument(true);
+    try {
+      await createTask({
+        title: `${documentType}: ${details}`.slice(0, 72),
+        objective: `Create a ${documentType.toLowerCase()} for this request:\n\n${details}`,
+      });
+      setDocumentRequest("");
+      setNotice("Document added to Work. FounderOS will save a review draft in Library.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "FounderOS could not add that document yet.");
+    } finally {
+      setIsRequestingDocument(false);
+    }
+  };
+
   return (
     <div className="min-h-full px-4 py-6 sm:px-8">
       <div className="mx-auto max-w-7xl space-y-5">
@@ -230,6 +255,42 @@ function WorkPageContent() {
           <SummaryStat label="Ready to review" value={totals.readyForReview} />
           <SummaryStat label="Needs approval" value={totals.pendingApprovals} />
           <SummaryStat label="Completed" value={totals.completed} />
+        </section>
+
+        <section className="rounded-lg border border-black/[0.06] bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-2">
+            <FilePlus2 size={16} />
+            <h2 className="text-sm font-semibold text-text-primary">Request a document</h2>
+          </div>
+          <p className="mt-1 text-xs leading-5 text-text-secondary">
+            FounderOS will prepare a private draft, save it to Library, and leave it ready for review.
+          </p>
+          <div className="mt-3 flex flex-col gap-2 lg:flex-row">
+            <select
+              value={documentType}
+              onChange={(event) => setDocumentType(event.target.value)}
+              className="rounded-lg border border-black/[0.08] bg-surface px-3 py-2 text-sm font-medium outline-none focus:border-black/20"
+            >
+              {documentTypes.map((type) => <option key={type}>{type}</option>)}
+            </select>
+            <input
+              value={documentRequest}
+              onChange={(event) => setDocumentRequest(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void requestDocument();
+              }}
+              placeholder="Describe the audience, goal, and any details to include."
+              className="min-w-0 flex-1 rounded-lg border border-black/[0.08] bg-surface px-3 py-2 text-sm outline-none focus:border-black/20 focus:bg-white"
+            />
+            <button
+              type="button"
+              onClick={() => void requestDocument()}
+              disabled={!documentRequest.trim() || isRequestingDocument}
+              className="inline-flex items-center justify-center rounded-lg bg-black px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-30"
+            >
+              {isRequestingDocument ? <Loader2 size={15} className="animate-spin" /> : "Create draft"}
+            </button>
+          </div>
         </section>
 
         <div className="grid gap-4 xl:grid-cols-4">

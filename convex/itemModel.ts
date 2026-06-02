@@ -38,6 +38,26 @@ export type DocumentKind =
   | "brief"
   | "plan";
 
+export type ReusableTraceItem = {
+  _id: Id<"items">;
+  status: string;
+  updatedAt: number;
+  legacyDocumentId?: Id<"documents">;
+};
+
+export function selectReusableTraceItem(items: ReusableTraceItem[]) {
+  return items
+    .filter((item) => item.status !== "archived" && item.status !== "deprecated")
+    .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+}
+
+export function reviewStatusForLibraryOutput(metadata?: unknown) {
+  const value = metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? metadata as Record<string, unknown>
+    : {};
+  return value.needsReview === true ? "under_review" as const : "draft" as const;
+}
+
 export function documentKindToItemKind(kind?: DocumentKind): ItemKind {
   if (kind === "file") return "upload";
   if (kind === "presentation") return "deck";

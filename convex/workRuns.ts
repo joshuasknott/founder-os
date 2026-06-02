@@ -5,6 +5,8 @@ import { v } from "convex/values";
 import {
   appendItemVersion,
   createItemWithVersion,
+  reviewStatusForLibraryOutput,
+  selectReusableTraceItem,
 } from "./itemModel";
 import { appendDeploymentHistory } from "./deploymentRuntime";
 import {
@@ -13,6 +15,7 @@ import {
   failRunState,
   finishRunPatch,
   founderVisibleStatusForRun,
+  inferLocalSensitivity,
   leaseIsValid,
   leaseRunPatch,
   localRoutingForRun,
@@ -21,6 +24,7 @@ import {
   type TaskClassification,
   type WorkRunKind,
 } from "./taskRuntime";
+import { selectDocumentContextCandidates } from "./documentContextRuntime";
 import { actorFromIdentity, ensureDocWorkspace, requireCurrentUser, requireWorkerToken, workerActor } from "./authz";
 import { recordAuditEvent } from "./audit";
 
@@ -130,6 +134,12 @@ function labelForWorkPage(status: WorkPageStatus) {
   };
 
   return labels[status];
+}
+
+function metadataObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 async function addResultCardsToChat(
@@ -262,6 +272,18 @@ export async function saveRunOutputToLibrary(
   let documentVersionId: Id<"documentVersions">;
   let createdNewLibraryItem = false;
 
+  if (!itemId) {
+    const earlierItems = await ctx.db
+      .query("items")
+      .withIndex("by_trace", (q) => q.eq("traceId", run.directiveId))
+      .collect();
+    const earlierItem = selectReusableTraceItem(earlierItems);
+    if (earlierItem) {
+      itemId = earlierItem._id;
+      documentId = earlierItem.legacyDocumentId;
+    }
+  }
+
   const existingItem = itemId ? await ctx.db.get(itemId) : null;
   const canUpdateExistingItem =
     existingItem && existingItem.status !== "archived" && existingItem.status !== "deprecated";
@@ -273,6 +295,8 @@ export async function saveRunOutputToLibrary(
   const latestDeploymentHistory = Array.isArray(itemMetadata.deploymentHistory)
     ? itemMetadata.deploymentHistory.at(-1)
     : undefined;
+  const reviewStatus = reviewStatusForLibraryOutput(result?.metadata);
+  const needsReview = reviewStatus === "under_review";
 
   if (itemId && canUpdateExistingItem) {
     itemVersionId = await appendItemVersion(ctx, {
@@ -292,6 +316,7 @@ export async function saveRunOutputToLibrary(
     });
     await ctx.db.patch(itemId, {
       metadata: itemMetadata,
+      ...(needsReview ? { status: "under_review" as const } : {}),
       ...(output.previewUrl ? { sourceUrl: output.previewUrl } : {}),
       updatedAt: now,
     });
@@ -301,7 +326,7 @@ export async function saveRunOutputToLibrary(
       departmentId: department._id,
       title: output.title,
       kind: output.itemKind,
-      status: "draft",
+      status: reviewStatus,
       source: "agent",
       author: "FounderOS",
       summary: output.summary,
@@ -340,6 +365,7 @@ export async function saveRunOutputToLibrary(
       currentVersionId: documentVersionId,
       title: output.title,
       summary: output.summary,
+      ...(needsReview ? { status: "under_review" as const } : {}),
       versionCount: versionNumber,
       updatedAt: now,
     });
@@ -353,7 +379,7 @@ export async function saveRunOutputToLibrary(
       traceId: run.directiveId,
       kind: output.documentKind,
       summary: output.summary,
-      status: "draft",
+      status: reviewStatus,
       isArchived: false,
       versionCount: 1,
       createdAt: now,
@@ -524,6 +550,42 @@ export const listQueuedDocuments = query({
       .take(args.limit ?? 10);
 
     return queued.filter((run) => run.kind === "document");
+  },
+});
+
+export const getDocumentContext = query({
+  args: {
+    runId: v.id("workRuns"),
+    workerToken: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireWorkerToken(args.workerToken);
+    const run = await ctx.db.get(args.runId);
+    if (!run || run.kind !== "document" || !run.workspaceId) return [];
+    const directive = await ctx.db.get(run.directiveId);
+    const queryText = `${run.title}\n${directive?.objective ?? ""}`;
+    const requestSensitivity = inferLocalSensitivity(queryText);
+    const items = await ctx.db
+      .query("items")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", run.workspaceId))
+      .collect();
+    const candidates = await Promise.all(items.map(async (item) => {
+      const version = item.currentVersionId ? await ctx.db.get(item.currentVersionId) : null;
+      return {
+        id: String(item._id),
+        title: item.title,
+        summary: item.summary,
+        content: version?.content ?? "",
+        status: item.status,
+        metadata: item.metadata,
+      };
+    }));
+
+    return selectDocumentContextCandidates({
+      queryText,
+      requestSensitivity,
+      candidates,
+    });
   },
 });
 
@@ -821,7 +883,10 @@ export const markNeedsReviewWithResult = mutation({
       summary: args.summary,
       content: args.content,
       previewUrl: args.previewUrl,
-      metadata: args.metadata,
+      metadata: {
+        ...metadataObject(args.metadata),
+        needsReview: true,
+      },
     });
     if (run.taskId) {
       await ctx.db.patch(run.taskId, {

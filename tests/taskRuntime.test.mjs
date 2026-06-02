@@ -70,6 +70,16 @@ test("classifies task objectives into structured worker categories", () => {
   assert.equal(gmail.runKind, "email");
   assert.equal(gmail.workerKind, "communications");
   assert.equal(gmail.category, "communication");
+
+  const memo = runtime.classifyTaskObjective({
+    objective: "Write a founder memo for the quarterly review",
+  });
+  assert.equal(memo.runKind, "document");
+
+  const sop = runtime.classifyTaskObjective({
+    objective: "Create an SOP for client onboarding",
+  });
+  assert.equal(sop.runKind, "document");
 });
 
 test("leases only queued or expired work and increments attempts", () => {

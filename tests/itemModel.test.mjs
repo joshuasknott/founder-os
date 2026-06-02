@@ -173,3 +173,15 @@ test("appendItemVersion rejects archived items", async () => {
     /Item not found/,
   );
 });
+
+test("Library output revisions reuse the latest active item and preserve review status", () => {
+  const selected = itemModel.selectReusableTraceItem([
+    { _id: "items:1", status: "approved", updatedAt: 1000 },
+    { _id: "items:2", status: "archived", updatedAt: 3000 },
+    { _id: "items:3", status: "under_review", updatedAt: 2000 },
+  ]);
+
+  assert.equal(selected._id, "items:3");
+  assert.equal(itemModel.reviewStatusForLibraryOutput({ needsReview: true }), "under_review");
+  assert.equal(itemModel.reviewStatusForLibraryOutput({}), "draft");
+});

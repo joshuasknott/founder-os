@@ -677,6 +677,37 @@ export const restore = mutation({
   },
 });
 
+export const approve = mutation({
+  args: { itemId: v.id("items") },
+  handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
+    const item = ensureDocWorkspace(await ctx.db.get(args.itemId), current.workspaceId, "Item");
+    if (item.status === "archived" || item.status === "deprecated") {
+      throw new Error("Restore this Library item before approving it.");
+    }
+    const now = Date.now();
+    await ctx.db.patch(args.itemId, {
+      status: "approved",
+      updatedAt: now,
+    });
+    if (item.legacyDocumentId) {
+      await ctx.db.patch(item.legacyDocumentId, {
+        status: "approved",
+        updatedAt: now,
+      });
+    }
+    await recordAuditEvent(ctx, {
+      ...actorFromIdentity(current.identity, current.user),
+      workspaceId: current.workspaceId,
+      action: "item.approved",
+      resourceType: "item",
+      resourceId: String(args.itemId),
+      summary: `Approved Library item: ${item.title}.`,
+    });
+    return args.itemId;
+  },
+});
+
 export const setPinned = mutation({
   args: {
     itemId: v.id("items"),

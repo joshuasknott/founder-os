@@ -6,17 +6,20 @@ import { useParams } from "next/navigation";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
+import { MarkdownDocument } from "@/components/library/MarkdownDocument";
 import {
   Archive,
   ArchiveRestore,
   ArrowLeft,
   Bot,
+  CheckCircle2,
   Clock3,
   ExternalLink,
   FileText,
   Loader2,
   MessageSquareText,
   Pin,
+  Pencil,
   Save,
   Send,
   Sparkles,
@@ -328,9 +331,11 @@ export default function LibraryItemDetailPage() {
   const updateItem = useMutation(api.items.update);
   const archiveItem = useMutation(api.items.archive);
   const restoreItem = useMutation(api.items.restore);
+  const approveItem = useMutation(api.items.approve);
   const setPinned = useMutation(api.items.setPinned);
 
   const [draftState, setDraftState] = useState<{ itemId: string; content: string } | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
   const currentContent = useMemo(() => {
@@ -340,7 +345,7 @@ export default function LibraryItemDetailPage() {
       detail.documentVersions.find((version) => version._id === detail.document?.currentVersionId)?.content ??
       detail.documentVersions[0]?.content ??
       "";
-    return cleanDisplayText(itemContent || documentContent);
+    return itemContent || documentContent;
   }, [detail]);
 
   const draft = draftState?.itemId === itemId ? draftState.content : currentContent;
@@ -395,6 +400,7 @@ export default function LibraryItemDetailPage() {
       format: item.currentVersion?.format ?? "markdown",
     });
     setStatus("New version saved.");
+    setIsEditing(false);
   };
 
   const restoreVersion = async (version: Doc<"itemVersions">) => {
@@ -461,6 +467,18 @@ export default function LibraryItemDetailPage() {
                     <p className="mt-1 text-xl font-semibold text-text-primary">v{versionNumber}</p>
                   </div>
                   {!archived && (
+                    item.status !== "approved" && item.status !== "finalized" ? (
+                    <button
+                      type="button"
+                      onClick={() => void approveItem({ itemId: item._id }).then(() => setStatus("Approved for future Library context."))}
+                      className="inline-flex h-10 items-center gap-2 rounded-lg bg-black px-3 text-xs font-semibold text-white"
+                    >
+                      <CheckCircle2 size={15} />
+                      Approve
+                    </button>
+                    ) : null
+                  )}
+                  {!archived && (
                     <button
                       type="button"
                       onClick={() => void setPinned({ itemId: item._id, isPinned: !pinned })}
@@ -486,23 +504,43 @@ export default function LibraryItemDetailPage() {
               <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-2">
                   <FileText size={16} />
-                  <h2 className="text-sm font-semibold text-text-primary">Content Preview</h2>
+                  <h2 className="text-sm font-semibold text-text-primary">{isEditing ? "Edit Content" : "Document"}</h2>
                 </div>
-                <button
-                  onClick={() => void saveVersion()}
-                  disabled={!draft.trim() || archived}
-                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-black px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-30"
-                >
-                  <Save size={14} />
-                  Save version
-                </button>
+                <div className="flex items-center gap-2">
+                  {!archived && (
+                    <button
+                      type="button"
+                      onClick={() => setIsEditing((value) => !value)}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-black/[0.08] bg-white px-3 py-2 text-xs font-semibold text-text-secondary hover:text-text-primary"
+                    >
+                      <Pencil size={13} />
+                      {isEditing ? "Preview" : "Edit"}
+                    </button>
+                  )}
+                  {isEditing && (
+                    <button
+                      onClick={() => void saveVersion()}
+                      disabled={!draft.trim() || archived}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg bg-black px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-30"
+                    >
+                      <Save size={14} />
+                      Save version
+                    </button>
+                  )}
+                </div>
               </div>
-              <textarea
-                value={draft}
-                onChange={(event) => setDraftState({ itemId, content: event.target.value })}
-                disabled={archived}
-                className="min-h-96 w-full resize-y rounded-lg border border-black/[0.07] bg-surface px-4 py-3 text-sm leading-6 outline-none focus:border-black/20 focus:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-              />
+              {isEditing ? (
+                <textarea
+                  value={draft}
+                  onChange={(event) => setDraftState({ itemId, content: event.target.value })}
+                  disabled={archived}
+                  className="min-h-96 w-full resize-y rounded-lg border border-black/[0.07] bg-surface px-4 py-3 font-mono text-sm leading-6 outline-none focus:border-black/20 focus:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                />
+              ) : (
+                <div className="min-h-96 rounded-lg border border-black/[0.06] bg-white px-5 py-4">
+                  <MarkdownDocument content={draft} />
+                </div>
+              )}
               {status && <p className="mt-3 text-xs font-medium text-text-secondary">{status}</p>}
             </section>
 

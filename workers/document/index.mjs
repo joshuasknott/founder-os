@@ -3,6 +3,15 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api.js";
+import { runOpenCodeDocument } from "../local-runner/opencode.mjs";
+import {
+  buildDocumentPrompt,
+  buildVerifierPrompt,
+  classifyDocumentRequest,
+  fallbackDocument,
+  selectDocumentRoute,
+  summarizeDocument,
+} from "./runtime.mjs";
 
 const POLL_INTERVAL_MS = Number(process.env.DOCUMENT_WORKER_POLL_INTERVAL_MS ?? 5000);
 const WORKER_ID = process.env.DOCUMENT_WORKER_ID ?? `document:${process.pid}`;
@@ -52,35 +61,72 @@ async function append(client, runId, message, tone = "progress") {
   });
 }
 
-function classifyDocument(title, objective) {
-  const text = `${title} ${objective}`.toLowerCase();
-  if (text.includes("proposal")) return "proposal";
-  if (text.includes("checklist")) return "checklist";
-  if (text.includes("meeting")) return "meeting notes";
-  if (text.includes("launch")) return "launch plan";
-  if (text.includes("brief")) return "brief";
-  return "plan";
+function envValue(name) {
+  return process.env[name] || readLocalEnv(name);
 }
 
-function draftDocument(run, directive) {
-  const documentType = classifyDocument(run.title, directive.objective);
-  const summary = `A ${documentType} draft is ready and saved in your Library.`;
-  const content = [
-    `# ${run.title}`,
-    "",
-    "## Purpose",
-    directive.objective,
-    "",
-    "## Draft",
-    `This ${documentType} is prepared as a first internal version for review.`,
-    "",
-    "## Next Steps",
-    "- Review the draft in Library.",
-    "- Add any missing business context.",
-    "- Ask FounderOS for revisions when needed.",
-  ].join("\n");
+async function generateDocument(run, directive, context) {
+  const documentType = classifyDocumentRequest(run.title, directive.objective);
+  const route = selectDocumentRoute({
+    title: run.title,
+    objective: directive.objective,
+    env: {
+      FOUNDEROS_OPENCODE_BUSINESS_MODEL: envValue("FOUNDEROS_OPENCODE_BUSINESS_MODEL"),
+      FOUNDEROS_OPENCODE_PLANNING_MODEL: envValue("FOUNDEROS_OPENCODE_PLANNING_MODEL"),
+    },
+  });
+  const commandValue = envValue("BUILDER_OPENCODE_COMMAND") ?? "opencode";
+  const agent = envValue("BUILDER_OPENCODE_AGENT");
+  const attachUrl = envValue("BUILDER_OPENCODE_ATTACH_URL");
+  const prompt = buildDocumentPrompt({ run, directive, context, documentType });
+  let generationMode = "opencode";
+  let verifierApplied = false;
+  let verifierFailed = false;
+  let content;
 
-  return { summary, content, documentType };
+  try {
+    content = (await runOpenCodeDocument({
+      commandValue,
+      model: route.model,
+      agent,
+      attachUrl,
+      prompt,
+      title: run.title,
+    })).content;
+  } catch {
+    content = fallbackDocument({ run, directive, documentType });
+    generationMode = "structured_fallback";
+  }
+
+  if (route.verifierRequired && generationMode === "opencode") {
+    try {
+      content = (await runOpenCodeDocument({
+        commandValue,
+        model: route.verifierModel,
+        agent,
+        attachUrl,
+        prompt: buildVerifierPrompt({
+          draft: content,
+          documentType,
+          objective: directive.objective,
+        }),
+        title: `${run.title} review`,
+      })).content;
+      verifierApplied = true;
+    } catch {
+      verifierFailed = true;
+    }
+  }
+
+  return {
+    summary: summarizeDocument(documentType),
+    content,
+    documentType,
+    route,
+    generationMode,
+    verifierApplied,
+    verifierFailed,
+  };
 }
 
 async function processRun(client, run) {
@@ -111,12 +157,19 @@ async function processRun(client, run) {
   if (!directive) throw new Error("Task not found.");
 
   await sleep(400);
-  await append(client, run._id, "I'm organizing the key points.");
+  await append(client, run._id, "I'm pulling relevant approved Library context.");
 
-  const result = draftDocument(run, directive);
+  const context = await client.query(api.workRuns.getDocumentContext, {
+    runId: run._id,
+    workerToken: workerToken(),
+  });
 
   await sleep(400);
-  await client.mutation(api.workRuns.completeWithResult, {
+  await append(client, run._id, "I'm writing the draft and checking the important details.");
+  const result = await generateDocument(run, directive, context);
+
+  await sleep(400);
+  await client.mutation(api.workRuns.markNeedsReviewWithResult, {
     runId: run._id,
     leaseId: run.leaseId,
     summary: result.summary,
@@ -125,7 +178,23 @@ async function processRun(client, run) {
       mode: "document_worker",
       documentType: result.documentType,
       source: "FounderOS Library",
+      generationMode: result.generationMode,
+      verifierApplied: result.verifierApplied,
+      verifierFailed: result.verifierFailed,
     }),
+    metadata: {
+      needsReview: true,
+      document: {
+        type: result.documentType,
+        capability: result.route.capability,
+        highStakes: result.route.highStakes,
+        contextCount: context.length,
+        generationMode: result.generationMode,
+        verifierApplied: result.verifierApplied,
+        verifierFailed: result.verifierFailed,
+      },
+    },
+    message: "The draft is ready for your review.",
     workerToken: workerToken(),
   });
 
@@ -182,4 +251,4 @@ if (import.meta.url === directRunPath) {
   });
 }
 
-export { processRun };
+export { generateDocument, processRun };

@@ -7,9 +7,13 @@ Current behavior:
 - finds queued `document` work runs
 - marks them in progress
 - writes plain-language progress updates
-- prepares a first internal draft
-- saves the result to Library
-- marks the run completed
+- pulls relevant approved Library context through privacy gates
+- prepares a markdown draft through the local OpenCode subscription
+- uses `glm-4.7` for normal documents and `glm-5-turbo` for planning, finance,
+  synthesis, and strategy documents
+- reviews important documents with a different GLM route where practical
+- saves the result as a versioned Library item
+- marks the run ready for founder review
 
 Run once:
 
@@ -28,4 +32,8 @@ Configuration:
 - `CONVEX_URL` or `NEXT_PUBLIC_CONVEX_URL`: Convex deployment URL. The worker also reads `.env.local`.
 - `DOCUMENT_WORKER_POLL_INTERVAL_MS`: optional polling interval. Defaults to `5000`.
 
-Supported first-pass document outputs include briefs, plans, checklists, proposals, meeting notes, and launch plans.
+No direct `ZAI_API_KEY` is required. DeepSeek is not used for routine document
+generation.
+
+Supported first-pass document outputs include memos, briefs, plans, SOPs,
+proposals, strategy documents, checklists, meeting notes, and launch plans.
