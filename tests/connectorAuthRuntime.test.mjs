@@ -39,11 +39,11 @@ test("oauth authorization URLs include connector scopes and state", () => {
   assert.equal(googleUrl.searchParams.get("client_id"), "google-client");
   assert.equal(googleUrl.searchParams.get("state"), "state123");
   assert.equal(googleUrl.searchParams.get("access_type"), "offline");
-  const scopes = googleUrl.searchParams.get("scope");
-  assert.equal(scopes.includes("gmail.readonly"), true);
-  assert.equal(scopes.includes("drive.file"), false);
-  assert.equal(scopes.includes("auth/documents "), false);
-  assert.equal(scopes.includes("auth/spreadsheets "), false);
+  const scopes = new Set(googleUrl.searchParams.get("scope").split(" "));
+  assert.equal(scopes.has("https://www.googleapis.com/auth/gmail.readonly"), true);
+  assert.equal(scopes.has("https://www.googleapis.com/auth/drive.file"), true);
+  assert.equal(scopes.has("https://www.googleapis.com/auth/documents"), true);
+  assert.equal(scopes.has("https://www.googleapis.com/auth/spreadsheets"), true);
 });
 
 test("oauth token exchange and refresh use form encoded provider requests", async () => {

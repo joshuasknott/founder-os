@@ -44,12 +44,14 @@ import {
 import {
   connectorsForGoogleContext,
   createGoogleCalendarEvent,
+  executeGoogleWorkspaceFileAction,
   fetchCalendarContext,
   fetchDriveContext,
   fetchGmailContext,
   sendGmailMessage,
   summarizeGoogleWorkspaceContext,
   type GoogleWorkspaceContext,
+  type GoogleWorkspaceLibraryOutput,
 } from "./googleWorkspaceRuntime";
 import {
   createGitHubIssue,
@@ -221,6 +223,16 @@ const internalConnectors = anyApi.connectors as unknown as {
     directiveId?: string;
     runId?: string;
     pullRequest: unknown;
+  }, unknown>;
+  persistGoogleWorkspaceActionResult: FunctionReference<"mutation", "internal", {
+    workspaceId: string;
+    connectionId?: string;
+    requestedBy?: string;
+    directiveId?: string;
+    runId?: string;
+    connectorId: string;
+    actionType: string;
+    result: unknown;
   }, unknown>;
   persistStripeSync: FunctionReference<"mutation", "internal", {
     workspaceId: string;
@@ -491,6 +503,42 @@ function isGitHubCreatedPullRequest(value: unknown): value is GitHubCreatedPullR
     typeof source.headBranch === "string" &&
     typeof source.baseBranch === "string"
   );
+}
+
+function isGoogleLibraryOutput(value: unknown): value is GoogleWorkspaceLibraryOutput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const source = value as Record<string, unknown>;
+  return (
+    (source.connectorId === "google_drive" || source.connectorId === "google_docs" || source.connectorId === "google_sheets") &&
+    typeof source.externalId === "string" &&
+    typeof source.externalType === "string" &&
+    typeof source.title === "string" &&
+    typeof source.content === "string" &&
+    typeof source.summary === "string" &&
+    typeof source.mimeType === "string" &&
+    (source.format === "plain_text" || source.format === "html" || source.format === "json" || source.format === "markdown") &&
+    Array.isArray(source.tags)
+  );
+}
+
+function googleResultMetadata(result: unknown) {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return {};
+  const source = result as Record<string, unknown>;
+  return source.metadata && typeof source.metadata === "object" && !Array.isArray(source.metadata)
+    ? source.metadata as Record<string, unknown>
+    : {};
+}
+
+function googleResultString(result: unknown, field: string) {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return undefined;
+  const value = (result as Record<string, unknown>)[field];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function googleConnectorName(connectorId: string) {
+  if (connectorId === "google_docs") return "Google Docs";
+  if (connectorId === "google_sheets") return "Google Sheets";
+  return "Google Drive";
 }
 
 export const persistGitHubRepositoryContext = internalMutation({
@@ -777,6 +825,172 @@ export const persistGitHubPullRequestResult = internalMutation({
     await scheduleConnectorMemoryExtraction(ctx, itemId, versionId);
 
     return { safeSummary, providerMetadata, itemId, versionId };
+  },
+});
+
+export const persistGoogleWorkspaceActionResult = internalMutation({
+  args: {
+    workspaceId: v.id("workspaces"),
+    connectionId: v.optional(v.id("connectorConnections")),
+    requestedBy: v.optional(v.string()),
+    directiveId: v.optional(v.id("directives")),
+    runId: v.optional(v.id("workRuns")),
+    connectorId: v.string(),
+    actionType: v.string(),
+    result: v.any(),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const metadata = googleResultMetadata(args.result);
+    const libraryCandidate = metadata.libraryOutput;
+    const providerUrl = googleResultString(args.result, "providerUrl")
+      ?? (typeof metadata.providerUrl === "string" ? metadata.providerUrl : undefined);
+    const externalId = googleResultString(args.result, "externalId")
+      ?? (typeof metadata.externalId === "string" ? metadata.externalId : undefined);
+    const title = typeof metadata.title === "string" && metadata.title.trim()
+      ? metadata.title.trim()
+      : args.connectorId === "google_docs"
+        ? "Google document"
+        : args.connectorId === "google_sheets"
+          ? "Google spreadsheet"
+          : "Google Drive file";
+    const safeSummary = googleResultString(args.result, "safeSummary") ?? "The connected Google Workspace step finished.";
+
+    let itemId;
+    let versionId;
+    if (isGoogleLibraryOutput(libraryCandidate)) {
+      const imported = buildConnectorImport({
+        connectorId: libraryCandidate.connectorId,
+        connectorName: googleConnectorName(libraryCandidate.connectorId),
+        externalId: `${libraryCandidate.externalId}:export:${libraryCandidate.mimeType}`,
+        externalType: libraryCandidate.externalType,
+        title: libraryCandidate.title,
+        content: libraryCandidate.content,
+        summary: libraryCandidate.summary,
+        sourceUrl: libraryCandidate.sourceUrl,
+        authorName: googleConnectorName(libraryCandidate.connectorId),
+        kind: "doc",
+        format: libraryCandidate.format,
+        mimeType: libraryCandidate.mimeType,
+        tags: libraryCandidate.tags,
+        sourceName: googleConnectorName(libraryCandidate.connectorId),
+        importedAt: now,
+      });
+      const storedMetadata = {
+        ...imported.metadata,
+        googleWorkspace: {
+          connectorId: args.connectorId,
+          actionType: args.actionType,
+          externalId,
+          providerUrl,
+          mimeType: libraryCandidate.mimeType,
+        },
+      };
+      const existing = (
+        await ctx.db
+          .query("items")
+          .withIndex("by_external", (q) =>
+            q.eq("source", "connector").eq("externalId", imported.externalId),
+          )
+          .collect()
+      ).find((item) => item.workspaceId === args.workspaceId);
+
+      if (existing) {
+        itemId = existing._id;
+        versionId = await appendItemVersion(ctx, {
+          itemId,
+          title: imported.title,
+          summary: imported.summary,
+          content: imported.content,
+          format: imported.format,
+          sourceUrl: imported.sourceUrl,
+          mimeType: imported.mimeType,
+          createdBy: imported.author,
+          createdAt: now,
+          metadata: storedMetadata,
+        });
+        await ctx.db.patch(itemId, {
+          title: imported.title,
+          kind: imported.kind,
+          status: "active",
+          author: imported.author,
+          summary: imported.summary,
+          sourceUrl: imported.sourceUrl,
+          mimeType: imported.mimeType,
+          tags: imported.tags,
+          metadata: storedMetadata,
+          traceId: args.directiveId ?? existing.traceId,
+          runId: args.runId ?? existing.runId,
+          updatedAt: now,
+        });
+      } else {
+        const created = await createItemWithVersion(ctx, {
+          workspaceId: args.workspaceId,
+          title: imported.title,
+          kind: imported.kind,
+          status: imported.status,
+          source: imported.source,
+          author: imported.author,
+          summary: imported.summary,
+          content: imported.content,
+          format: imported.format,
+          traceId: args.directiveId,
+          runId: args.runId,
+          sourceUrl: imported.sourceUrl,
+          externalId: imported.externalId,
+          mimeType: imported.mimeType,
+          tags: imported.tags,
+          metadata: storedMetadata,
+          createdAt: now,
+        });
+        itemId = created.itemId;
+        versionId = created.versionId;
+      }
+      await scheduleConnectorMemoryExtraction(ctx, itemId, versionId);
+    }
+
+    if (args.runId) {
+      await ctx.db.insert("workArtifacts", {
+        runId: args.runId,
+        directiveId: args.directiveId,
+        title,
+        kind: itemId
+          ? "library_item"
+          : args.actionType === "update_external_record"
+            ? "external_update"
+            : "external_file",
+        summary: safeSummary,
+        url: providerUrl,
+        libraryItemId: itemId,
+        metadata: {
+          connectorId: args.connectorId,
+          actionType: args.actionType,
+          externalId,
+          providerUrl,
+          externalType: metadata.externalType,
+          mimeType: metadata.mimeType,
+          itemId,
+          versionId,
+        },
+        createdAt: now,
+      });
+    }
+
+    return {
+      safeSummary,
+      providerMetadata: {
+        connectorId: args.connectorId,
+        actionType: args.actionType,
+        externalId,
+        providerUrl,
+        externalType: metadata.externalType,
+        mimeType: metadata.mimeType,
+        itemId,
+        versionId,
+      },
+      itemId,
+      versionId,
+    };
   },
 });
 
@@ -2758,6 +2972,14 @@ function actionPayloadRecord(value: unknown) {
     : {};
 }
 
+type LiveConnectorProviderResult = {
+  status: "completed";
+  safeSummary: string;
+  externalId?: string;
+  providerUrl?: string;
+  metadata?: unknown;
+};
+
 async function executeGoogleWorkspaceConnectorAction(args: {
   ctx: ActionCtx;
   workspaceId: Id<"workspaces">;
@@ -2785,6 +3007,20 @@ async function executeGoogleWorkspaceConnectorAction(args: {
     return await createGoogleCalendarEvent({
       accessToken,
       event: actionPayloadRecord(payload.event),
+      request: connectorRequest,
+    });
+  }
+
+  if (
+    args.connectorId === "google_drive" ||
+    args.connectorId === "google_docs" ||
+    args.connectorId === "google_sheets"
+  ) {
+    return await executeGoogleWorkspaceFileAction({
+      accessToken,
+      connectorId: args.connectorId,
+      actionType: args.actionType,
+      payload,
       request: connectorRequest,
     });
   }
@@ -3009,7 +3245,7 @@ export const executeConnectorAction = action({
         workspaceId: args.workspaceId,
         connectorId: args.connectorId,
       }) as OAuthCredentialBundle;
-      const result = await executeGoogleWorkspaceConnectorAction({
+      let result: LiveConnectorProviderResult | null = await executeGoogleWorkspaceConnectorAction({
         ctx,
         workspaceId: args.workspaceId,
         connectorId: args.connectorId,
@@ -3040,6 +3276,28 @@ export const executeConnectorAction = action({
           reason: "unknown_action" as const,
           safeMessage,
           sensitiveActionKind: evaluation.sensitiveActionKind,
+        };
+      }
+
+      if (
+        args.connectorId === "google_drive" ||
+        args.connectorId === "google_docs" ||
+        args.connectorId === "google_sheets"
+      ) {
+        const persisted = await ctx.runMutation(internalConnectors.persistGoogleWorkspaceActionResult, {
+          workspaceId: args.workspaceId,
+          connectionId: logBase.connectionId,
+          requestedBy: logBase.requestedBy,
+          directiveId: logBase.directiveId,
+          runId: logBase.runId,
+          connectorId: args.connectorId,
+          actionType: args.actionType,
+          result,
+        }) as { safeSummary?: string; providerMetadata?: unknown };
+        result = {
+          ...result,
+          safeSummary: persisted.safeSummary ?? result.safeSummary,
+          metadata: persisted.providerMetadata ?? result.metadata,
         };
       }
 

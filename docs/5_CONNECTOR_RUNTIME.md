@@ -125,7 +125,7 @@ Current live connector boundary:
 
 - Gmail can read context, prepare drafts, and send only after approval.
 - Google Calendar can read context and create exact approved events.
-- Google Drive, Docs, and Sheets can find relevant files and read safe previews for context. Export and update actions are not live yet and are blocked.
+- Google Drive, Docs, and Sheets can find relevant files, read safe previews, save private text/CSV/HTML/JSON exports into Library, and create or update supported files through Google after approval and the required scopes.
 - GitHub can import selected repository context into Library and create approved issues and pull requests when the GitHub App installation, app credentials, repository selection, branch inputs, and repository permissions are configured. Pull-request creation requires an explicit approval action.
 - Private opencode work can run through the local build engine when this computer is configured. FounderOS should refer to this as opencode.
 - Vercel preview publishing is live through the builder worker environment, not through the Settings connector card. Settings Vercel actions are blocked until wired end to end.

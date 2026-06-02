@@ -5,6 +5,8 @@ export type ConnectorHttpResponse<T = unknown> = {
   status: number;
   headers?: { get(name: string): string | null };
   json(): Promise<T>;
+  text?(): Promise<string>;
+  arrayBuffer?(): Promise<ArrayBuffer>;
 };
 
 export type ConnectorRequest = (

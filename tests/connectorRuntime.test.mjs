@@ -129,7 +129,7 @@ test("google workspace connectors draft/import freely and gate external actions"
     const definition = runtime.getConnectorDefinition(connectorId);
     assert.deepEqual(
       definition.actions.map((action) => action.type),
-      ["import_content", "export_content", "update_external_record"],
+      ["import_content", "write_record", "export_content", "update_external_record"],
     );
     assert.equal(runtime.evaluateConnectorActionRequest({
       connectorId,
@@ -139,8 +139,46 @@ test("google workspace connectors draft/import freely and gate external actions"
         credentialRef: `vault:${connectorId}`,
         grantedScopes: definition.requiredScopes,
       },
+    }).allowed, true);
+
+    const missingWriteScope = runtime.evaluateConnectorActionRequest({
+      connectorId,
+      actionType: "write_record",
+      connection: {
+        status: "connected",
+        credentialRef: `vault:${connectorId}`,
+        grantedScopes: definition.requiredScopes,
+      },
       approvalGranted: true,
-    }).reason, "blocked_by_policy");
+    });
+    assert.equal(missingWriteScope.reason, "missing_permission");
+
+    const writeScopes = {
+      google_drive: ["google.drive.read", "google.drive.file"],
+      google_docs: ["google.drive.read", "google.docs.read", "google.docs.file"],
+      google_sheets: ["google.drive.read", "google.sheets.read", "google.sheets.write"],
+    }[connectorId];
+    const pendingWrite = runtime.evaluateConnectorActionRequest({
+      connectorId,
+      actionType: "write_record",
+      connection: {
+        status: "connected",
+        credentialRef: `vault:${connectorId}`,
+        grantedScopes: writeScopes,
+      },
+    });
+    assert.equal(pendingWrite.reason, "approval_required");
+    assert.equal(pendingWrite.sensitiveActionKind, "change_live_asset");
+    assert.equal(runtime.evaluateConnectorActionRequest({
+      connectorId,
+      actionType: "write_record",
+      connection: {
+        status: "connected",
+        credentialRef: `vault:${connectorId}`,
+        grantedScopes: writeScopes,
+      },
+      approvalGranted: true,
+    }).allowed, true);
   }
 });
 

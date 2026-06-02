@@ -71,9 +71,21 @@ type DriveFilesResponse = {
   }>;
 };
 
+type DriveFileResponse = {
+  id?: string;
+  name?: string;
+  mimeType?: string;
+  webViewLink?: string;
+  webContentLink?: string;
+  modifiedTime?: string;
+};
+
 type GoogleDocResponse = {
+  documentId?: string;
+  title?: string;
   body?: {
     content?: Array<{
+      endIndex?: number;
       paragraph?: {
         elements?: Array<{
           textRun?: { content?: string };
@@ -83,7 +95,14 @@ type GoogleDocResponse = {
   };
 };
 
+type GoogleDocBatchUpdateResponse = {
+  documentId?: string;
+};
+
 type GoogleSpreadsheetResponse = {
+  spreadsheetId?: string;
+  spreadsheetUrl?: string;
+  properties?: { title?: string };
   sheets?: Array<{
     properties?: { title?: string };
     data?: Array<{
@@ -92,6 +111,16 @@ type GoogleSpreadsheetResponse = {
       }>;
     }>;
   }>;
+};
+
+type GoogleSheetValuesResponse = {
+  spreadsheetId?: string;
+  updatedRange?: string;
+  tableRange?: string;
+  updates?: {
+    spreadsheetId?: string;
+    updatedRange?: string;
+  };
 };
 
 export type GoogleEmailDraftInput = {
@@ -117,6 +146,21 @@ export type GoogleWorkspaceActionResult = {
   externalId?: string;
   providerUrl?: string;
   metadata?: Record<string, unknown>;
+};
+
+export type GoogleWorkspaceFileActionInput = Record<string, unknown>;
+
+export type GoogleWorkspaceLibraryOutput = {
+  connectorId: "google_drive" | "google_docs" | "google_sheets";
+  externalId: string;
+  externalType: string;
+  title: string;
+  content: string;
+  summary: string;
+  sourceUrl?: string;
+  mimeType: string;
+  format: "plain_text" | "html" | "json" | "markdown";
+  tags: string[];
 };
 
 function cleanString(value: unknown, maxLength = 500) {
@@ -367,6 +411,789 @@ export async function createGoogleCalendarEvent(args: {
     externalId: result.id,
     providerUrl: result.htmlLink,
   };
+}
+
+function payloadRecord(value: unknown): GoogleWorkspaceFileActionInput {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as GoogleWorkspaceFileActionInput
+    : {};
+}
+
+function firstPayloadString(payload: GoogleWorkspaceFileActionInput, keys: string[], maxLength = 20000) {
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim()) return value.trim().slice(0, maxLength);
+  }
+  return undefined;
+}
+
+function optionalGoogleId(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const id = value.trim();
+  if (!id) return undefined;
+  if (!/^[A-Za-z0-9_-]{3,240}$/.test(id)) {
+    throw new Error("Choose the Google file before FounderOS continues.");
+  }
+  return id;
+}
+
+function requiredGoogleId(payload: GoogleWorkspaceFileActionInput, keys: string[], message: string) {
+  for (const key of keys) {
+    const id = optionalGoogleId(payload[key]);
+    if (id) return id;
+  }
+  throw new Error(message);
+}
+
+function optionalFolderId(payload: GoogleWorkspaceFileActionInput) {
+  return optionalGoogleId(payload.folderId ?? payload.parentId);
+}
+
+function titleFromPayload(payload: GoogleWorkspaceFileActionInput, fallback = "FounderOS export") {
+  return firstPayloadString(payload, ["title", "name", "fileName", "filename"], 220) ?? fallback;
+}
+
+function contentFromPayload(payload: GoogleWorkspaceFileActionInput, message: string) {
+  const content = firstPayloadString(payload, ["content", "body", "text", "markdown", "csv", "json"], 200000);
+  if (!content) throw new Error(message);
+  return content;
+}
+
+function mimeTypeFromPayload(payload: GoogleWorkspaceFileActionInput, fallback = "text/plain") {
+  const mimeType = firstPayloadString(payload, ["mimeType", "contentType"], 120) ?? fallback;
+  if (!/^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/.test(mimeType)) {
+    throw new Error("Choose a supported file type before FounderOS continues.");
+  }
+  return mimeType;
+}
+
+const writableDriveMimeTypes = new Set([
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "text/html",
+  "application/json",
+]);
+
+function ensureWritableDriveMimeType(mimeType: string) {
+  if (!writableDriveMimeTypes.has(mimeType)) {
+    throw new Error("FounderOS can upload text, Markdown, CSV, HTML, and JSON files to Drive right now.");
+  }
+}
+
+const libraryExportFormats: Record<string, GoogleWorkspaceLibraryOutput["format"]> = {
+  "text/plain": "plain_text",
+  "text/csv": "plain_text",
+  "text/html": "html",
+  "application/json": "json",
+  "text/markdown": "markdown",
+};
+
+function exportMimeTypeFromPayload(payload: GoogleWorkspaceFileActionInput, fallback: string) {
+  const value = firstPayloadString(payload, ["exportMimeType", "mimeType", "format"], 120) ?? fallback;
+  const aliases: Record<string, string> = {
+    txt: "text/plain",
+    text: "text/plain",
+    csv: "text/csv",
+    html: "text/html",
+    json: "application/json",
+    markdown: "text/markdown",
+    md: "text/markdown",
+  };
+  return aliases[value.toLowerCase()] ?? value;
+}
+
+function ensureLibraryExportMimeType(mimeType: string) {
+  if (!libraryExportFormats[mimeType]) {
+    throw new Error("FounderOS can export text, CSV, HTML, Markdown, or JSON to Library from this connection right now.");
+  }
+}
+
+function driveFileUrl(fileId: string) {
+  return `https://drive.google.com/file/d/${encodeURIComponent(fileId)}/view`;
+}
+
+function googleDocUrl(documentId: string) {
+  return `https://docs.google.com/document/d/${encodeURIComponent(documentId)}/edit`;
+}
+
+function googleSheetUrl(spreadsheetId: string) {
+  return `https://docs.google.com/spreadsheets/d/${encodeURIComponent(spreadsheetId)}/edit`;
+}
+
+function googlePermissionMessage(serviceName: string, action: string) {
+  return `${serviceName} needs updated access before FounderOS can ${action}.`;
+}
+
+function googleProviderError(status: number, serviceName: string, action: string) {
+  if (status === 401 || status === 403) return new Error(googlePermissionMessage(serviceName, action));
+  if (status === 404) return new Error(`${serviceName} could not find that file. Check the file ID and access.`);
+  if (status === 400 || status === 409 || status === 422) return new Error(`Check the ${serviceName} details before trying again.`);
+  return new Error(`${serviceName} could not finish that step.`);
+}
+
+async function requestGoogleJson<T>(args: {
+  request: ConnectorRequest;
+  input: string;
+  init?: Parameters<ConnectorRequest>[1];
+  serviceName: string;
+  action: string;
+}) {
+  const response = await args.request(args.input, args.init);
+  if (!response.ok) throw googleProviderError(response.status, args.serviceName, args.action);
+  return await response.json() as T;
+}
+
+async function requestGoogleText(args: {
+  request: ConnectorRequest;
+  input: string;
+  init?: Parameters<ConnectorRequest>[1];
+  serviceName: string;
+  action: string;
+}) {
+  const response = await args.request(args.input, args.init);
+  if (!response.ok) throw googleProviderError(response.status, args.serviceName, args.action);
+  if (!response.text) throw new Error(`${args.serviceName} did not return export content.`);
+  const text = await response.text();
+  if (!text.trim()) throw new Error(`${args.serviceName} returned an empty export.`);
+  return text;
+}
+
+function multipartUploadBody(args: {
+  metadata: Record<string, unknown>;
+  content: string;
+  mimeType: string;
+}) {
+  const boundary = `founderos_${Math.random().toString(36).slice(2)}`;
+  const body = [
+    `--${boundary}`,
+    "Content-Type: application/json; charset=UTF-8",
+    "",
+    JSON.stringify(args.metadata),
+    `--${boundary}`,
+    `Content-Type: ${args.mimeType}; charset=UTF-8`,
+    "",
+    args.content,
+    `--${boundary}--`,
+    "",
+  ].join("\r\n");
+  return {
+    body,
+    contentType: `multipart/related; boundary=${boundary}`,
+  };
+}
+
+function normalizeSheetCell(value: unknown) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "boolean") return value;
+  return String(value).replace(/\s+/g, " ").trim().slice(0, 500);
+}
+
+function rowsFromDelimitedText(value: string) {
+  return value
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.includes("\t") ? line.split("\t") : line.split(","))
+    .map((row) => row.map((cell) => normalizeSheetCell(cell)));
+}
+
+function sheetValuesFromPayload(payload: GoogleWorkspaceFileActionInput) {
+  const rawValues = payload.values ?? payload.rows ?? payload.data;
+  const rows = Array.isArray(rawValues)
+    ? rawValues
+    : typeof rawValues === "string"
+      ? rowsFromDelimitedText(rawValues)
+      : firstPayloadString(payload, ["content", "csv", "text"], 200000)
+        ? rowsFromDelimitedText(firstPayloadString(payload, ["content", "csv", "text"], 200000)!)
+        : [];
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new Error("Add spreadsheet rows before FounderOS creates or updates the sheet.");
+  }
+
+  const normalized = rows
+    .slice(0, 1000)
+    .map((row) => (Array.isArray(row) ? row : [row]).slice(0, 80).map(normalizeSheetCell))
+    .filter((row) => row.some((cell) => cell !== ""));
+  if (normalized.length === 0) {
+    throw new Error("Add spreadsheet rows before FounderOS creates or updates the sheet.");
+  }
+  return normalized;
+}
+
+function rangeFromPayload(payload: GoogleWorkspaceFileActionInput, fallbackSheetName = "Sheet1") {
+  return firstPayloadString(payload, ["range"], 120) ?? `${fallbackSheetName}!A1`;
+}
+
+function updateModeFromPayload(payload: GoogleWorkspaceFileActionInput) {
+  const mode = firstPayloadString(payload, ["mode", "updateMode", "operation"], 40)?.toLowerCase();
+  if (mode === "replace" || mode === "overwrite") return "replace";
+  if (mode === "append") return "append";
+  return "update";
+}
+
+async function maybeMoveDriveFile(args: {
+  accessToken: string;
+  fileId: string;
+  folderId?: string;
+  request: ConnectorRequest;
+}) {
+  if (!args.folderId) return;
+  await requestGoogleJson<DriveFileResponse>({
+    request: args.request,
+    input: apiUrl(`/drive/v3/files/${encodeURIComponent(args.fileId)}`, {
+      addParents: args.folderId,
+      fields: "id,webViewLink",
+    }),
+    init: {
+      method: "PATCH",
+      headers: bearerHeaders(args.accessToken),
+      body: JSON.stringify({}),
+    },
+    serviceName: "Google Drive",
+    action: "place the file in that folder",
+  });
+}
+
+function libraryOutput(args: {
+  connectorId: GoogleWorkspaceLibraryOutput["connectorId"];
+  externalId: string;
+  externalType: string;
+  title: string;
+  content: string;
+  sourceUrl?: string;
+  mimeType: string;
+}) {
+  const format = libraryExportFormats[args.mimeType];
+  ensureLibraryExportMimeType(args.mimeType);
+  const cleanContent = rawString(args.content, 200000);
+  if (!cleanContent) throw new Error("The exported file did not include content FounderOS can save.");
+  const summary = `${args.title} was exported to Library.`;
+  return {
+    connectorId: args.connectorId,
+    externalId: args.externalId,
+    externalType: args.externalType,
+    title: args.title,
+    content: cleanContent,
+    summary,
+    sourceUrl: args.sourceUrl,
+    mimeType: args.mimeType,
+    format,
+    tags: ["google workspace", "export"],
+  };
+}
+
+export async function createGoogleDriveFile(args: {
+  accessToken: string;
+  file: GoogleWorkspaceFileActionInput;
+  request: ConnectorRequest;
+}): Promise<GoogleWorkspaceActionResult> {
+  const payload = payloadRecord(args.file);
+  const title = titleFromPayload(payload, "FounderOS file");
+  const mimeType = mimeTypeFromPayload(payload, "text/plain");
+  ensureWritableDriveMimeType(mimeType);
+  const content = contentFromPayload(payload, "Add file content before FounderOS uploads it to Drive.");
+  const metadata: Record<string, unknown> = {
+    name: title,
+    mimeType,
+  };
+  const folderId = optionalFolderId(payload);
+  if (folderId) metadata.parents = [folderId];
+  const upload = multipartUploadBody({ metadata, content, mimeType });
+  const created = await requestGoogleJson<DriveFileResponse>({
+    request: args.request,
+    input: apiUrl("/upload/drive/v3/files", {
+      uploadType: "multipart",
+      fields: "id,name,mimeType,webViewLink",
+    }),
+    init: {
+      method: "POST",
+      headers: {
+        ...bearerHeaders(args.accessToken),
+        "Content-Type": upload.contentType,
+      },
+      body: upload.body,
+    },
+    serviceName: "Google Drive",
+    action: "upload files",
+  });
+  if (!created.id) throw new Error("Google Drive did not confirm the uploaded file.");
+
+  return {
+    status: "completed",
+    safeSummary: "The approved file was saved to Drive.",
+    externalId: created.id,
+    providerUrl: created.webViewLink ?? driveFileUrl(created.id),
+    metadata: {
+      connectorId: "google_drive",
+      action: "write_record",
+      externalType: "file",
+      title: cleanString(created.name, 220) ?? title,
+      mimeType: created.mimeType ?? mimeType,
+      providerUrl: created.webViewLink ?? driveFileUrl(created.id),
+    },
+  };
+}
+
+export async function updateGoogleDriveFile(args: {
+  accessToken: string;
+  file: GoogleWorkspaceFileActionInput;
+  request: ConnectorRequest;
+}): Promise<GoogleWorkspaceActionResult> {
+  const payload = payloadRecord(args.file);
+  const fileId = requiredGoogleId(payload, ["fileId", "id"], "Choose the Drive file before FounderOS updates it.");
+  const title = firstPayloadString(payload, ["title", "name", "fileName", "filename"], 220);
+  const mimeType = mimeTypeFromPayload(payload, "text/plain");
+  const content = firstPayloadString(payload, ["content", "body", "text", "markdown", "csv", "json"], 200000);
+  const metadata: Record<string, unknown> = {};
+  if (title) metadata.name = title;
+
+  let updated: DriveFileResponse;
+  if (content) {
+    ensureWritableDriveMimeType(mimeType);
+    const upload = multipartUploadBody({ metadata, content, mimeType });
+    updated = await requestGoogleJson<DriveFileResponse>({
+      request: args.request,
+      input: apiUrl(`/upload/drive/v3/files/${encodeURIComponent(fileId)}`, {
+        uploadType: "multipart",
+        fields: "id,name,mimeType,webViewLink",
+      }),
+      init: {
+        method: "PATCH",
+        headers: {
+          ...bearerHeaders(args.accessToken),
+          "Content-Type": upload.contentType,
+        },
+        body: upload.body,
+      },
+      serviceName: "Google Drive",
+      action: "update files",
+    });
+  } else if (Object.keys(metadata).length > 0) {
+    updated = await requestGoogleJson<DriveFileResponse>({
+      request: args.request,
+      input: apiUrl(`/drive/v3/files/${encodeURIComponent(fileId)}`, {
+        fields: "id,name,mimeType,webViewLink",
+      }),
+      init: {
+        method: "PATCH",
+        headers: {
+          ...bearerHeaders(args.accessToken),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(metadata),
+      },
+      serviceName: "Google Drive",
+      action: "update files",
+    });
+  } else {
+    throw new Error("Add a new file name or file content before FounderOS updates Drive.");
+  }
+  if (!updated.id) throw new Error("Google Drive did not confirm the file update.");
+
+  return {
+    status: "completed",
+    safeSummary: "The approved Drive file was updated.",
+    externalId: updated.id,
+    providerUrl: updated.webViewLink ?? driveFileUrl(updated.id),
+    metadata: {
+      connectorId: "google_drive",
+      action: "update_external_record",
+      externalType: "file",
+      title: cleanString(updated.name, 220) ?? title,
+      mimeType: updated.mimeType ?? mimeType,
+      providerUrl: updated.webViewLink ?? driveFileUrl(updated.id),
+    },
+  };
+}
+
+export async function exportGoogleDriveFile(args: {
+  accessToken: string;
+  file: GoogleWorkspaceFileActionInput;
+  request: ConnectorRequest;
+  connectorId?: "google_drive" | "google_docs" | "google_sheets";
+  defaultMimeType?: string;
+}): Promise<GoogleWorkspaceActionResult> {
+  const payload = payloadRecord(args.file);
+  const fileId = requiredGoogleId(payload, ["fileId", "documentId", "spreadsheetId", "id"], "Choose the Google file before FounderOS exports it.");
+  const exportMimeType = exportMimeTypeFromPayload(payload, args.defaultMimeType ?? "text/plain");
+  ensureLibraryExportMimeType(exportMimeType);
+  const metadata = await requestGoogleJson<DriveFileResponse>({
+    request: args.request,
+    input: apiUrl(`/drive/v3/files/${encodeURIComponent(fileId)}`, {
+      fields: "id,name,mimeType,webViewLink",
+    }),
+    init: { method: "GET", headers: bearerHeaders(args.accessToken) },
+    serviceName: "Google Drive",
+    action: "export files",
+  });
+  if (!metadata.id) throw new Error("Google Drive did not confirm the file before export.");
+
+  const isWorkspaceFile = metadata.mimeType?.startsWith("application/vnd.google-apps.");
+  const savedMimeType = isWorkspaceFile ? exportMimeType : metadata.mimeType ?? exportMimeType;
+  ensureLibraryExportMimeType(savedMimeType);
+  const content = await requestGoogleText({
+    request: args.request,
+    input: isWorkspaceFile
+      ? apiUrl(`/drive/v3/files/${encodeURIComponent(fileId)}/export`, { mimeType: exportMimeType })
+      : apiUrl(`/drive/v3/files/${encodeURIComponent(fileId)}`, { alt: "media" }),
+    init: { method: "GET", headers: bearerHeaders(args.accessToken) },
+    serviceName: "Google Drive",
+    action: "export files",
+  });
+  const connectorId = args.connectorId ?? "google_drive";
+  const title = titleFromPayload(payload, cleanString(metadata.name, 220) ?? "Google export");
+  const sourceUrl = metadata.webViewLink ?? driveFileUrl(fileId);
+  const output = libraryOutput({
+    connectorId,
+    externalId: fileId,
+    externalType: connectorId === "google_docs" ? "document_export" : connectorId === "google_sheets" ? "spreadsheet_export" : "file_export",
+    title,
+    content,
+    sourceUrl,
+    mimeType: savedMimeType,
+  });
+
+  return {
+    status: "completed",
+    safeSummary: `${title} was exported to Library.`,
+    externalId: fileId,
+    providerUrl: sourceUrl,
+    metadata: {
+      connectorId,
+      action: "export_content",
+      externalType: output.externalType,
+      title,
+      mimeType: savedMimeType,
+      providerUrl: sourceUrl,
+      libraryOutput: output,
+    },
+  };
+}
+
+export async function createGoogleDocument(args: {
+  accessToken: string;
+  document: GoogleWorkspaceFileActionInput;
+  request: ConnectorRequest;
+}): Promise<GoogleWorkspaceActionResult> {
+  const payload = payloadRecord(args.document);
+  const title = titleFromPayload(payload, "FounderOS document");
+  const content = contentFromPayload(payload, "Add document text before FounderOS creates it in Google Docs.");
+  const created = await requestGoogleJson<GoogleDocResponse>({
+    request: args.request,
+    input: apiUrl("/docs/v1/documents"),
+    init: {
+      method: "POST",
+      headers: {
+        ...bearerHeaders(args.accessToken),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ title }),
+    },
+    serviceName: "Google Docs",
+    action: "create documents",
+  });
+  const documentId = created.documentId;
+  if (!documentId) throw new Error("Google Docs did not confirm the created document.");
+
+  await requestGoogleJson<GoogleDocBatchUpdateResponse>({
+    request: args.request,
+    input: apiUrl(`/docs/v1/documents/${encodeURIComponent(documentId)}:batchUpdate`),
+    init: {
+      method: "POST",
+      headers: {
+        ...bearerHeaders(args.accessToken),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        requests: [{ insertText: { location: { index: 1 }, text: content } }],
+      }),
+    },
+    serviceName: "Google Docs",
+    action: "create documents",
+  });
+  await maybeMoveDriveFile({
+    accessToken: args.accessToken,
+    fileId: documentId,
+    folderId: optionalFolderId(payload),
+    request: args.request,
+  });
+
+  return {
+    status: "completed",
+    safeSummary: "The approved document was created in Google Docs.",
+    externalId: documentId,
+    providerUrl: googleDocUrl(documentId),
+    metadata: {
+      connectorId: "google_docs",
+      action: "write_record",
+      externalType: "document",
+      title,
+      mimeType: "application/vnd.google-apps.document",
+      providerUrl: googleDocUrl(documentId),
+    },
+  };
+}
+
+function docEndIndex(document: GoogleDocResponse) {
+  const endIndexes = (document.body?.content ?? [])
+    .map((block) => block.endIndex)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  return Math.max(1, ...endIndexes);
+}
+
+export async function updateGoogleDocument(args: {
+  accessToken: string;
+  document: GoogleWorkspaceFileActionInput;
+  request: ConnectorRequest;
+}): Promise<GoogleWorkspaceActionResult> {
+  const payload = payloadRecord(args.document);
+  const documentId = requiredGoogleId(payload, ["documentId", "fileId", "id"], "Choose the Google document before FounderOS updates it.");
+  const content = contentFromPayload(payload, "Add document text before FounderOS updates Google Docs.");
+  const mode = updateModeFromPayload(payload);
+  const existing = await requestGoogleJson<GoogleDocResponse>({
+    request: args.request,
+    input: apiUrl(`/docs/v1/documents/${encodeURIComponent(documentId)}`, {
+      fields: "title,body/content/endIndex",
+    }),
+    init: { method: "GET", headers: bearerHeaders(args.accessToken) },
+    serviceName: "Google Docs",
+    action: "update documents",
+  });
+  const endIndex = docEndIndex(existing);
+  const insertIndex = Math.max(1, endIndex - 1);
+  const requests = mode === "replace"
+    ? [
+        ...(insertIndex > 1 ? [{ deleteContentRange: { range: { startIndex: 1, endIndex: insertIndex } } }] : []),
+        { insertText: { location: { index: 1 }, text: content } },
+      ]
+    : [{ insertText: { location: { index: insertIndex }, text: content.startsWith("\n") ? content : `\n${content}` } }];
+
+  const result = await requestGoogleJson<GoogleDocBatchUpdateResponse>({
+    request: args.request,
+    input: apiUrl(`/docs/v1/documents/${encodeURIComponent(documentId)}:batchUpdate`),
+    init: {
+      method: "POST",
+      headers: {
+        ...bearerHeaders(args.accessToken),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ requests }),
+    },
+    serviceName: "Google Docs",
+    action: "update documents",
+  });
+  if (result.documentId === undefined && !documentId) {
+    throw new Error("Google Docs did not confirm the document update.");
+  }
+
+  return {
+    status: "completed",
+    safeSummary: "The approved Google document was updated.",
+    externalId: documentId,
+    providerUrl: googleDocUrl(documentId),
+    metadata: {
+      connectorId: "google_docs",
+      action: "update_external_record",
+      externalType: "document",
+      title: cleanString(existing.title, 220) ?? titleFromPayload(payload, "Google document"),
+      providerUrl: googleDocUrl(documentId),
+      mode,
+    },
+  };
+}
+
+export async function exportGoogleDocument(args: {
+  accessToken: string;
+  document: GoogleWorkspaceFileActionInput;
+  request: ConnectorRequest;
+}): Promise<GoogleWorkspaceActionResult> {
+  return await exportGoogleDriveFile({
+    accessToken: args.accessToken,
+    file: args.document,
+    request: args.request,
+    connectorId: "google_docs",
+    defaultMimeType: "text/plain",
+  });
+}
+
+export async function createGoogleSpreadsheet(args: {
+  accessToken: string;
+  spreadsheet: GoogleWorkspaceFileActionInput;
+  request: ConnectorRequest;
+}): Promise<GoogleWorkspaceActionResult> {
+  const payload = payloadRecord(args.spreadsheet);
+  const title = titleFromPayload(payload, "FounderOS spreadsheet");
+  const sheetName = firstPayloadString(payload, ["sheetName", "tabName"], 80) ?? "Sheet1";
+  const values = sheetValuesFromPayload(payload);
+  const created = await requestGoogleJson<GoogleSpreadsheetResponse>({
+    request: args.request,
+    input: apiUrl("/sheets/v4/spreadsheets"),
+    init: {
+      method: "POST",
+      headers: {
+        ...bearerHeaders(args.accessToken),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        properties: { title },
+        sheets: [{ properties: { title: sheetName } }],
+      }),
+    },
+    serviceName: "Google Sheets",
+    action: "create spreadsheets",
+  });
+  const spreadsheetId = created.spreadsheetId;
+  if (!spreadsheetId) throw new Error("Google Sheets did not confirm the created spreadsheet.");
+
+  await requestGoogleJson<GoogleSheetValuesResponse>({
+    request: args.request,
+    input: apiUrl(`/sheets/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(rangeFromPayload(payload, sheetName))}`, {
+      valueInputOption: "USER_ENTERED",
+    }),
+    init: {
+      method: "PUT",
+      headers: {
+        ...bearerHeaders(args.accessToken),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ values }),
+    },
+    serviceName: "Google Sheets",
+    action: "create spreadsheets",
+  });
+  await maybeMoveDriveFile({
+    accessToken: args.accessToken,
+    fileId: spreadsheetId,
+    folderId: optionalFolderId(payload),
+    request: args.request,
+  });
+
+  return {
+    status: "completed",
+    safeSummary: "The approved spreadsheet was created in Google Sheets.",
+    externalId: spreadsheetId,
+    providerUrl: created.spreadsheetUrl ?? googleSheetUrl(spreadsheetId),
+    metadata: {
+      connectorId: "google_sheets",
+      action: "write_record",
+      externalType: "spreadsheet",
+      title,
+      providerUrl: created.spreadsheetUrl ?? googleSheetUrl(spreadsheetId),
+      updatedRange: rangeFromPayload(payload, sheetName),
+    },
+  };
+}
+
+export async function updateGoogleSpreadsheet(args: {
+  accessToken: string;
+  spreadsheet: GoogleWorkspaceFileActionInput;
+  request: ConnectorRequest;
+}): Promise<GoogleWorkspaceActionResult> {
+  const payload = payloadRecord(args.spreadsheet);
+  const spreadsheetId = requiredGoogleId(payload, ["spreadsheetId", "sheetId", "fileId", "id"], "Choose the Google spreadsheet before FounderOS updates it.");
+  const values = sheetValuesFromPayload(payload);
+  const mode = updateModeFromPayload(payload);
+  const range = rangeFromPayload(payload);
+  const method = mode === "append" ? "POST" : "PUT";
+  const suffix = mode === "append" ? `${encodeURIComponent(range)}:append` : encodeURIComponent(range);
+  const result = await requestGoogleJson<GoogleSheetValuesResponse>({
+    request: args.request,
+    input: apiUrl(`/sheets/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${suffix}`, {
+      valueInputOption: "USER_ENTERED",
+      insertDataOption: mode === "append" ? "INSERT_ROWS" : undefined,
+    }),
+    init: {
+      method,
+      headers: {
+        ...bearerHeaders(args.accessToken),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ values }),
+    },
+    serviceName: "Google Sheets",
+    action: "update spreadsheets",
+  });
+  const updatedRange = result.updatedRange ?? result.updates?.updatedRange ?? result.tableRange ?? range;
+
+  return {
+    status: "completed",
+    safeSummary: "The approved Google spreadsheet was updated.",
+    externalId: spreadsheetId,
+    providerUrl: googleSheetUrl(spreadsheetId),
+    metadata: {
+      connectorId: "google_sheets",
+      action: "update_external_record",
+      externalType: "spreadsheet",
+      providerUrl: googleSheetUrl(spreadsheetId),
+      updatedRange,
+      mode,
+    },
+  };
+}
+
+export async function exportGoogleSpreadsheet(args: {
+  accessToken: string;
+  spreadsheet: GoogleWorkspaceFileActionInput;
+  request: ConnectorRequest;
+}): Promise<GoogleWorkspaceActionResult> {
+  return await exportGoogleDriveFile({
+    accessToken: args.accessToken,
+    file: args.spreadsheet,
+    request: args.request,
+    connectorId: "google_sheets",
+    defaultMimeType: "text/csv",
+  });
+}
+
+export async function executeGoogleWorkspaceFileAction(args: {
+  accessToken: string;
+  connectorId: "google_drive" | "google_docs" | "google_sheets";
+  actionType: string;
+  payload: unknown;
+  request: ConnectorRequest;
+}): Promise<GoogleWorkspaceActionResult | null> {
+  const payload = payloadRecord(args.payload);
+
+  if (args.connectorId === "google_drive") {
+    if (args.actionType === "write_record") {
+      return await createGoogleDriveFile({ accessToken: args.accessToken, file: payload, request: args.request });
+    }
+    if (args.actionType === "export_content") {
+      return await exportGoogleDriveFile({ accessToken: args.accessToken, file: payload, request: args.request });
+    }
+    if (args.actionType === "update_external_record") {
+      return await updateGoogleDriveFile({ accessToken: args.accessToken, file: payload, request: args.request });
+    }
+  }
+
+  if (args.connectorId === "google_docs") {
+    if (args.actionType === "write_record") {
+      return await createGoogleDocument({ accessToken: args.accessToken, document: payload, request: args.request });
+    }
+    if (args.actionType === "export_content") {
+      return await exportGoogleDocument({ accessToken: args.accessToken, document: payload, request: args.request });
+    }
+    if (args.actionType === "update_external_record") {
+      return await updateGoogleDocument({ accessToken: args.accessToken, document: payload, request: args.request });
+    }
+  }
+
+  if (args.connectorId === "google_sheets") {
+    if (args.actionType === "write_record") {
+      return await createGoogleSpreadsheet({ accessToken: args.accessToken, spreadsheet: payload, request: args.request });
+    }
+    if (args.actionType === "export_content") {
+      return await exportGoogleSpreadsheet({ accessToken: args.accessToken, spreadsheet: payload, request: args.request });
+    }
+    if (args.actionType === "update_external_record") {
+      return await updateGoogleSpreadsheet({ accessToken: args.accessToken, spreadsheet: payload, request: args.request });
+    }
+  }
+
+  return null;
 }
 
 function parseDays(text: string) {
