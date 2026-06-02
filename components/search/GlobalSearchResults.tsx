@@ -51,6 +51,11 @@ const groupIcons: Record<string, LucideIcon> = {
 function cleanDisplayText(value: string) {
   return value
     .replace(/\bRAG\b|\bAI Router\b|\bTOOL_INVOCATION\b/gi, "")
+    .replace(/\b(?:OpenCode|Codex|DeepSeek|OpenRouter|Z\.ai|ZAI|GLM|GPT|Claude|Gemini|Mistral|Llama)\b[-\w./]*/gi, "FounderOS")
+    .replace(/\bzai-coding-plan\/[a-z0-9._-]+/gi, "FounderOS")
+    .replace(/\bprovider(s)?\b|\bmodel(?: names?)?s?\b|\bagent(s)?\b/gi, "setting$1")
+    .replace(/\blogs?\b/gi, "updates")
+    .replace(/\btool calls?\b|\btool invocations?\b/gi, "steps")
     .replace(/\bartifact(s)?\b/gi, "Library item$1")
     .replace(/\boperator(s)?\b/gi, "worker$1")
     .replace(/\s+/g, " ")

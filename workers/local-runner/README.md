@@ -23,12 +23,13 @@ For local OpenCode work:
 
 - install and sign in to `opencode`
 - keep `FOUNDEROS_OPENCODE_BUSINESS_MODEL=zai-coding-plan/glm-4.7` unless you have a specific paid subscription route
-- set `LOCAL_RUNNER_REQUIRE_OPENCODE=true`
-- optional for build work: set `BUILDER_PROVIDER=opencode`
+- keep `FOUNDEROS_OPENCODE_CODING_MODEL=zai-coding-plan/glm-5.1` for build, code, and debug work
+- `LOCAL_RUNNER_REQUIRE_OPENCODE=true` is recommended and `BUILDER_PROVIDER=opencode` is the default
 
 The startup check validates the local command and auth before chat or coding
 capability is advertised. If opencode is missing and `LOCAL_RUNNER_REQUIRE_OPENCODE`
-is not set, the runner stays available for non-opencode work only.
+is not set and the builder is explicitly configured away from opencode, the runner
+stays available for non-opencode work only.
 
 Troubleshooting:
 

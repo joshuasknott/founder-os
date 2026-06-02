@@ -25,7 +25,7 @@ function readEnv(env, name) {
 }
 
 function canonicalProvider(value, useCodex = false) {
-  const provider = cleanString(value)?.toLowerCase() ?? (useCodex ? "codex" : "simulated");
+  const provider = cleanString(value)?.toLowerCase() ?? (useCodex ? "codex" : "opencode");
 
   if (OPENCODE_PROVIDER_ALIASES.has(provider)) return "opencode";
   if (CODEX_PROVIDER_ALIASES.has(provider)) return "codex";

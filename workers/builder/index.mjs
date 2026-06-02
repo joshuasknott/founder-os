@@ -13,6 +13,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createServer } from "node:net";
 import {
   dirname,
   isAbsolute,
@@ -40,13 +41,16 @@ import {
 } from "./agentAdapters.mjs";
 
 const POLL_INTERVAL_MS = Number(process.env.BUILDER_POLL_INTERVAL_MS ?? 5000);
-const PREVIEW_URL = process.env.BUILDER_PREVIEW_URL ?? "http://localhost:3000";
+const EXPLICIT_PREVIEW_URL = process.env.BUILDER_PREVIEW_URL;
+const DEFAULT_PREVIEW_URL = "http://localhost:3000";
+const PREVIEW_URL = EXPLICIT_PREVIEW_URL ?? DEFAULT_PREVIEW_URL;
+const PREVIEW_PORT = Number(process.env.BUILDER_PREVIEW_PORT ?? 3100);
 const ROOT_WORKSPACE_DIR = resolve(process.env.BUILDER_WORKSPACE_DIR ?? process.cwd());
 const BUILDER_AGENT_ENV = buildBuilderAgentEnv(process.env);
 const BUILDER_AGENT = selectBuilderAgent(BUILDER_AGENT_ENV);
 const BUILDER_PROVIDER = BUILDER_AGENT.provider;
 const BUILDER_ADAPTER = BUILDER_AGENT.adapter;
-const START_PREVIEW = process.env.BUILDER_START_PREVIEW === "true";
+const START_PREVIEW = process.env.BUILDER_START_PREVIEW !== "false";
 const PREVIEW_COMMAND = process.env.BUILDER_PREVIEW_COMMAND ?? "npm run dev";
 const PREVIEW_TIMEOUT_MS = Number(process.env.BUILDER_PREVIEW_TIMEOUT_MS ?? 30000);
 const WORKER_ID = process.env.BUILDER_WORKER_ID ?? `builder:${process.pid}`;
@@ -58,6 +62,7 @@ const BUILD_RUNS_DIR = resolve(
 const BRANCH_PREFIX = process.env.BUILDER_BRANCH_PREFIX ?? "codex/founderos-build";
 const CLEAN_WORKSPACE_AFTER_RUN = process.env.BUILDER_CLEAN_WORKSPACE_AFTER_RUN === "true";
 const TEST_TIMEOUT_MS = Number(process.env.BUILDER_TEST_TIMEOUT_MS ?? 120000);
+const INSTALL_TIMEOUT_MS = Number(process.env.BUILDER_INSTALL_TIMEOUT_MS ?? 180000);
 const REPAIR_ATTEMPTS = Number(process.env.BUILDER_REPAIR_ATTEMPTS ?? 1);
 const MAX_CAPTURED_OUTPUT_CHARS = 6000;
 const MAX_SNAPSHOT_FILE_BYTES = Number(process.env.BUILDER_SNAPSHOT_FILE_BYTES ?? 5 * 1024 * 1024);
@@ -439,7 +444,8 @@ function deploymentMetadata(previewStatus) {
     safeError: deployment.safeError,
     safeMessage: deployment.safeMessage,
     createdAt: deployment.createdAt ?? Date.now(),
-    publishRequiresApproval: true,
+    publishRequiresApproval: deployment.publishRequiresApproval ?? true,
+    qa: deployment.qa ?? previewStatus?.qa,
   };
 }
 
@@ -460,56 +466,219 @@ async function isPreviewReachable(url) {
   }
 }
 
-function startPreviewProcess(workspaceDir) {
-  const child = spawn(PREVIEW_COMMAND, {
+function stripHtmlToVisibleText(html) {
+  return String(html ?? "")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function browserQaResult(args) {
+  const loaded = Boolean(args.loaded);
+  const nonblank = Boolean(args.nonblank);
+  const contentVisible = Boolean(args.contentVisible);
+  const passed = loaded && nonblank && contentVisible;
+  return {
+    status: args.status ?? (passed ? "passed" : "failed"),
+    mode: args.mode,
+    url: args.url,
+    loaded,
+    nonblank,
+    contentVisible,
+    statusCode: args.statusCode,
+    visibleTextSample: args.visibleTextSample,
+    safeMessage: args.safeMessage ??
+      (passed
+        ? "Preview loaded and visible content was found."
+        : loaded
+          ? "The preview opened, but visible content was not found yet."
+          : "The preview could not be opened yet."),
+    checkedAt: args.checkedAt ?? Date.now(),
+    durationMs: args.durationMs,
+  };
+}
+
+async function runFetchPreviewQa(url, startedAt = Date.now()) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 6000);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    const html = await response.text();
+    const visibleText = stripHtmlToVisibleText(html).slice(0, 1000);
+    return browserQaResult({
+      mode: "http_preview",
+      url,
+      loaded: response.ok || response.status < 500,
+      nonblank: html.trim().length > 0,
+      contentVisible: /[a-z0-9]/i.test(visibleText) && visibleText.length >= 8,
+      statusCode: response.status,
+      visibleTextSample: visibleText.slice(0, 240),
+      durationMs: Date.now() - startedAt,
+    });
+  } catch {
+    return browserQaResult({
+      mode: "http_preview",
+      url,
+      loaded: false,
+      nonblank: false,
+      contentVisible: false,
+      durationMs: Date.now() - startedAt,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function runPlaywrightPreviewQa(url, startedAt = Date.now()) {
+  const mod = await import("playwright");
+  const browser = await mod.chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+    const response = await page.goto(url, { waitUntil: "networkidle", timeout: 15000 });
+    const visibleText = String(await page.locator("body").innerText({ timeout: 5000 }).catch(() => "")).trim();
+    return browserQaResult({
+      mode: "browser",
+      url,
+      loaded: Boolean(response && response.status() < 500),
+      nonblank: visibleText.length > 0,
+      contentVisible: /[a-z0-9]/i.test(visibleText) && visibleText.length >= 8,
+      statusCode: response?.status(),
+      visibleTextSample: visibleText.replace(/\s+/g, " ").slice(0, 240),
+      durationMs: Date.now() - startedAt,
+    });
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
+
+async function runBrowserQa(url) {
+  if (!url || process.env.BUILDER_SKIP_BROWSER_QA === "true") {
+    return browserQaResult({
+      status: "skipped",
+      mode: "disabled",
+      url,
+      loaded: false,
+      nonblank: false,
+      contentVisible: false,
+      safeMessage: "Preview QA was skipped.",
+    });
+  }
+
+  const startedAt = Date.now();
+  if (process.env.BUILDER_BROWSER_QA_MODE !== "http") {
+    try {
+      return await runPlaywrightPreviewQa(url, startedAt);
+    } catch {
+      // Use a lightweight preview check when a browser runtime is not installed.
+    }
+  }
+
+  return await runFetchPreviewQa(url, startedAt);
+}
+
+function previewUrlForPort(port) {
+  if (EXPLICIT_PREVIEW_URL) return EXPLICIT_PREVIEW_URL;
+  return `http://localhost:${port}`;
+}
+
+function commandForPreviewPort(port) {
+  return PREVIEW_COMMAND.replace(/\{port\}/g, String(port));
+}
+
+function portIsAvailable(port) {
+  return new Promise((resolvePort) => {
+    const server = createServer();
+    server.once("error", () => resolvePort(false));
+    server.once("listening", () => {
+      server.close(() => resolvePort(true));
+    });
+    server.listen(port, "127.0.0.1");
+  });
+}
+
+async function findAvailablePreviewPort(startPort = PREVIEW_PORT) {
+  for (let offset = 0; offset < 40; offset += 1) {
+    const port = startPort + offset;
+    if (await portIsAvailable(port)) return port;
+  }
+  throw new Error("FounderOS could not find a local preview port.");
+}
+
+function startPreviewProcess(workspaceDir, port) {
+  const child = spawn(commandForPreviewPort(port), {
     cwd: workspaceDir,
     detached: true,
     shell: true,
     stdio: "ignore",
     windowsHide: true,
+    env: {
+      ...process.env,
+      PORT: String(port),
+      NEXT_TELEMETRY_DISABLED: process.env.NEXT_TELEMETRY_DISABLED ?? "1",
+      CI: process.env.CI ?? "true",
+    },
   });
   child.unref();
 }
 
 async function ensurePreviewStatus(workspaceDir = ROOT_WORKSPACE_DIR) {
-  if (await isPreviewReachable(PREVIEW_URL)) {
+  if (EXPLICIT_PREVIEW_URL && await isPreviewReachable(PREVIEW_URL)) {
+    const qa = await runBrowserQa(PREVIEW_URL);
     return {
       available: true,
       started: false,
       url: PREVIEW_URL,
       provider: process.env.BUILDER_PREVIEW_PROVIDER ?? "local",
+      qa,
     };
   }
 
   if (!START_PREVIEW) {
+    const qa = await runBrowserQa(PREVIEW_URL);
     return {
-      available: false,
+      available: qa.loaded,
       started: false,
-      url: null,
+      url: qa.loaded ? PREVIEW_URL : null,
       provider: process.env.BUILDER_PREVIEW_PROVIDER ?? "local",
+      qa,
     };
   }
 
-  startPreviewProcess(workspaceDir);
+  const port = EXPLICIT_PREVIEW_URL ? Number(new URL(PREVIEW_URL).port || 80) : await findAvailablePreviewPort();
+  const previewUrl = previewUrlForPort(port);
+  startPreviewProcess(workspaceDir, port);
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < PREVIEW_TIMEOUT_MS) {
     await sleep(1000);
-    if (await isPreviewReachable(PREVIEW_URL)) {
+    if (await isPreviewReachable(previewUrl)) {
+      const qa = await runBrowserQa(previewUrl);
       return {
         available: true,
         started: true,
-        url: PREVIEW_URL,
+        url: previewUrl,
         provider: process.env.BUILDER_PREVIEW_PROVIDER ?? "local",
+        qa,
       };
     }
   }
 
+  const qa = await runBrowserQa(previewUrl);
   return {
-    available: false,
+    available: qa.loaded,
     started: true,
-    url: null,
+    url: qa.loaded ? previewUrl : null,
     provider: process.env.BUILDER_PREVIEW_PROVIDER ?? "local",
+    qa,
   };
 }
 
@@ -521,45 +690,29 @@ async function createReviewPreviewStatus(workspaceDir = ROOT_WORKSPACE_DIR, run,
   const localStatus = await ensurePreviewStatus(workspaceDir);
   const outputKind = outputKindForPreviewDeployment(run, directive);
   const settings = vercelSettingsFromEnv();
+  const requestedDeployment = detectSensitiveExternalAction(directive?.objective)?.actionKind;
 
   if (!outputKindCanDeployPreview(outputKind) || !vercelIsConfigured(settings)) {
     return localStatus;
   }
 
-  try {
-    const deployment = await createVercelPreviewDeployment({
-      workspaceDir,
-      settings,
-      metadata: {
-        runId: String(run?._id ?? ""),
-        outputKind,
-        approvalRequiredForLive: "true",
-      },
-    });
-
-    return {
-      available: true,
-      started: localStatus.started,
-      url: deployment.previewUrl,
-      provider: deployment.provider,
-      deployment,
-    };
-  } catch (error) {
-    const safeError = safeVercelFailureMessage(error);
+  if (requestedDeployment === "publish_preview" || requestedDeployment === "change_live_asset") {
     return {
       ...localStatus,
-      deployment: {
+      requestedDeployment: {
         provider: "vercel",
         target: "preview",
-        status: "failed",
-        safeError,
+        status: "approval_required",
+        safeMessage: "Needs approval before anything is published.",
         previewUrl: localStatus.url,
         publishRequiresApproval: true,
         createdAt: Date.now(),
       },
-      safeMessage: safeError,
+      safeMessage: "Needs approval before anything is published.",
     };
   }
+
+  return localStatus;
 }
 
 async function append(client, runId, message, tone = "progress") {
@@ -766,24 +919,84 @@ async function captureChangedFiles(workingDirectory, baselineSnapshot, eventPath
   return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
 }
 
-function parseConfiguredTestCommands() {
-  if (process.env.BUILDER_SKIP_TESTS === "true") return [];
-  const configured = process.env.BUILDER_TEST_COMMANDS;
-  if (!configured) return null;
+function parseCommandList(value) {
+  if (!value) return null;
 
   try {
-    const parsed = JSON.parse(configured);
+    const parsed = JSON.parse(value);
     if (Array.isArray(parsed)) {
-      return parsed.filter((value) => typeof value === "string" && value.trim());
+      return parsed.filter((entry) => typeof entry === "string" && entry.trim());
     }
   } catch {
     // Fall back to a simple separator format for local setup.
   }
 
-  return configured
+  return value
     .split(/\r?\n|;/)
-    .map((value) => value.trim())
+    .map((entry) => entry.trim())
     .filter(Boolean);
+}
+
+function parseConfiguredInstallCommands() {
+  if (process.env.BUILDER_SKIP_INSTALL === "true") return [];
+  return parseCommandList(process.env.BUILDER_INSTALL_COMMANDS);
+}
+
+function parseConfiguredTestCommands() {
+  if (process.env.BUILDER_SKIP_TESTS === "true") return [];
+  return parseCommandList(process.env.BUILDER_TEST_COMMANDS);
+}
+
+async function fileExists(filePath) {
+  try {
+    await stat(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function defaultInstallCommands(workingDirectory) {
+  const configured = parseConfiguredInstallCommands();
+  if (configured) return configured;
+
+  const hasPackageJson = await fileExists(join(workingDirectory, "package.json"));
+  if (!hasPackageJson || existsSync(join(workingDirectory, "node_modules"))) return [];
+  if (await fileExists(join(workingDirectory, "package-lock.json"))) return ["npm ci --ignore-scripts"];
+  return ["npm install --ignore-scripts"];
+}
+
+async function prepareGeneratedApp(workingDirectory) {
+  const commands = await defaultInstallCommands(workingDirectory);
+  if (commands.length === 0) {
+    return {
+      status: "skipped",
+      summary: "No install step was needed.",
+      commands: [],
+    };
+  }
+
+  const results = [];
+  for (const command of commands.slice(0, 2)) {
+    const result = await runShellCommand(command, workingDirectory, INSTALL_TIMEOUT_MS);
+    results.push(result);
+    if (result.status !== "passed") break;
+  }
+
+  const status = results.every((result) => result.status === "passed")
+    ? "passed"
+    : results.some((result) => result.status === "timed_out")
+      ? "timed_out"
+      : "failed";
+
+  const summary =
+    status === "passed"
+      ? "Install step finished."
+      : status === "timed_out"
+        ? "The install step took too long."
+        : "The install step needs attention.";
+
+  return { status, summary, commands: results };
 }
 
 async function defaultTestCommands(workingDirectory) {
@@ -792,7 +1005,11 @@ async function defaultTestCommands(workingDirectory) {
 
   try {
     const packageJson = JSON.parse(await readFile(join(workingDirectory, "package.json"), "utf8"));
-    if (packageJson?.scripts?.test) return ["npm test"];
+    const commands = [];
+    if (packageJson?.scripts?.test) commands.push("npm test");
+    if (packageJson?.scripts?.lint) commands.push("npm run lint");
+    if (packageJson?.scripts?.build) commands.push("npm run build");
+    return commands;
   } catch {
     return [];
   }
@@ -1054,7 +1271,9 @@ function buildTaskSpec(run, directive, workspace, builderAgent = BUILDER_AGENT) 
     },
     workspace: {
       isolation: workspace.isolation,
+      owner: "FounderOS builder",
       safeWorkingDirectory: true,
+      destructiveWritesOutsideWorkspace: false,
     },
     founderExperience: {
       updates: "plain, short, non-technical",
@@ -1443,10 +1662,16 @@ function extractCodexResult(finalResponse) {
   return fallback;
 }
 
-function buildFounderSummary(result, previewStatus, testResults) {
+function buildFounderSummary(result, previewStatus, testResults, setupResults) {
   const notes = [];
+  if (setupResults && (setupResults.status === "failed" || setupResults.status === "timed_out")) {
+    notes.push("The install step needs attention.");
+  }
   if (testResults.status === "failed" || testResults.status === "timed_out") {
     notes.push("One check needs attention before this is used more broadly.");
+  }
+  if (previewStatus.qa?.status === "failed") {
+    notes.push(previewStatus.qa.safeMessage);
   }
   if (previewStatus.safeMessage) {
     notes.push(previewStatus.safeMessage);
@@ -1465,7 +1690,9 @@ function buildLibraryContent(args) {
   const plan = args.taskSpec?.productPlan;
   const reviewNotes = [
     ...args.codexResult.reviewNotes,
+    args.setupResults?.summary,
     args.testResults.summary,
+    args.previewStatus.qa?.safeMessage,
     args.previewStatus.safeMessage ??
       (args.previewStatus.available
       ? "The preview is ready to open."
@@ -1491,7 +1718,7 @@ function buildLibraryContent(args) {
       : "The review version is saved, but the preview could not be opened yet.",
     "",
     "## Review notes",
-    ...reviewNotes.map((note) => `- ${toPlainFounderText(note)}`),
+    ...reviewNotes.filter(Boolean).map((note) => `- ${toPlainFounderText(note)}`),
     "",
     "## Version and handoff",
     "FounderOS saved this review version in Library so it can be compared, revised, handed off, or used as a rollback point later.",
@@ -1513,13 +1740,22 @@ function buildResultMetadata(args) {
     source: args.source,
     isolation: {
       mode: args.workspace.isolation,
+      owner: "FounderOS builder",
       branch: args.workspace.branch,
       workingDirectory: args.workspace.workingDirectory,
+      destructiveWritesOutsideWorkspace: false,
     },
     deployment: deploymentMetadata(args.previewStatus),
+    requestedDeployment: args.previewStatus.requestedDeployment,
     preview: args.previewStatus,
+    browserQa: args.previewStatus.qa,
     changedFileCount: args.changedFiles.length,
     changedFiles: args.changedFiles,
+    setup: args.setupResults ?? {
+      status: "skipped",
+      summary: "No install step was needed.",
+      commands: [],
+    },
     tests: args.testResults,
     repair: args.repair ?? {
       attempted: false,
@@ -1585,10 +1821,82 @@ async function publishApprovedDeployment(client, run, approvedAction) {
   if (!vercelIsConfigured(settings)) return false;
 
   const metadata = readRunMetadata(run);
-  const deployment = metadata.deployment ?? approvedAction.actionPayload?.deployment ?? {};
-  const deploymentId = deployment.deploymentId;
+  let deployment = metadata.deployment ?? approvedAction.actionPayload?.deployment ?? {};
+  let deploymentId = deployment.deploymentId;
 
   try {
+    if (!deploymentId) {
+      const workingDirectory = metadata.isolation?.workingDirectory;
+      const createdPreview = await createVercelPreviewDeployment({
+        workspaceDir: workingDirectory,
+        settings,
+        metadata: {
+          runId: String(run?._id ?? ""),
+          approvedActionKind: approvedAction.actionKind,
+          approvalRequiredForLive: approvedAction.actionKind === "change_live_asset" ? "true" : "false",
+        },
+      });
+      const qa = await runBrowserQa(createdPreview.previewUrl);
+      deployment = {
+        ...deployment,
+        ...createdPreview,
+        qa,
+      };
+      deploymentId = createdPreview.deploymentId;
+    }
+
+    if (approvedAction.actionKind === "publish_preview") {
+      const summary = "The approved preview link is ready.";
+      const nextMetadata = {
+        ...metadata,
+        deployment: {
+          ...deployment,
+          publishRequiresApproval: false,
+        },
+        preview: {
+          available: true,
+          started: false,
+          url: deployment.previewUrl,
+          provider: deployment.provider,
+          deployment,
+          qa: deployment.qa,
+        },
+        browserQa: deployment.qa,
+        safety: {
+          ...(metadata.safety ?? {}),
+          requestedExternalAction: approvedAction,
+          externalActionPerformed: true,
+        },
+      };
+
+      await client.mutation(api.approvals.markApprovedActionHandled, {
+        approvalId: approvedAction.approvalId,
+        workerToken: workerToken(),
+      });
+      await client.mutation(api.workRuns.markNeedsReviewWithResult, {
+        runId: run._id,
+        leaseId: run.leaseId,
+        summary,
+        content: [
+          `# ${run.title}`,
+          "",
+          summary,
+          "",
+          "## Preview",
+          deployment.previewUrl ? `Preview: ${deployment.previewUrl}` : "The approved preview was prepared.",
+          "",
+          "## Approval",
+          approvedAction.actionTitle ?? "The preview publishing step was approved first.",
+        ].join("\n"),
+        previewUrl: deployment.previewUrl,
+        internalNotes: JSON.stringify(nextMetadata),
+        metadata: nextMetadata,
+        message: "Ready to review.",
+        workerToken: workerToken(),
+      });
+      return true;
+    }
+
     const result = await publishVercelDeployment({
       deploymentId,
       settings,
@@ -1710,6 +2018,11 @@ async function simulateRun(client, run) {
     },
     previewStatus,
     changedFiles: [],
+    setupResults: {
+      status: "skipped",
+      summary: "No install step was needed for the sample result.",
+      commands: [],
+    },
     testResults: {
       status: "skipped",
       summary: "No checks were run for the sample result.",
@@ -1734,6 +2047,7 @@ async function simulateRun(client, run) {
         publishOrDeployBlocked: false,
       },
       previewStatus,
+      setupResults: metadata.setup,
       testResults: metadata.tests,
     }),
     previewUrl: previewStatus.url ?? undefined,
@@ -1824,14 +2138,17 @@ async function runCodex(client, run, directive) {
       baselineSnapshot,
       [...eventChangedFiles],
     );
-    const testResults = await runTestCommands(workspace.workingDirectory);
+    const setupResults = await prepareGeneratedApp(workspace.workingDirectory);
+    const testResults = checksNeedRepair(setupResults)
+      ? setupResults
+      : await runTestCommands(workspace.workingDirectory);
     const previewStatus = await createReviewPreviewStatus(workspace.workingDirectory, run, directive);
     const codexResult = extractCodexResult(finalResponse);
     if (externalAction) {
       codexResult.externalActionRequested = true;
       codexResult.publishOrDeployBlocked = true;
     }
-    const summary = buildFounderSummary(codexResult, previewStatus, testResults);
+    const summary = buildFounderSummary(codexResult, previewStatus, testResults, setupResults);
     const metadata = buildResultMetadata({
       mode: "codex",
       taskSpec,
@@ -1839,6 +2156,7 @@ async function runCodex(client, run, directive) {
       workspace,
       previewStatus,
       changedFiles,
+      setupResults,
       testResults,
       codex: {
         threadId: thread.id,
@@ -1857,6 +2175,7 @@ async function runCodex(client, run, directive) {
         summary,
         codexResult,
         previewStatus,
+        setupResults,
         testResults,
         taskSpec,
       }),
@@ -1915,7 +2234,10 @@ async function runLlmBuilder(client, run, directive) {
     const modelChangedPaths = await applyLlmChanges(workspace.workingDirectory, llmResult);
 
     await append(client, run._id, "I'm checking the review version.");
-    let testResults = await runTestCommands(workspace.workingDirectory);
+    let setupResults = await prepareGeneratedApp(workspace.workingDirectory);
+    let testResults = checksNeedRepair(setupResults)
+      ? setupResults
+      : await runTestCommands(workspace.workingDirectory);
     let repair = {
       attempted: false,
       attempts: 0,
@@ -1935,7 +2257,10 @@ async function runLlmBuilder(client, run, directive) {
         repairResult = extractLlmJson(repairCompletion.content);
         const repairChangedPaths = await applyLlmChanges(workspace.workingDirectory, repairResult);
         modelChangedPaths.push(...repairChangedPaths);
-        testResults = await runTestCommands(workspace.workingDirectory);
+        setupResults = await prepareGeneratedApp(workspace.workingDirectory);
+        testResults = checksNeedRepair(setupResults)
+          ? setupResults
+          : await runTestCommands(workspace.workingDirectory);
         repair.finalStatus = testResults.status;
       } catch (error) {
         repair.error = sanitizeInternalLog(error instanceof Error ? error.message : String(error));
@@ -1957,7 +2282,7 @@ async function runLlmBuilder(client, run, directive) {
       externalActionRequested: Boolean(llmResult.externalActionRequested || externalAction),
       publishOrDeployBlocked: Boolean(llmResult.publishOrDeployBlocked || externalAction),
     };
-    const summary = buildFounderSummary(codexResult, previewStatus, testResults);
+    const summary = buildFounderSummary(codexResult, previewStatus, testResults, setupResults);
     const metadata = buildResultMetadata({
       mode: BUILDER_PROVIDER,
       taskSpec,
@@ -1965,6 +2290,7 @@ async function runLlmBuilder(client, run, directive) {
       workspace,
       previewStatus,
       changedFiles,
+      setupResults,
       testResults,
       repair,
       codex: {
@@ -1985,6 +2311,7 @@ async function runLlmBuilder(client, run, directive) {
         summary,
         codexResult,
         previewStatus,
+        setupResults,
         testResults,
         taskSpec,
       }),
@@ -2038,7 +2365,10 @@ async function runOpenCodeBuilder(client, run, directive, builderAgent = BUILDER
     const opencodeResult = extractCodexResult(finalResponse);
 
     await append(client, run._id, "I'm checking the review version.");
-    let testResults = await runTestCommands(workspace.workingDirectory);
+    let setupResults = await prepareGeneratedApp(workspace.workingDirectory);
+    let testResults = checksNeedRepair(setupResults)
+      ? setupResults
+      : await runTestCommands(workspace.workingDirectory);
     let repair = {
       attempted: false,
       attempts: 0,
@@ -2059,7 +2389,10 @@ async function runOpenCodeBuilder(client, run, directive, builderAgent = BUILDER
           `${run.title} repair`,
           builderAgent,
         );
-        testResults = await runTestCommands(workspace.workingDirectory);
+        setupResults = await prepareGeneratedApp(workspace.workingDirectory);
+        testResults = checksNeedRepair(setupResults)
+          ? setupResults
+          : await runTestCommands(workspace.workingDirectory);
         repair.finalStatus = testResults.status;
       } catch (error) {
         repair.error = sanitizeInternalLog(error instanceof Error ? error.message : String(error));
@@ -2077,7 +2410,7 @@ async function runOpenCodeBuilder(client, run, directive, builderAgent = BUILDER
       opencodeResult.externalActionRequested = true;
       opencodeResult.publishOrDeployBlocked = true;
     }
-    const summary = buildFounderSummary(opencodeResult, previewStatus, testResults);
+    const summary = buildFounderSummary(opencodeResult, previewStatus, testResults, setupResults);
     const metadata = buildResultMetadata({
       mode: "opencode",
       taskSpec,
@@ -2085,6 +2418,7 @@ async function runOpenCodeBuilder(client, run, directive, builderAgent = BUILDER
       workspace,
       previewStatus,
       changedFiles,
+      setupResults,
       testResults,
       repair,
       codex: {
@@ -2105,6 +2439,7 @@ async function runOpenCodeBuilder(client, run, directive, builderAgent = BUILDER
         summary,
         codexResult: opencodeResult,
         previewStatus,
+        setupResults,
         testResults,
         taskSpec,
       }),
@@ -2258,7 +2593,9 @@ export {
   extractLlmJson,
   outputKindForRun,
   planProductBuild,
+  prepareGeneratedApp,
   processRun,
+  runBrowserQa,
   runTestCommands,
   snapshotWorkspaceFiles,
   toPlainFounderText,

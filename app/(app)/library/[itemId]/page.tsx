@@ -118,6 +118,11 @@ function cleanDisplayText(value?: string | null) {
     .replace(/^\[[^\]]+\]\s*/, "")
     .replace(/\*\*?Autonomy Level\s*\d+\s*(?:[-\u2013\u2014]\s*[^*]+)?\*\*?/gi, "")
     .replace(/\bRAG\b|\bAI Router\b|\bTOOL_INVOCATION\b/gi, "")
+    .replace(/\b(?:OpenCode|Codex|DeepSeek|OpenRouter|Z\.ai|ZAI|GLM|GPT|Claude|Gemini|Mistral|Llama)\b[-\w./]*/gi, "FounderOS")
+    .replace(/\bzai-coding-plan\/[a-z0-9._-]+/gi, "FounderOS")
+    .replace(/\bprovider(s)?\b|\bmodel(?: names?)?s?\b|\bagent(s)?\b/gi, "setting$1")
+    .replace(/\blogs?\b/gi, "updates")
+    .replace(/\btool calls?\b|\btool invocations?\b/gi, "steps")
     .replace(/\bartifact(s)?\b/gi, "Library item$1")
     .replace(/\boperator(s)?\b/gi, "worker$1")
     .replace(/#{1,6}\s*/g, "")
@@ -370,6 +375,9 @@ export default function LibraryItemDetailPage() {
   const summary = cleanDisplayText(item.summary ?? item.currentVersion?.summary ?? detail.document?.summary ?? "Saved in Library.");
   const title = cleanDisplayText(item.title);
   const sourceUrl = item.sourceUrl ?? item.currentVersion?.sourceUrl;
+  const sourceActionLabel = ["website", "tool", "internal_tool"].includes(item.kind)
+    ? "Open preview"
+    : "Open source";
   const versionNumber = item.versionCount ?? item.currentVersion?.versionNumber ?? detail.versions[0]?.versionNumber ?? 1;
   const sourceHref = detail.directive
     ? detail.directive.sessionId
@@ -436,7 +444,7 @@ export default function LibraryItemDetailPage() {
                     {sourceUrl && (
                       <a href={sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 hover:text-text-primary">
                         <ExternalLink size={13} />
-                        Open source
+                        {sourceActionLabel}
                       </a>
                     )}
                     {sourceHref && (

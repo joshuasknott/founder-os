@@ -184,6 +184,11 @@ function cleanDisplayText(value: string) {
     .replace(/\*\*?Autonomy Level\s*\d+\s*(?:[-\u2013\u2014]\s*[^*]+)?\*\*?/gi, "")
     .replace(/\bAutonomy Level\s*\d+\s*(?:[-\u2013\u2014]\s*[A-Za-z ]+)?/gi, "")
     .replace(/\bRAG\b|\bAI Router\b|\bTOOL_INVOCATION\b/gi, "")
+    .replace(/\b(?:OpenCode|Codex|DeepSeek|OpenRouter|Z\.ai|ZAI|GLM|GPT|Claude|Gemini|Mistral|Llama)\b[-\w./]*/gi, "FounderOS")
+    .replace(/\bzai-coding-plan\/[a-z0-9._-]+/gi, "FounderOS")
+    .replace(/\bprovider(s)?\b|\bmodel(?: names?)?s?\b|\bagent(s)?\b/gi, "setting$1")
+    .replace(/\blogs?\b/gi, "updates")
+    .replace(/\btool calls?\b|\btool invocations?\b/gi, "steps")
     .replace(/last commit:\s*`?HEAD`?\s*\([^)]*\)/gi, "workspace history is up to date")
     .replace(/\bBuild\/Webhook Activity\b/gi, "Activity")
     .replace(/\bcommit\b/gi, "version")
@@ -1186,6 +1191,9 @@ function ItemDetail({
 }) {
   const versionNumber = entry.document?.currentVersion?.versionNumber ?? entry.item?.versionCount ?? entry.document?.versionCount ?? 1;
   const sourceUrl = entry.item?.sourceUrl ?? entry.item?.currentVersion?.sourceUrl;
+  const sourceActionLabel = ["website", "tool", "internal_tool"].includes(String(entry.kind))
+    ? "Open preview"
+    : "Open source";
 
   return (
     <div className="min-h-full px-4 py-6 sm:px-8">
@@ -1222,7 +1230,7 @@ function ItemDetail({
                   className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-text-secondary hover:text-text-primary"
                 >
                   <ExternalLink size={13} />
-                  Open source
+                  {sourceActionLabel}
                 </a>
               )}
             </div>

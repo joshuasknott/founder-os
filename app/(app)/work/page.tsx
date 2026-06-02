@@ -63,12 +63,14 @@ function cleanDisplayText(value?: string) {
     .replace(/\*\*?Autonomy Level\s*\d+\s*(?:[-\u2013\u2014]\s*[^*]+)?\*\*?/gi, "")
     .replace(/\bAutonomy Level\s*\d+\s*(?:[-\u2013\u2014]\s*[A-Za-z ]+)?/gi, "")
     .replace(/\bRAG\b|\bAI Router\b|\bTOOL_INVOCATION\b/gi, "")
+    .replace(/\b(?:OpenCode|Codex|DeepSeek|OpenRouter|Z\.ai|ZAI|GLM|GPT|Claude|Gemini|Mistral|Llama)\b[-\w./]*/gi, "FounderOS")
+    .replace(/\bzai-coding-plan\/[a-z0-9._-]+/gi, "FounderOS")
     .replace(/\bwork\s*runs?\b|\bworkRuns\b/gi, "work")
     .replace(/\bdirectives?\b/gi, "tasks")
     .replace(/\bconnectors?\b/gi, "connections")
     .replace(/\blogs?\b/gi, "updates")
     .replace(/\btool calls?\b|\btool invocations?\b/gi, "steps")
-    .replace(/\bmodel names?\b/gi, "settings")
+    .replace(/\bprovider(s)?\b|\bmodel(?: names?)?s?\b|\bagent(s)?\b/gi, "setting$1")
     .replace(/\b(gpt|o|claude|gemini|llama|mistral)[-\w.]*\b/gi, "AI")
     .replace(/\bbranch(?: name)?\s*[:=]\s*[\w./-]+/gi, "workspace version")
     .replace(/\bbranch\b/gi, "workspace version")
@@ -225,16 +227,16 @@ function WorkPageContent() {
 
         <section className="grid gap-2 sm:grid-cols-4">
           <SummaryStat label="Active" value={totals.active} />
-          <SummaryStat label="Ready for review" value={totals.readyForReview} />
-          <SummaryStat label="Pending approvals" value={totals.pendingApprovals} />
+          <SummaryStat label="Ready to review" value={totals.readyForReview} />
+          <SummaryStat label="Needs approval" value={totals.pendingApprovals} />
           <SummaryStat label="Completed" value={totals.completed} />
         </section>
 
         <div className="grid gap-4 xl:grid-cols-4">
-          <WorkColumn title="Active work" count={totals.active} items={data.active} />
-          <WorkColumn title="Ready for review" count={totals.readyForReview} items={data.readyForReview} />
+          <WorkColumn title="Working" count={totals.active} items={data.active} />
+          <WorkColumn title="Ready to review" count={totals.readyForReview} items={data.readyForReview} />
           <WorkColumn
-            title="Pending approvals"
+            title="Needs approval"
             count={totals.pendingApprovals}
             items={data.pendingApprovals}
             onApprove={handleApprove}
@@ -340,7 +342,7 @@ function WorkRow({
             <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded-md bg-white px-2 py-1 text-[10px] font-semibold text-amber-700">
-                  Approval needed
+                  Needs approval
                 </span>
                 <span className="text-[11px] font-semibold text-text-primary">
                   {approvalActionLabel(item.approval.actionKind)}
@@ -371,7 +373,7 @@ function WorkRow({
                 className="inline-flex items-center gap-1.5 rounded-lg border border-black/[0.08] bg-white px-3 py-1.5 text-xs font-semibold text-text-secondary hover:text-text-primary"
               >
                 <ExternalLink size={13} />
-                Preview
+                Open preview
               </a>
             )}
             {item.libraryHref && (

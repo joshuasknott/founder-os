@@ -115,6 +115,11 @@ function cleanDisplayText(value: string) {
     .replace(/\*\*?Autonomy Level\s*\d+\s*(?:[-\u2013\u2014]\s*[^*]+)?\*\*?/gi, "")
     .replace(/\bAutonomy Level\s*\d+\s*(?:[-\u2013\u2014]\s*[A-Za-z ]+)?/gi, "")
     .replace(/\bRAG\b|\bAI Router\b|\bTOOL_INVOCATION\b/gi, "")
+    .replace(/\b(?:OpenCode|Codex|DeepSeek|OpenRouter|Z\.ai|ZAI|GLM|GPT|Claude|Gemini|Mistral|Llama)\b[-\w./]*/gi, "FounderOS")
+    .replace(/\bzai-coding-plan\/[a-z0-9._-]+/gi, "FounderOS")
+    .replace(/\bprovider(s)?\b|\bmodel(s)?\b|\bagent(s)?\b/gi, "setting$1")
+    .replace(/\blogs?\b/gi, "updates")
+    .replace(/\btool calls?\b|\btool invocations?\b/gi, "steps")
     .replace(/last commit:\s*`?HEAD`?\s*\([^)]*\)/gi, "workspace history is up to date")
     .replace(/\bBuild\/Webhook Activity\b/gi, "Activity")
     .replace(/\bcommit\b/gi, "version")
@@ -940,10 +945,10 @@ function MessageCard({ card }: { card: ChatMessageCard }) {
 
 function runStatusLabel(status: string) {
   switch (status) {
-    case "queued": return "Preparing";
-    case "working": return "In progress";
-    case "needs_review": return "Ready for review";
-    case "waiting_for_approval": return "Waiting for approval";
+    case "queued": return "Working";
+    case "working": return "Working";
+    case "needs_review": return "Ready to review";
+    case "waiting_for_approval": return "Needs approval";
     case "completed": return "Done";
     case "failed": return "Could not finish";
     case "stopped": return "Stopped";
@@ -1035,7 +1040,7 @@ function WorkRunPanel({
                   <span
                     className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold leading-none ${runStatusClasses(run.status)}`}
                   >
-                    {waitingForBuilder ? "Waiting for builder" : runStatusLabel(run.status)}
+                  {waitingForBuilder ? "Working" : runStatusLabel(run.status)}
                   </span>
                 </div>
                 {run.summary && (
@@ -1095,12 +1100,12 @@ function WorkRunPanel({
               )}
               {run.status === "waiting_for_approval" && (
                 <p className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700">
-                  Waiting for your approval before continuing.
+                  Needs approval.
                 </p>
               )}
               {run.status === "needs_review" && (
                 <p className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700">
-                  Ready for your review.
+                  Ready to review.
                 </p>
               )}
               {run.status === "failed" && (

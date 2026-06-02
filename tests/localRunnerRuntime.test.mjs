@@ -48,6 +48,8 @@ test("local runner offline patch clears current work without exposing internals"
 
 test("local runner startup normalizers keep supported capabilities only", () => {
   assert.deepEqual(runtime.normalizeRunnerCapabilities(["coding", "bad", "document"]), ["coding", "document"]);
+  assert.equal(runtime.normalizeRunnerCapabilities([]).includes("debugging"), true);
+  assert.equal(runtime.normalizeRunnerCapabilities([]).includes("planning"), true);
   assert.deepEqual(runtime.normalizeRunnerOutputContracts(["library_item", "bad"]), ["library_item"]);
   assert.equal(runtime.normalizeRunnerSensitivity("confidential"), "confidential");
   assert.equal(runtime.normalizeRunnerSensitivity("bad"), "restricted");

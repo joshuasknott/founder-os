@@ -65,3 +65,12 @@ test("work-like Home chat creates an attached work classification", () => {
   assert.equal(intake.taskClassification.workerKind, "communications");
   assert.equal(intake.localRouting.capability, "business_reasoning");
 });
+
+test("website Home chat becomes hidden builder work", () => {
+  const intake = runtime.classifyHomeChatIntake("Create a website for a neighborhood bakery");
+
+  assert.equal(intake.requiresWork, true);
+  assert.equal(intake.taskClassification.runKind, "code_preview");
+  assert.equal(intake.taskClassification.workerKind, "builder");
+  assert.equal(intake.taskClassification.outputItemKind, "website");
+});

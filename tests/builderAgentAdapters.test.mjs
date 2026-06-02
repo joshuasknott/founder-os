@@ -48,12 +48,21 @@ test("builder agent selection maps cheaper chat providers to compatible endpoint
   assert.equal(builderProviderHelp("z.ai").includes("FOUNDEROS_ENABLE_DIRECT_ZAI=true"), true);
 });
 
-test("builder agent selection preserves local simulation as the safe default", () => {
+test("builder agent selection defaults real build work to opencode", () => {
   const selected = selectBuilderAgent({});
+
+  assert.equal(selected.adapter, "opencode");
+  assert.equal(selected.provider, "opencode");
+  assert.equal(selected.command, "opencode");
+  assert.equal(selected.isRealBuilder, true);
+  assert.equal(builderProviderHelp("unknown").includes("BUILDER_PROVIDER"), true);
+});
+
+test("builder agent selection still allows explicit local simulation", () => {
+  const selected = selectBuilderAgent({ BUILDER_PROVIDER: "simulated" });
 
   assert.equal(selected.adapter, "simulated");
   assert.equal(selected.isRealBuilder, false);
-  assert.equal(builderProviderHelp("unknown").includes("BUILDER_PROVIDER"), true);
 });
 
 test("opencode args run in the isolated workspace and never auto-approve permissions", () => {

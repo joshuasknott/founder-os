@@ -120,7 +120,16 @@ function statusForWorkPage(status: string): WorkPageStatus {
 }
 
 function labelForWorkPage(status: WorkPageStatus) {
-  return status;
+  const labels: Record<WorkPageStatus, string> = {
+    queued: "Working",
+    working: "Working",
+    "needs review": "Ready to review",
+    "needs approval": "Needs approval",
+    done: "Done",
+    failed: "Could not finish",
+  };
+
+  return labels[status];
 }
 
 async function addResultCardsToChat(

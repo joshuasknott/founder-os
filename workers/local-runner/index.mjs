@@ -9,6 +9,9 @@ import { processChatJob } from "./chat.mjs";
 const DEFAULT_CAPABILITIES = [
   "business_reasoning",
   "coding",
+  "debugging",
+  "planning",
+  "product_marketing_docs",
   "document",
   "design",
   "communication",
@@ -119,7 +122,7 @@ function maxSensitivity() {
 }
 
 function builderProvider() {
-  return String(envValue("BUILDER_AGENT") ?? envValue("BUILDER_PROVIDER") ?? "simulated").toLowerCase();
+  return String(envValue("BUILDER_AGENT") ?? envValue("BUILDER_PROVIDER") ?? "opencode").toLowerCase();
 }
 
 function shouldValidateOpenCode(capabilities) {

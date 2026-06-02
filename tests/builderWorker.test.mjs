@@ -6,11 +6,15 @@ import { join } from "node:path";
 import {
   buildTaskSpec,
   buildLibraryContent,
+  buildResultMetadata,
   captureChangedFiles,
   createBuildWorkspace,
   detectSensitiveExternalAction,
   diffWorkspaceSnapshots,
   extractCodexResult,
+  prepareGeneratedApp,
+  runBrowserQa,
+  runTestCommands,
   snapshotWorkspaceFiles,
   toPlainFounderText,
 } from "../workers/builder/index.mjs";
@@ -62,6 +66,7 @@ test("task spec keeps build connector hidden and structured", () => {
   assert.equal(spec.productPlan.steps.some((step) => step.includes("isolated workspace")), true);
   assert.equal(spec.productPlan.publishing.includes("approval"), true);
   assert.equal(spec.workspace.safeWorkingDirectory, true);
+  assert.equal(spec.workspace.destructiveWritesOutsideWorkspace, false);
   assert.equal(spec.safety.approvalRequiredBeforeExternalAction, true);
   assert.equal(spec.builder.hiddenFromFounder, true);
 });
@@ -201,4 +206,130 @@ test("structured Codex result parsing has safe fallbacks", () => {
   const fallback = extractCodexResult("Codex changed app/page.tsx on a branch.");
   assert.equal(fallback.summary.includes("Codex"), false);
   assert.equal(fallback.summary.includes("branch"), false);
+});
+
+test("install and check commands record generated app readiness", async () => {
+  const root = await mkdtemp(join(tmpdir(), "founderos-builder-ready-"));
+  const previousInstall = process.env.BUILDER_INSTALL_COMMANDS;
+  const previousTests = process.env.BUILDER_TEST_COMMANDS;
+  try {
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({
+        scripts: {
+          test: "node -e \"process.exit(0)\"",
+          lint: "node -e \"process.exit(0)\"",
+          build: "node -e \"process.exit(0)\"",
+        },
+      }),
+      "utf8",
+    );
+    process.env.BUILDER_INSTALL_COMMANDS = "node --version";
+    process.env.BUILDER_TEST_COMMANDS = "";
+
+    const setup = await prepareGeneratedApp(root);
+    assert.equal(setup.status, "passed");
+    assert.equal(setup.commands[0].command, "node --version");
+
+    delete process.env.BUILDER_TEST_COMMANDS;
+    const checks = await runTestCommands(root);
+    assert.equal(checks.status, "passed");
+    assert.deepEqual(checks.commands.map((command) => command.command), [
+      "npm test",
+      "npm run lint",
+      "npm run build",
+    ]);
+  } finally {
+    if (previousInstall === undefined) delete process.env.BUILDER_INSTALL_COMMANDS;
+    else process.env.BUILDER_INSTALL_COMMANDS = previousInstall;
+    if (previousTests === undefined) delete process.env.BUILDER_TEST_COMMANDS;
+    else process.env.BUILDER_TEST_COMMANDS = previousTests;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("browser QA verifies loaded nonblank visible content", async () => {
+  const previousMode = process.env.BUILDER_BROWSER_QA_MODE;
+  const previousFetch = global.fetch;
+  try {
+    process.env.BUILDER_BROWSER_QA_MODE = "http";
+    global.fetch = async () => ({
+      ok: true,
+      status: 200,
+      text: async () => "<html><body><main><h1>Bakery website</h1><p>Fresh bread daily.</p></main></body></html>",
+    });
+
+    const qa = await runBrowserQa("http://localhost:3100");
+    assert.equal(qa.status, "passed");
+    assert.equal(qa.loaded, true);
+    assert.equal(qa.nonblank, true);
+    assert.equal(qa.contentVisible, true);
+    assert.equal(qa.visibleTextSample.includes("Bakery website"), true);
+  } finally {
+    if (previousMode === undefined) delete process.env.BUILDER_BROWSER_QA_MODE;
+    else process.env.BUILDER_BROWSER_QA_MODE = previousMode;
+    global.fetch = previousFetch;
+  }
+});
+
+test("result metadata records preview QA and deployment approval request", () => {
+  const metadata = buildResultMetadata({
+    mode: "opencode",
+    taskSpec: {
+      orchestration: {
+        selectedRoute: "zai-coding-plan/glm-5.1",
+        outputContract: "code_changes",
+      },
+      productPlan: {
+        outcome: "Create a website.",
+      },
+    },
+    source: { source: "safe_workspace" },
+    workspace: {
+      isolation: "safe_copy",
+      branch: null,
+      workingDirectory: "C:/tmp/founderos-run",
+    },
+    previewStatus: {
+      available: true,
+      started: true,
+      url: "http://localhost:3100",
+      provider: "local",
+      qa: {
+        status: "passed",
+        loaded: true,
+        nonblank: true,
+        contentVisible: true,
+      },
+      requestedDeployment: {
+        provider: "vercel",
+        status: "approval_required",
+        safeMessage: "Needs approval before anything is published.",
+      },
+    },
+    changedFiles: [{ path: "app/page.tsx", status: "modified" }],
+    setupResults: {
+      status: "skipped",
+      summary: "No install step was needed.",
+      commands: [],
+    },
+    testResults: {
+      status: "passed",
+      summary: "Checks passed.",
+      commands: [],
+    },
+    codex: {
+      adapter: "opencode",
+      model: "zai-coding-plan/glm-5.1",
+    },
+    externalAction: {
+      actionKind: "publish_preview",
+    },
+  });
+
+  assert.equal(metadata.browserQa.status, "passed");
+  assert.equal(metadata.requestedDeployment.status, "approval_required");
+  assert.equal(metadata.isolation.destructiveWritesOutsideWorkspace, false);
+  assert.equal(metadata.safety.publishRequiresApproval, true);
+  assert.equal(metadata.safety.externalActionPerformed, false);
 });
