@@ -12,6 +12,7 @@ const FREE_OPENCODE_MODELS = new Set([
   "opencode/mimo-v2.5-free",
   "opencode/big-pickle",
 ]);
+let activeOpenCodeCheck = null;
 
 export function safeText(value, maxLength = MAX_SAFE_TEXT) {
   return String(value ?? "")
@@ -48,21 +49,38 @@ export function opencodeCommandParts(commandValue) {
   };
 }
 
+function killProcessTree(pid) {
+  if (!pid) return;
+  if (process.platform === "win32") {
+    execFile("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true }, () => {});
+    return;
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // The process may already have exited.
+  }
+}
+
 function execFileResult(command, args, options = {}) {
   return new Promise((resolve) => {
     const execFileImpl = options.execFileImpl ?? execFile;
-    execFileImpl(
+    let settled = false;
+    let timer;
+    const child = execFileImpl(
       command,
       args,
       {
         windowsHide: true,
-        timeout: options.timeoutMs ?? 8000,
         maxBuffer: options.maxBuffer ?? 1024 * 1024,
         shell: process.platform === "win32",
         cwd: options.cwd,
         env: options.env ?? process.env,
       },
       (error, stdout, stderr) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         resolve({
           ok: !error,
           stdout: stdout ?? "",
@@ -71,6 +89,19 @@ function execFileResult(command, args, options = {}) {
         });
       },
     );
+    if (!settled) {
+      timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        killProcessTree(child?.pid);
+        resolve({
+          ok: false,
+          stdout: "",
+          stderr: "",
+          message: "FounderOS took too long to respond on this computer.",
+        });
+      }, options.timeoutMs ?? 8000);
+    }
   });
 }
 
@@ -305,7 +336,7 @@ export async function runOpenCodeDocument({
   }
 }
 
-export async function checkOpenCode(commandValue) {
+async function runOpenCodeCheck(commandValue) {
   const { command, baseArgs } = opencodeCommandParts(commandValue);
   const version = await execFileResult(command, [...baseArgs, "--version"], {
     timeoutMs: 8000,
@@ -332,6 +363,12 @@ export async function checkOpenCode(commandValue) {
         workspaceDir,
         "--title",
         "FounderOS setup check",
+        "--model",
+        selectOpenCodeChatModel({
+          requestedModel: process.env.FOUNDEROS_OPENCODE_BUSINESS_MODEL,
+          routeModel: DEFAULT_OPENCODE_CHAT_MODEL,
+          sensitivity: "internal",
+        }).model,
         prompt,
       ],
       {
@@ -356,5 +393,15 @@ export async function checkOpenCode(commandValue) {
     };
   } finally {
     await rm(workspaceDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export async function checkOpenCode(commandValue) {
+  if (activeOpenCodeCheck) return await activeOpenCodeCheck;
+  activeOpenCodeCheck = runOpenCodeCheck(commandValue);
+  try {
+    return await activeOpenCodeCheck;
+  } finally {
+    activeOpenCodeCheck = null;
   }
 }

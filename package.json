@@ -19,7 +19,10 @@
     "worker:generic:once": "node workers/generic/index.mjs --once",
     "local-runner": "node workers/local-runner/index.mjs",
     "local-runner:once": "node workers/local-runner/index.mjs --once",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "test:e2e:setup": "playwright test --project=setup",
+    "test:e2e": "playwright test",
+    "test:acceptance": "npm test && npm run lint && npm run build && npm run test:e2e"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.4.2",
@@ -39,6 +42,8 @@
     "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {
+    "@clerk/testing": "^2.0.34",
+    "@playwright/test": "^1.60.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

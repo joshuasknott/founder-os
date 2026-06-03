@@ -10,6 +10,12 @@ import type { Doc } from "@/convex/_generated/dataModel";
 import { LoginCard } from "@/components/auth/LoginCard";
 import { OnboardingFlow } from "@/components/auth/OnboardingFlow";
 import { installClerkAuthRefreshGuard } from "@/lib/clerk-auth-refresh-guard";
+import {
+  ACCOUNT_DELETION_PENDING_EVENT,
+  clearAccountDeletionPending,
+  clearDeletedAccountReadyHints,
+  readAccountDeletionPending,
+} from "@/lib/account-deletion-pending";
 import { Loader2 } from "lucide-react";
 
 const convex = new ConvexReactClient(
@@ -49,11 +55,12 @@ function AuthGate({ children }: { children: ReactNode }) {
   const [hasHydrated, setHasHydrated] = useState(false);
   const [hasSeenSignedInUser, setHasSeenSignedInUser] = useState(false);
   const [confirmedSignedOut, setConfirmedSignedOut] = useState(false);
+  const [accountDeletionPending, setAccountDeletionPending] = useState(false);
   const isMountedRef = useRef(false);
   const seedingUserRef = useRef<string | null>(null);
   const lastSignedInUserIdRef = useRef<string | null>(null);
   const connectorCallbackRef = useRef<string | null>(null);
-  const shouldLoadWorkspace = Boolean(isAuthenticated && userId && seededUserId === userId);
+  const shouldLoadWorkspace = Boolean(!accountDeletionPending && isAuthenticated && userId && seededUserId === userId);
   const currentUser = useQuery(api.users.current, shouldLoadWorkspace ? {} : "skip");
   const workspaces = useQuery(api.workspaces.get, shouldLoadWorkspace ? {} : "skip");
   const displayedCurrentUser = currentUser ?? stableCurrentUser;
@@ -73,8 +80,15 @@ function AuthGate({ children }: { children: ReactNode }) {
     displayedCurrentUser !== undefined,
   );
   const hasRememberedReadyWorkspace = Boolean(userId && rememberedReadyUserId === userId);
-  const canKeepAppMounted = hasPassedGate || workspaceLoaded || hasRememberedReadyWorkspace || hasReadyAccountHint;
-  const canKeepResolvedAccountMounted = canKeepAppMounted || shouldShowOnboarding;
+  const canUseAuthenticatedShell = Boolean(isLoaded && isSignedIn && isAuthenticated);
+  const canKeepAppMounted = !accountDeletionPending && (
+    canUseAuthenticatedShell &&
+    (hasPassedGate ||
+      workspaceLoaded ||
+      hasRememberedReadyWorkspace ||
+      hasReadyAccountHint)
+  );
+  const canKeepResolvedAccountMounted = !accountDeletionPending && (canKeepAppMounted || shouldShowOnboarding);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -88,10 +102,25 @@ function AuthGate({ children }: { children: ReactNode }) {
     queueMicrotask(() => {
       if (cancelled) return;
       setHasReadyAccountHint(readReadyAccountHint());
+      setAccountDeletionPending(readAccountDeletionPending());
       setHasHydrated(true);
     });
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    function syncAccountDeletionPending() {
+      setAccountDeletionPending(readAccountDeletionPending());
+    }
+
+    syncAccountDeletionPending();
+    window.addEventListener(ACCOUNT_DELETION_PENDING_EVENT, syncAccountDeletionPending);
+    window.addEventListener("storage", syncAccountDeletionPending);
+    return () => {
+      window.removeEventListener(ACCOUNT_DELETION_PENDING_EVENT, syncAccountDeletionPending);
+      window.removeEventListener("storage", syncAccountDeletionPending);
     };
   }, []);
 
@@ -138,6 +167,7 @@ function AuthGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (confirmedSignedOut) {
       let cancelled = false;
+      const deletedAccountUserId = accountDeletionPending ? lastSignedInUserIdRef.current : null;
       seedingUserRef.current = null;
       lastSignedInUserIdRef.current = null;
       queueMicrotask(() => {
@@ -150,13 +180,18 @@ function AuthGate({ children }: { children: ReactNode }) {
         setSeedError(null);
         setHasReadyAccountHint(false);
         setHasSeenSignedInUser(false);
+        setAccountDeletionPending(false);
         clearReadyAccountHint();
+        if (accountDeletionPending) {
+          clearDeletedAccountReadyHints(deletedAccountUserId);
+        }
+        clearAccountDeletionPending();
       });
       return () => {
         cancelled = true;
       };
     }
-  }, [confirmedSignedOut]);
+  }, [accountDeletionPending, confirmedSignedOut]);
 
   useEffect(() => {
     if (!isLoaded || !isSignedIn || !userId) return;
@@ -199,7 +234,7 @@ function AuthGate({ children }: { children: ReactNode }) {
   }, [canKeepResolvedAccountMounted, hasLoadedAccount, isConvexAuthLoading, isLoaded, isSignedIn]);
 
   useEffect(() => {
-    if (!isLoaded || !isSignedIn || !isAuthenticated || !userId) {
+    if (accountDeletionPending || !isLoaded || !isSignedIn || !isAuthenticated || !userId) {
       return;
     }
     if (
@@ -226,7 +261,7 @@ function AuthGate({ children }: { children: ReactNode }) {
           });
         }
       });
-  }, [isAuthenticated, isLoaded, isSignedIn, seedError?.userId, seededUserId, seedWorkspace, userId]);
+  }, [accountDeletionPending, isAuthenticated, isLoaded, isSignedIn, seedError?.userId, seededUserId, seedWorkspace, userId]);
 
   useEffect(() => {
     if (!workspaceLoaded) return;
@@ -284,7 +319,18 @@ function AuthGate({ children }: { children: ReactNode }) {
   }, [completeGitHubAppConnection, completeOAuthConnection, isAuthenticated, isLoaded, isSignedIn, router]);
 
   if (!hasHydrated) {
-    return children;
+    return <PreparingWorkspace label="Checking your account" />;
+  }
+
+  if (accountDeletionPending) {
+    if (isLoaded && !isSignedIn) {
+      return (
+        <main className="flex h-screen w-full items-center justify-center bg-surface px-4">
+          <LoginCard fallbackRedirectUrl={connectorCallbackFallbackPath()} />
+        </main>
+      );
+    }
+    return <PreparingWorkspace label="Deleting your account" />;
   }
 
   if (!canKeepResolvedAccountMounted && (!isLoaded || (isSignedIn && isConvexAuthLoading)) && authTimedOut) {

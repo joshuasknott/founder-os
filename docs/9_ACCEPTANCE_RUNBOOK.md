@@ -126,6 +126,54 @@ npm run worker:communications
 npm run worker:generic
 ```
 
+## Automated Browser Acceptance
+
+FounderOS uses Playwright with Clerk test auth so authenticated browser tests can
+reuse a saved storage state instead of signing in manually every time. The saved
+browser state is written under `playwright/.auth` and must stay out of Git.
+
+Required browser-test values:
+
+```bash
+E2E_BASE_URL=http://localhost:3000
+E2E_CLERK_TEST_USER_EMAIL=e2e+clerk_test@example.com
+CLERK_SECRET_KEY=
+```
+
+Optional values:
+
+```bash
+E2E_START_WEB_SERVER=true
+FOUNDEROS_E2E_LIVE_CONNECTORS=false
+E2E_ACCEPTANCE_EMAIL_TO=
+E2E_ACCEPTANCE_CALENDAR_ATTENDEE=
+E2E_ACCEPTANCE_GITHUB_OWNER=
+E2E_ACCEPTANCE_GITHUB_REPO=
+E2E_ACCEPTANCE_GITHUB_HEAD_BRANCH=
+E2E_ACCEPTANCE_GITHUB_BASE_BRANCH=main
+```
+
+Use `E2E_START_WEB_SERVER=true` when Playwright should start `npm run dev`
+itself. Leave it false when Convex, Next, and the local runner are already
+running in separate terminals.
+
+Run the browser checks:
+
+```bash
+npm run test:e2e:setup
+npm run test:e2e
+```
+
+Run the full local acceptance gate:
+
+```bash
+npm run test:acceptance
+```
+
+Only set `FOUNDEROS_E2E_LIVE_CONNECTORS=true` for staging accounts and staging
+resources. Live destructive checks should use unique test names and teardown
+where each provider supports deletion or cleanup.
+
 ## Builder Preview Setup
 
 Default builder settings:
@@ -199,9 +247,7 @@ BUILDER_PROVIDER=opencode
 1. Confirm local checks pass:
 
    ```bash
-   npm test
-   npm run lint
-   npm run build
+   npm run test:acceptance
    ```
 
 2. Push the current `main` branch.
@@ -243,6 +289,8 @@ BUILDER_PROVIDER=opencode
 - Real opencode authentication and paid GLM account availability.
 - Real Convex and Clerk production environment values.
 - Real Google Workspace, GitHub, and Vercel OAuth/app credentials.
+- Real Clerk Playwright auth unless `E2E_CLERK_TEST_USER_EMAIL` and Clerk test
+  credentials are set.
 - Real Gemini API call with redacted low-sensitive vision input.
 - Real DeepSeek escalation call with `DEEPSEEK_API_KEY`.
 - Real browser opening of a generated builder preview on the founder's machine.

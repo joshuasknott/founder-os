@@ -9,9 +9,9 @@ import { appendItemVersion, createItemWithVersion } from "./itemModel";
 import { buildConnectorImport } from "./connectorContent";
 import {
   connectorCredentialStorage,
+  connectorActionRequiresApproval,
   evaluateConnectorActionRequest,
   getConnectorAction,
-  getConnectorActionHandler,
   getConnectorDefinition,
   listConnectorDefinitions,
   publicConnectionCard,
@@ -19,8 +19,8 @@ import {
   safeConnectorError,
   sanitizeConnectorConnectionSettings,
   testConnectorConnection,
+  validateConnectorApprovalBinding,
   validateApiKeyConnectorSetup,
-  type ConnectorActionType,
   type ConnectorConnectionStatus,
 } from "./connectorRuntime";
 import {
@@ -179,6 +179,14 @@ const internalConnectors = anyApi.connectors as unknown as {
     workspaceId: string;
     connectorId: string;
   }, unknown>;
+  getApprovedConnectorApprovalForAction: FunctionReference<"query", "internal", {
+    approvalId: string;
+    workspaceId: string;
+    runId: string;
+    connectorId: string;
+    actionType: string;
+    actionKind?: string;
+  }, { ok: boolean; safeMessage: string }>;
   getConnectionByIdForProvider: FunctionReference<"query", "internal", {
     connectionId: string;
   }, unknown>;
@@ -1162,6 +1170,28 @@ export const getConnectorCredentialBundle = internalQuery({
       : null;
 
     return { connection, credential, refreshCredential };
+  },
+});
+
+export const getApprovedConnectorApprovalForAction = internalQuery({
+  args: {
+    approvalId: v.id("approvalQueue"),
+    workspaceId: v.id("workspaces"),
+    runId: v.id("workRuns"),
+    connectorId: v.string(),
+    actionType: v.string(),
+    actionKind: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const approval = await ctx.db.get(args.approvalId);
+    return validateConnectorApprovalBinding({
+      approval,
+      workspaceId: String(args.workspaceId),
+      runId: String(args.runId),
+      connectorId: args.connectorId,
+      actionType: args.actionType,
+      actionKind: args.actionKind,
+    });
   },
 });
 
@@ -3631,6 +3661,38 @@ export const executeConnectorAction = action({
       return evaluation;
     }
 
+    const action = getConnectorAction(definition, args.actionType);
+    const approvalRequired = action ? connectorActionRequiresApproval(definition, action) : evaluation.approvalRequired;
+    if (approvalRequired) {
+      const missingApproval = !args.approvalId || !args.runId;
+      const approvalCheck = missingApproval
+        ? { ok: false, safeMessage: "This needs your approval first." }
+        : await ctx.runQuery(internalConnectors.getApprovedConnectorApprovalForAction, {
+            approvalId: args.approvalId!,
+            workspaceId: args.workspaceId,
+            runId: args.runId!,
+            connectorId: args.connectorId,
+            actionType: args.actionType,
+            actionKind: action?.sensitiveActionKind,
+          });
+
+      if (!approvalCheck.ok) {
+        await ctx.runMutation(internalConnectors.logConnectorAction, {
+          ...logBase,
+          status: "approval_required",
+          approvalRequired: true,
+          safeSummary: approvalCheck.safeMessage,
+        });
+        return {
+          allowed: false,
+          approvalRequired: true,
+          reason: "approval_required" as const,
+          safeMessage: approvalCheck.safeMessage,
+          sensitiveActionKind: evaluation.sensitiveActionKind,
+        };
+      }
+    }
+
     if (args.connectorId === "github" && args.actionType === "create_pull_request" && (!args.approvalId || !args.runId)) {
       const safeMessage = "This needs your approval first.";
       await ctx.runMutation(internalConnectors.logConnectorAction, {
@@ -3829,21 +3891,8 @@ export const requestAction = mutation({
       return evaluation;
     }
 
-    const action = getConnectorAction(definition, args.actionType);
-    const handler = action ? getConnectorActionHandler(action.handlerKey) : undefined;
-
     try {
-      const result = handler
-        ? await handler({
-            connectorId: definition.id,
-            actionType: args.actionType as ConnectorActionType,
-            approved: Boolean(args.approvalGranted),
-          })
-        : {
-            status: "needs_attention" as const,
-            safeSummary: "That service action is not connected to a live provider yet.",
-          };
-
+      const safeSummary = "That service action needs the live connector path before FounderOS can run it.";
       await ctx.db.insert("connectorActionLogs", {
         workspaceId: args.workspaceId,
         connectionId: connection?._id,
@@ -3853,34 +3902,28 @@ export const requestAction = mutation({
         directiveId: args.directiveId,
         runId: args.runId,
         approvalId: args.approvalId,
-        status: result.status,
+        status: "needs_attention",
         approvalRequired: evaluation.approvalRequired,
-        safeSummary: result.safeSummary,
+        safeSummary,
         createdAt: now,
         completedAt: Date.now(),
       });
-      const completed = result.status === "completed";
       await recordAuditEvent(ctx, {
         ...actor,
         workspaceId: args.workspaceId,
-        action: completed ? "connector.action_completed" : "connector.action_not_ready",
+        action: "connector.action_not_ready",
         resourceType: "connectorAction",
-        summary: result.safeSummary,
-        metadata: { connectorId: args.connectorId, actionType: args.actionType },
+        summary: safeSummary,
+        metadata: { connectorId: args.connectorId, actionType: args.actionType, deprecatedPath: true },
       });
 
-      return completed
-        ? {
-            ...evaluation,
-            safeMessage: result.safeSummary,
-          }
-        : {
-            allowed: false,
-            approvalRequired: evaluation.approvalRequired,
-            reason: "unknown_action" as const,
-            safeMessage: result.safeSummary,
-            sensitiveActionKind: evaluation.sensitiveActionKind,
-          };
+      return {
+        allowed: false,
+        approvalRequired: evaluation.approvalRequired,
+        reason: "unknown_action" as const,
+        safeMessage: safeSummary,
+        sensitiveActionKind: evaluation.sensitiveActionKind,
+      };
     } catch (error) {
       const safeError = safeConnectorError(error);
       await ctx.db.insert("connectorActionLogs", {

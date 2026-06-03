@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api.js";
+import { convexMutation } from "../convexRetry.mjs";
 
 const POLL_INTERVAL_MS = Number(process.env.GENERIC_WORKER_POLL_INTERVAL_MS ?? 5000);
 const WORKER_ID = process.env.GENERIC_WORKER_ID ?? `generic:${process.pid}`;
@@ -44,7 +45,7 @@ function sleep(ms) {
 }
 
 async function append(client, runId, message, tone = "progress") {
-  await client.mutation(api.workRuns.appendUpdate, {
+  await convexMutation(client, api.workRuns.appendUpdate, {
     runId,
     message,
     tone,
@@ -91,7 +92,7 @@ async function processRun(client, run) {
   if (approvedAction) {
     await append(client, run._id, "I'm resuming the approved step.");
     await sleep(400);
-    await client.mutation(api.approvals.resumeApprovedActionWithoutConnector, {
+    await convexMutation(client, api.approvals.resumeApprovedActionWithoutConnector, {
       approvalId: approvedAction.approvalId,
       runId: run._id,
       leaseId: run.leaseId,
@@ -115,7 +116,7 @@ async function processRun(client, run) {
   const result = genericResult(run, directive);
 
   await sleep(400);
-  await client.mutation(api.workRuns.completeWithResult, {
+  await convexMutation(client, api.workRuns.completeWithResult, {
     runId: run._id,
     leaseId: run.leaseId,
     summary: result.summary,
@@ -131,7 +132,7 @@ async function processRun(client, run) {
 }
 
 async function tick(client) {
-  const run = await client.mutation(api.workRuns.leaseNext, {
+  const run = await convexMutation(client, api.workRuns.leaseNext, {
     kinds: ["generic", "data_update"],
     workerId: WORKER_ID,
     leaseMs: LEASE_MS,
@@ -144,7 +145,7 @@ async function tick(client) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Hidden generic run failed: ${message}`);
-    await client.mutation(api.workRuns.markFailed, {
+    await convexMutation(client, api.workRuns.markFailed, {
       runId: run._id,
       leaseId: run.leaseId,
       failureReason: "FounderOS could not finish this task yet.",

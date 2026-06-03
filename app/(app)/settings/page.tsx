@@ -8,6 +8,11 @@ import { ConnectedServicesSettings } from "@/components/settings/connected-servi
 import { RememberedDetailsSettings } from "@/components/settings/remembered-details-settings";
 import { Mail, Save, User, Camera, Building, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
+import {
+  clearAccountDeletionPending,
+  clearDeletedAccountReadyHints,
+  markAccountDeletionPending,
+} from "@/lib/account-deletion-pending";
 
 export default function SettingsPage() {
   const user = useQuery(api.users.current);
@@ -92,8 +97,13 @@ export default function SettingsPage() {
 
   const handleDeleteAccount = async () => {
     setDeleting(true);
+    setError("");
+    markAccountDeletionPending();
+    let deletedFounderProfile = false;
     try {
       await deleteAccount({});
+      deletedFounderProfile = true;
+      clearDeletedAccountReadyHints(clerkUser?.id);
       if (clerkUser?.deleteSelfEnabled) {
         await clerkUser.delete();
         router.replace("/");
@@ -101,10 +111,18 @@ export default function SettingsPage() {
         await signOut({ redirectUrl: "/" });
       }
     } catch (err) {
+      if (deletedFounderProfile) {
+        try {
+          await signOut({ redirectUrl: "/" });
+        } catch {
+          router.replace("/");
+        }
+        return;
+      }
+      clearAccountDeletionPending();
       setError(err instanceof Error ? err.message : "Failed to delete account.");
       setShowDeleteModal(false);
       setDeleting(false);
-      router.replace("/");
     }
   };
 

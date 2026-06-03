@@ -1565,6 +1565,52 @@ export function connectorActionRequiresApproval(
   return action.requiredCapabilities.some((capability) => sensitiveCapabilities.has(capability));
 }
 
+function recordFromUnknown(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+export function validateConnectorApprovalBinding(args: {
+  approval?: {
+    workspaceId?: unknown;
+    runId?: unknown;
+    status?: unknown;
+    handledAt?: unknown;
+    actionKind?: unknown;
+    actionPayload?: unknown;
+  } | null;
+  workspaceId: string;
+  runId: string;
+  connectorId: string;
+  actionType: string;
+  actionKind?: string;
+}) {
+  const approval = args.approval;
+  if (!approval) {
+    return { ok: false, safeMessage: "This needs your approval first." };
+  }
+  if (approval.status !== "approved") {
+    return { ok: false, safeMessage: "This needs your approval first." };
+  }
+  if (approval.handledAt !== undefined) {
+    return { ok: false, safeMessage: "This needs a fresh approval before FounderOS can do that." };
+  }
+  if (String(approval.workspaceId ?? "") !== args.workspaceId || String(approval.runId ?? "") !== args.runId) {
+    return { ok: false, safeMessage: "This needs a fresh approval before FounderOS can do that." };
+  }
+  if (args.actionKind && approval.actionKind !== args.actionKind) {
+    return { ok: false, safeMessage: "This needs a fresh approval before FounderOS can do that." };
+  }
+
+  const payload = recordFromUnknown(approval.actionPayload);
+  if (payload.connectorId !== args.connectorId || payload.actionType !== args.actionType) {
+    return { ok: false, safeMessage: "This needs a fresh approval before FounderOS can do that." };
+  }
+
+  return { ok: true, safeMessage: "Approved." };
+}
+
 export function evaluateConnectorActionRequest(args: {
   connectorId: string;
   actionType: string;

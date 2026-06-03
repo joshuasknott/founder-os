@@ -5,6 +5,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api.js";
 import { checkOpenCode, safeText } from "./opencode.mjs";
 import { processChatJob } from "./chat.mjs";
+import { convexMutation } from "../convexRetry.mjs";
 
 const DEFAULT_CAPABILITIES = [
   "business_reasoning",
@@ -216,7 +217,7 @@ async function loadHandlers() {
 }
 
 async function register(client, settings) {
-  await client.mutation(api.localRunner.register, {
+  await convexMutation(client, api.localRunner.register, {
     runnerId: RUNNER_ID,
     name: RUNNER_NAME,
     capabilities: settings.capabilities,
@@ -233,7 +234,7 @@ async function register(client, settings) {
 }
 
 async function heartbeat(client, settings, currentRunId, message) {
-  await client.mutation(api.localRunner.heartbeat, {
+  await convexMutation(client, api.localRunner.heartbeat, {
     runnerId: RUNNER_ID,
     heartbeatTtlMs: HEARTBEAT_TTL_MS,
     capabilities: settings.capabilities,
@@ -249,7 +250,7 @@ async function heartbeat(client, settings, currentRunId, message) {
 }
 
 async function leaseNext(client) {
-  return await client.mutation(api.localRunner.leaseNext, {
+  return await convexMutation(client, api.localRunner.leaseNext, {
     runnerId: RUNNER_ID,
     leaseMs: LEASE_MS,
     heartbeatTtlMs: HEARTBEAT_TTL_MS,
@@ -258,7 +259,7 @@ async function leaseNext(client) {
 }
 
 async function leaseNextChatJob(client) {
-  return await client.mutation(api.chat.leaseNextLocalRunnerJob, {
+  return await convexMutation(client, api.chat.leaseNextLocalRunnerJob, {
     runnerId: RUNNER_ID,
     leaseMs: LEASE_MS,
     heartbeatTtlMs: HEARTBEAT_TTL_MS,
@@ -268,7 +269,7 @@ async function leaseNextChatJob(client) {
 
 async function failRun(client, run, error) {
   const message = error instanceof Error ? error.message : String(error);
-  await client.mutation(api.localRunner.fail, {
+  await convexMutation(client, api.localRunner.fail, {
     runnerId: RUNNER_ID,
     runId: run._id,
     leaseId: run.leaseId,
@@ -330,7 +331,7 @@ async function tick(client, settings, handlers) {
 }
 
 async function markOffline(client, message = "Local runner stopped.") {
-  await client.mutation(api.localRunner.markOffline, {
+  await convexMutation(client, api.localRunner.markOffline, {
     runnerId: RUNNER_ID,
     message,
     workerToken: workerToken(),

@@ -385,3 +385,48 @@ test("registered connector handlers do not fake unsupported success", async () =
     }
   }
 });
+
+test("approval-gated connector actions require exact approval binding", () => {
+  for (const definition of runtime.listConnectorDefinitions()) {
+    for (const action of definition.actions) {
+      if (!runtime.connectorActionRequiresApproval(definition, action)) continue;
+
+      const approval = {
+        workspaceId: "workspace_1",
+        runId: "run_1",
+        status: "approved",
+        actionKind: action.sensitiveActionKind,
+        actionPayload: {
+          connectorId: definition.id,
+          actionType: action.type,
+        },
+      };
+      assert.equal(runtime.validateConnectorApprovalBinding({
+        approval,
+        workspaceId: "workspace_1",
+        runId: "run_1",
+        connectorId: definition.id,
+        actionType: action.type,
+        actionKind: action.sensitiveActionKind,
+      }).ok, true, `${definition.id}:${action.type} accepts the matching approval`);
+
+      assert.equal(runtime.validateConnectorApprovalBinding({
+        approval: { ...approval, actionPayload: { connectorId: definition.id, actionType: "different_action" } },
+        workspaceId: "workspace_1",
+        runId: "run_1",
+        connectorId: definition.id,
+        actionType: action.type,
+        actionKind: action.sensitiveActionKind,
+      }).ok, false, `${definition.id}:${action.type} rejects action mismatch`);
+
+      assert.equal(runtime.validateConnectorApprovalBinding({
+        approval: { ...approval, handledAt: 2000 },
+        workspaceId: "workspace_1",
+        runId: "run_1",
+        connectorId: definition.id,
+        actionType: action.type,
+        actionKind: action.sensitiveActionKind,
+      }).ok, false, `${definition.id}:${action.type} rejects handled approval replay`);
+    }
+  }
+});

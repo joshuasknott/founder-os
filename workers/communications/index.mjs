@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api.js";
+import { convexMutation } from "../convexRetry.mjs";
 import {
   approvalPayloadForCommunication,
   approvedCommunicationFailureResult,
@@ -57,7 +58,7 @@ function sleep(ms) {
 }
 
 async function append(client, runId, message, tone = "progress") {
-  await client.mutation(api.workRuns.appendUpdate, {
+  await convexMutation(client, api.workRuns.appendUpdate, {
     runId,
     message,
     tone,
@@ -176,7 +177,7 @@ export function prepareCommunicationResult(run, directive, context) {
 async function createApprovalIfNeeded(client, run, prepared) {
   if (!prepared.externalAction) return null;
 
-  return await client.mutation(api.approvals.createForRun, {
+  return await convexMutation(client, api.approvals.createForRun, {
     directiveId: run.directiveId,
     runId: run._id,
     actionKind: prepared.externalAction.actionKind,
@@ -215,11 +216,11 @@ async function finishApprovedCommunication(client, run, approvedAction) {
 
   if (!actionResult.allowed) {
     const failure = approvedCommunicationFailureResult(run, approvedAction, actionResult.safeMessage);
-    await client.mutation(api.approvals.markApprovedActionHandled, {
+    await convexMutation(client, api.approvals.markApprovedActionHandled, {
       approvalId: approvedAction.approvalId,
       workerToken: workerToken(),
     });
-    await client.mutation(api.workRuns.markNeedsReviewWithResult, {
+    await convexMutation(client, api.workRuns.markNeedsReviewWithResult, {
       runId: run._id,
       leaseId: run.leaseId,
       summary: failure.summary,
@@ -252,11 +253,11 @@ async function finishApprovedCommunication(client, run, approvedAction) {
     ...history.metadata,
   };
 
-  await client.mutation(api.approvals.markApprovedActionHandled, {
+  await convexMutation(client, api.approvals.markApprovedActionHandled, {
     approvalId: approvedAction.approvalId,
     workerToken: workerToken(),
   });
-  await client.mutation(api.workRuns.completeWithResult, {
+  await convexMutation(client, api.workRuns.completeWithResult, {
     runId: run._id,
     leaseId: run.leaseId,
     summary: history.summary,
@@ -282,7 +283,7 @@ async function processRun(client, run) {
       return;
     }
 
-    await client.mutation(api.approvals.resumeApprovedActionWithoutConnector, {
+    await convexMutation(client, api.approvals.resumeApprovedActionWithoutConnector, {
       approvalId: approvedAction.approvalId,
       runId: run._id,
       leaseId: run.leaseId,
@@ -315,7 +316,7 @@ async function processRun(client, run) {
   const result = prepareCommunicationResult(run, directive, context);
 
   await sleep(400);
-  await client.mutation(api.workRuns.markNeedsReviewWithResult, {
+  await convexMutation(client, api.workRuns.markNeedsReviewWithResult, {
     runId: run._id,
     leaseId: run.leaseId,
     summary: result.summary,
@@ -355,7 +356,7 @@ async function processRun(client, run) {
 }
 
 async function tick(client) {
-  const run = await client.mutation(api.workRuns.leaseNext, {
+  const run = await convexMutation(client, api.workRuns.leaseNext, {
     kinds: ["email", "schedule"],
     workerId: WORKER_ID,
     leaseMs: LEASE_MS,
@@ -368,7 +369,7 @@ async function tick(client) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Hidden communications run failed: ${message}`);
-    await client.mutation(api.workRuns.markFailed, {
+    await convexMutation(client, api.workRuns.markFailed, {
       runId: run._id,
       leaseId: run.leaseId,
       failureReason: "FounderOS could not prepare this for review yet.",

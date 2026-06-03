@@ -8,6 +8,15 @@ import { NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
 
 const MAX_OUTPUT_LENGTH = 180;
+const DEFAULT_OPENCODE_READINESS_MODEL = "zai-coding-plan/glm-4.7";
+const FREE_OPENCODE_MODELS = new Set([
+  "opencode/deepseek-v4-flash-free",
+  "opencode/nemotron-3-super-free",
+  "opencode/minimax-m3-free",
+  "opencode/mimo-v2.5-free",
+  "opencode/big-pickle",
+]);
+let activeCheck: Promise<{ version?: string }> | null = null;
 
 function safeText(value: unknown) {
   return String(value ?? "")
@@ -40,30 +49,92 @@ function commandParts(commandValue: unknown) {
   };
 }
 
-function checkOpenCodeVersion(command: string, baseArgs: string[]) {
-  return new Promise<{ version?: string }>((resolve, reject) => {
-    execFile(
+function safeModel(value: unknown) {
+  const raw = typeof value === "string" && value.trim()
+    ? value.trim()
+    : process.env.FOUNDEROS_OPENCODE_BUSINESS_MODEL?.trim() || DEFAULT_OPENCODE_READINESS_MODEL;
+  if (/[\r\n]/.test(raw) || FREE_OPENCODE_MODELS.has(raw) || /\bdeepseek\b/i.test(raw)) {
+    return DEFAULT_OPENCODE_READINESS_MODEL;
+  }
+  return raw.slice(0, 200);
+}
+
+function killProcessTree(pid?: number) {
+  if (!pid) return;
+  if (process.platform === "win32") {
+    execFile("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true }, () => {});
+    return;
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // The process may already have exited.
+  }
+}
+
+function execFileWithTreeTimeout(
+  command: string,
+  args: string[],
+  options: {
+    cwd?: string;
+    timeout: number;
+    maxBuffer: number;
+    env?: NodeJS.ProcessEnv;
+  },
+) {
+  return new Promise<{ ok: boolean; stdout: string; stderr: string; message: string }>((resolve) => {
+    let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    const child = execFile(
       command,
-      [...baseArgs, "--version"],
+      args,
       {
+        cwd: options.cwd,
         windowsHide: true,
-        timeout: 8000,
-        maxBuffer: 256 * 1024,
+        maxBuffer: options.maxBuffer,
         shell: process.platform === "win32",
+        env: options.env ?? process.env,
       },
       (error, stdout, stderr) => {
-        const output = safeText(stdout) || safeText(stderr);
-        if (error) {
-          reject(new Error(output || "opencode did not respond on this computer."));
-          return;
-        }
-        resolve({ version: output });
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({
+          ok: !error,
+          stdout: stdout ?? "",
+          stderr: stderr ?? "",
+          message: safeText(stdout) || safeText(stderr) || safeText(error?.message),
+        });
       },
     );
+    if (!settled) {
+      timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        killProcessTree(child.pid);
+        resolve({
+          ok: false,
+          stdout: "",
+          stderr: "",
+          message: "opencode took too long to respond on this computer.",
+        });
+      }, options.timeout);
+    }
   });
 }
 
-async function checkOpenCodeReadiness(command: string, baseArgs: string[]) {
+async function checkOpenCodeVersion(command: string, baseArgs: string[]) {
+  const result = await execFileWithTreeTimeout(command, [...baseArgs, "--version"], {
+    timeout: 8000,
+    maxBuffer: 256 * 1024,
+  });
+  if (!result.ok) {
+    throw new Error(result.message || "opencode did not respond on this computer.");
+  }
+  return { version: result.message };
+}
+
+async function checkOpenCodeReadiness(command: string, baseArgs: string[], model: string) {
   const workspaceDir = await mkdtemp(join(tmpdir(), "founderos-opencode-check-"));
   const prompt = [
     "FounderOS setup check.",
@@ -71,8 +142,8 @@ async function checkOpenCodeReadiness(command: string, baseArgs: string[]) {
     "Do not inspect, create, edit, delete, install, publish, or run any other command.",
   ].join(" ");
 
-  return new Promise<void>((resolve, reject) => {
-    execFile(
+  try {
+    const result = await execFileWithTreeTimeout(
       command,
       [
         ...baseArgs,
@@ -81,38 +152,44 @@ async function checkOpenCodeReadiness(command: string, baseArgs: string[]) {
         workspaceDir,
         "--title",
         "FounderOS setup check",
+        "--model",
+        model,
         prompt,
       ],
       {
         cwd: workspaceDir,
-        windowsHide: true,
         timeout: 60000,
         maxBuffer: 1024 * 1024,
-        shell: process.platform === "win32",
         env: {
           ...process.env,
           CI: process.env.CI ?? "true",
         },
       },
-      async (error, stdout, stderr) => {
-        await rm(workspaceDir, { recursive: true, force: true }).catch(() => {});
-        const fullOutput = `${stdout ?? ""}\n${stderr ?? ""}`;
-        const output = safeText(stdout) || safeText(stderr);
-        if (error || !/\bREADY\b/i.test(fullOutput)) {
-          reject(new Error(output || "opencode could not complete a setup check."));
-          return;
-        }
-        resolve();
-      },
     );
-  });
+    const fullOutput = `${result.stdout}\n${result.stderr}`;
+    if (!result.ok || !/\bREADY\b/i.test(fullOutput)) {
+      throw new Error(result.message || "opencode could not complete a setup check.");
+    }
+  } finally {
+    await rm(workspaceDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function runOpenCodeCheck(commandValue: unknown) {
+  const { command, baseArgs } = commandParts(commandValue);
+  const result = await checkOpenCodeVersion(command, baseArgs);
+  await checkOpenCodeReadiness(command, baseArgs, safeModel(undefined));
+  return result;
 }
 
 async function checkOpenCode(commandValue: unknown) {
-  const { command, baseArgs } = commandParts(commandValue);
-  const result = await checkOpenCodeVersion(command, baseArgs);
-  await checkOpenCodeReadiness(command, baseArgs);
-  return result;
+  if (activeCheck) return await activeCheck;
+  activeCheck = runOpenCodeCheck(commandValue);
+  try {
+    return await activeCheck;
+  } finally {
+    activeCheck = null;
+  }
 }
 
 export async function POST(request: NextRequest) {

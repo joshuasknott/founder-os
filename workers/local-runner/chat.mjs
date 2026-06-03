@@ -3,6 +3,7 @@ import {
   safeText,
   selectOpenCodeChatModel,
 } from "./opencode.mjs";
+import { convexMutation } from "../convexRetry.mjs";
 
 const DEFAULT_HEARTBEAT_TTL_MS = 45 * 1000;
 
@@ -25,7 +26,7 @@ export async function processChatJob(client, job, options = {}) {
   } = options;
   if (!runnerId) throw new Error("Local runner id is missing.");
 
-  await client.mutation(options.api.chat.progressLocalRunnerJob, {
+  await convexMutation(client, options.api.chat.progressLocalRunnerJob, {
     runnerId,
     jobId: job._id,
     leaseId: job.leaseId,
@@ -55,7 +56,7 @@ export async function processChatJob(client, job, options = {}) {
       timeoutMs: Number(env.FOUNDEROS_OPENCODE_CHAT_TIMEOUT_MS ?? 120000),
     });
 
-    await client.mutation(options.api.chat.completeLocalRunnerJob, {
+    await convexMutation(client, options.api.chat.completeLocalRunnerJob, {
       runnerId,
       jobId: job._id,
       leaseId: job.leaseId,
@@ -64,7 +65,7 @@ export async function processChatJob(client, job, options = {}) {
       workerToken,
     });
   } catch (error) {
-    await client.mutation(options.api.chat.failLocalRunnerJob, {
+    await convexMutation(client, options.api.chat.failLocalRunnerJob, {
       runnerId,
       jobId: job._id,
       leaseId: job.leaseId,

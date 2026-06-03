@@ -52,6 +52,7 @@ import type * as system from "../system.js";
 import type * as taskRuntime from "../taskRuntime.js";
 import type * as telemetry from "../telemetry.js";
 import type * as users from "../users.js";
+import type * as vercelRuntime from "../vercelRuntime.js";
 import type * as workRuns from "../workRuns.js";
 import type * as workflowRuntime from "../workflowRuntime.js";
 import type * as workflows from "../workflows.js";
@@ -108,6 +109,7 @@ declare const fullApi: ApiFromModules<{
   taskRuntime: typeof taskRuntime;
   telemetry: typeof telemetry;
   users: typeof users;
+  vercelRuntime: typeof vercelRuntime;
   workRuns: typeof workRuns;
   workflowRuntime: typeof workflowRuntime;
   workflows: typeof workflows;

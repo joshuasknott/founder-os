@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
 import { Codex } from "@openai/codex-sdk";
 import { api } from "../../convex/_generated/api.js";
+import { convexMutation } from "../convexRetry.mjs";
 import {
   createVercelPreviewDeployment,
   outputKindCanDeployPreview,
@@ -721,7 +722,7 @@ async function createReviewPreviewStatus(client, workspaceDir = ROOT_WORKSPACE_D
 }
 
 async function append(client, runId, message, tone = "progress") {
-  await client.mutation(api.workRuns.appendUpdate, {
+  await convexMutation(client, api.workRuns.appendUpdate, {
     runId,
     message,
     tone,
@@ -1794,7 +1795,7 @@ function buildResultMetadata(args) {
 async function createApprovalIfNeeded(client, run, externalAction, previewStatus) {
   if (!externalAction) return null;
 
-  return await client.mutation(api.approvals.createForRun, {
+  return await convexMutation(client, api.approvals.createForRun, {
     directiveId: run.directiveId,
     runId: run._id,
     actionKind: externalAction.actionKind,
@@ -1890,11 +1891,11 @@ async function publishApprovedDeployment(client, run, approvedAction) {
         },
       };
 
-      await client.mutation(api.approvals.markApprovedActionHandled, {
+      await convexMutation(client, api.approvals.markApprovedActionHandled, {
         approvalId: approvedAction.approvalId,
         workerToken: workerToken(),
       });
-      await client.mutation(api.workRuns.markNeedsReviewWithResult, {
+      await convexMutation(client, api.workRuns.markNeedsReviewWithResult, {
         runId: run._id,
         leaseId: run.leaseId,
         summary,
@@ -1941,11 +1942,11 @@ async function publishApprovedDeployment(client, run, approvedAction) {
       },
     };
 
-    await client.mutation(api.approvals.markApprovedActionHandled, {
+    await convexMutation(client, api.approvals.markApprovedActionHandled, {
       approvalId: approvedAction.approvalId,
       workerToken: workerToken(),
     });
-    await client.mutation(api.workRuns.completeWithResult, {
+    await convexMutation(client, api.workRuns.completeWithResult, {
       runId: run._id,
       leaseId: run.leaseId,
       summary,
@@ -1985,11 +1986,11 @@ async function publishApprovedDeployment(client, run, approvedAction) {
       },
     };
 
-    await client.mutation(api.approvals.markApprovedActionHandled, {
+    await convexMutation(client, api.approvals.markApprovedActionHandled, {
       approvalId: approvedAction.approvalId,
       workerToken: workerToken(),
     });
-    await client.mutation(api.workRuns.markNeedsReviewWithResult, {
+    await convexMutation(client, api.workRuns.markNeedsReviewWithResult, {
       runId: run._id,
       leaseId: run.leaseId,
       summary: safeError,
@@ -2054,7 +2055,7 @@ async function simulateRun(client, run) {
   });
 
   await sleep(600);
-  await client.mutation(api.workRuns.markNeedsReviewWithResult, {
+  await convexMutation(client, api.workRuns.markNeedsReviewWithResult, {
     runId: run._id,
     leaseId: run.leaseId,
     summary,
@@ -2187,7 +2188,7 @@ async function runCodex(client, run, directive) {
       externalAction,
     });
 
-    await client.mutation(api.workRuns.markNeedsReviewWithResult, {
+    await convexMutation(client, api.workRuns.markNeedsReviewWithResult, {
       runId: run._id,
       leaseId: run.leaseId,
       summary,
@@ -2323,7 +2324,7 @@ async function runLlmBuilder(client, run, directive) {
       externalAction,
     });
 
-    await client.mutation(api.workRuns.markNeedsReviewWithResult, {
+    await convexMutation(client, api.workRuns.markNeedsReviewWithResult, {
       runId: run._id,
       leaseId: run.leaseId,
       summary,
@@ -2451,7 +2452,7 @@ async function runOpenCodeBuilder(client, run, directive, builderAgent = BUILDER
       externalAction,
     });
 
-    await client.mutation(api.workRuns.markNeedsReviewWithResult, {
+    await convexMutation(client, api.workRuns.markNeedsReviewWithResult, {
       runId: run._id,
       leaseId: run.leaseId,
       summary,
@@ -2506,7 +2507,7 @@ async function processRun(client, run) {
       console.log(`Hidden builder run completed approved deployment: ${run._id}`);
       return;
     }
-    await client.mutation(api.approvals.resumeApprovedActionWithoutConnector, {
+    await convexMutation(client, api.approvals.resumeApprovedActionWithoutConnector, {
       approvalId: approvedAction.approvalId,
       runId: run._id,
       leaseId: run.leaseId,
@@ -2553,7 +2554,7 @@ async function processRun(client, run) {
 }
 
 async function tick(client) {
-  const run = await client.mutation(api.workRuns.leaseNext, {
+  const run = await convexMutation(client, api.workRuns.leaseNext, {
     kinds: ["code_preview"],
     workerId: WORKER_ID,
     leaseMs: LEASE_MS,
@@ -2566,7 +2567,7 @@ async function tick(client) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Hidden builder run failed: ${message}`);
-    await client.mutation(api.workRuns.markFailed, {
+    await convexMutation(client, api.workRuns.markFailed, {
       runId: run._id,
       leaseId: run.leaseId,
       failureReason: "FounderOS could not prepare the preview yet.",
