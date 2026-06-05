@@ -1,10 +1,11 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const MAX_SAFE_TEXT = 220;
 const DEFAULT_OPENCODE_CHAT_MODEL = "zai-coding-plan/glm-4.7";
+const DEFAULT_OPENCODE_READINESS_TIMEOUT_MS = 120000;
 const FREE_OPENCODE_MODELS = new Set([
   "opencode/deepseek-v4-flash-free",
   "opencode/nemotron-3-super-free",
@@ -62,46 +63,179 @@ function killProcessTree(pid) {
   }
 }
 
+function powerShellQuote(value) {
+  return `'${String(value ?? "").replace(/'/g, "''")}'`;
+}
+
+function windowsPowerShellLaunch(command, args) {
+  const script = `& ${[command, ...args].map(powerShellQuote).join(" ")}; exit $LASTEXITCODE`;
+  return {
+    command: "powershell.exe",
+    args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
+  };
+}
+
 function execFileResult(command, args, options = {}) {
   return new Promise((resolve) => {
     const execFileImpl = options.execFileImpl ?? execFile;
+    const launch = !options.execFileImpl && process.platform === "win32"
+      ? windowsPowerShellLaunch(command, args)
+      : { command, args };
     let settled = false;
     let timer;
+    let stdoutBuffer = "";
+    let stderrBuffer = "";
+    const settle = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const maybeResolveOnOutput = () => {
+      if (!options.resolveOnOutput || settled) return;
+      const output = `${stdoutBuffer}\n${stderrBuffer}`;
+      if (!options.resolveOnOutput.test(output)) return;
+      killProcessTree(child?.pid);
+      settle({
+        ok: true,
+        stdout: stdoutBuffer,
+        stderr: stderrBuffer,
+        message: safeText(stdoutBuffer) || safeText(stderrBuffer),
+      });
+    };
     const child = execFileImpl(
-      command,
-      args,
+      launch.command,
+      launch.args,
       {
         windowsHide: true,
         maxBuffer: options.maxBuffer ?? 1024 * 1024,
-        shell: process.platform === "win32",
+        shell: false,
         cwd: options.cwd,
         env: options.env ?? process.env,
       },
       (error, stdout, stderr) => {
         if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve({
+        settle({
           ok: !error,
-          stdout: stdout ?? "",
-          stderr: stderr ?? "",
+          stdout: stdout || stdoutBuffer,
+          stderr: stderr || stderrBuffer,
           message: safeText(stdout) || safeText(stderr) || safeText(error?.message),
         });
       },
     );
+    child?.stdout?.on?.("data", (chunk) => {
+      stdoutBuffer += String(chunk ?? "");
+      maybeResolveOnOutput();
+    });
+    child?.stderr?.on?.("data", (chunk) => {
+      stderrBuffer += String(chunk ?? "");
+      maybeResolveOnOutput();
+    });
     if (!settled) {
       timer = setTimeout(() => {
         if (settled) return;
-        settled = true;
         killProcessTree(child?.pid);
-        resolve({
+        settle({
           ok: false,
-          stdout: "",
-          stderr: "",
+          stdout: stdoutBuffer,
+          stderr: stderrBuffer,
           message: "FounderOS took too long to respond on this computer.",
         });
       }, options.timeoutMs ?? 8000);
     }
+  });
+}
+
+function spawnUntilOutput(command, args, options = {}) {
+  return new Promise((resolve) => {
+    const launch = process.platform === "win32"
+      ? windowsPowerShellLaunch(command, args)
+      : { command, args };
+    let settled = false;
+    let timer;
+    let finalTimer;
+    let stdout = "";
+    let stderr = "";
+    const child = spawn(launch.command, launch.args, {
+      windowsHide: true,
+      shell: false,
+      cwd: options.cwd,
+      env: options.env ?? process.env,
+    });
+
+    const settle = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(finalTimer);
+      resolve(result);
+    };
+    const maybeResolve = () => {
+      const output = `${stdout}\n${stderr}`;
+      if (!options.resolveOnOutput?.test(output)) return;
+      killProcessTree(child.pid);
+      settle({
+        ok: true,
+        stdout,
+        stderr,
+        message: safeText(stdout) || safeText(stderr),
+      });
+    };
+
+    child.stdout?.on("data", (chunk) => {
+      stdout += String(chunk ?? "");
+      maybeResolve();
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += String(chunk ?? "");
+      maybeResolve();
+    });
+    child.on("error", (error) => {
+      settle({
+        ok: false,
+        stdout,
+        stderr,
+        message: safeText(error?.message),
+      });
+    });
+    child.on("close", (code, signal) => {
+      if (options.resolveOnOutput?.test(`${stdout}\n${stderr}`)) {
+        settle({
+          ok: true,
+          stdout,
+          stderr,
+          message: safeText(stdout) || safeText(stderr),
+        });
+        return;
+      }
+      settle({
+        ok: code === 0,
+        stdout,
+        stderr,
+        message: safeText(stdout) || safeText(stderr) || safeText(signal) || safeText(code),
+      });
+    });
+    timer = setTimeout(() => {
+      if (options.acceptOutputAfterKill) {
+        child.kill();
+        finalTimer = setTimeout(() => {
+          killProcessTree(child.pid);
+          settle({
+            ok: false,
+            stdout,
+            stderr,
+            message: "FounderOS took too long to respond on this computer.",
+          });
+        }, 8000);
+        return;
+      }
+      settle({
+        ok: false,
+        stdout,
+        stderr,
+        message: "FounderOS took too long to respond on this computer.",
+      });
+    }, options.timeoutMs ?? 8000);
   });
 }
 
@@ -143,6 +277,14 @@ function cleanDocumentText(value, maxLength) {
     .replace(/[ \t]+\n/g, "\n")
     .trim()
     .slice(0, maxLength);
+}
+
+function readinessTimeoutMs(value = process.env.FOUNDEROS_OPENCODE_READINESS_TIMEOUT_MS) {
+  const timeoutMs = Number(value);
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 10000) {
+    return DEFAULT_OPENCODE_READINESS_TIMEOUT_MS;
+  }
+  return timeoutMs;
 }
 
 export function safeFounderReply(value, maxLength = 8000) {
@@ -336,7 +478,7 @@ export async function runOpenCodeDocument({
   }
 }
 
-async function runOpenCodeCheck(commandValue) {
+async function runOpenCodeCheck(commandValue, { timeoutMs } = {}) {
   const { command, baseArgs } = opencodeCommandParts(commandValue);
   const version = await execFileResult(command, [...baseArgs, "--version"], {
     timeoutMs: 8000,
@@ -354,7 +496,7 @@ async function runOpenCodeCheck(commandValue) {
   ].join(" ");
 
   try {
-    const readiness = await execFileResult(
+    const readiness = await spawnUntilOutput(
       command,
       [
         ...baseArgs,
@@ -373,8 +515,10 @@ async function runOpenCodeCheck(commandValue) {
       ],
       {
         cwd: workspaceDir,
-        timeoutMs: 60000,
+        timeoutMs: readinessTimeoutMs(timeoutMs),
         maxBuffer: 1024 * 1024,
+        resolveOnOutput: /\bREADY\b/i,
+        acceptOutputAfterKill: true,
         env: {
           ...process.env,
           CI: process.env.CI ?? "true",
@@ -396,9 +540,9 @@ async function runOpenCodeCheck(commandValue) {
   }
 }
 
-export async function checkOpenCode(commandValue) {
+export async function checkOpenCode(commandValue, options = {}) {
   if (activeOpenCodeCheck) return await activeOpenCodeCheck;
-  activeOpenCodeCheck = runOpenCodeCheck(commandValue);
+  activeOpenCodeCheck = runOpenCodeCheck(commandValue, options);
   try {
     return await activeOpenCodeCheck;
   } finally {

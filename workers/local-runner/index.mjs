@@ -141,7 +141,9 @@ async function openCodeReadiness(capabilities) {
   }
 
   try {
-    const result = await checkOpenCode(envValue("BUILDER_OPENCODE_COMMAND") ?? "opencode");
+    const result = await checkOpenCode(envValue("BUILDER_OPENCODE_COMMAND") ?? "opencode", {
+      timeoutMs: envValue("FOUNDEROS_OPENCODE_READINESS_TIMEOUT_MS"),
+    });
     return {
       opencodeReady: true,
       opencodeSafeMessage: result.safeMessage,
