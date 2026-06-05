@@ -1,1152 +1,623 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import {
   ArrowRight,
-  BriefcaseBusiness,
-  CalendarClock,
-  CheckCircle2,
-  ChevronRight,
-  Home,
-  Library,
-  MessageSquare,
-  Settings,
-  Shield,
-  Sparkles,
-  Users,
-  Zap,
-  FileText,
-  Brain,
-  Globe,
-  Lock,
-  Clock,
-  Layers,
-  Search,
-  Workflow,
-  Star,
-  Mail,
-  GitBranch,
-  X,
+  BarChart3,
   Check,
+  ChevronRight,
+  Code2,
+  Database,
+  FileText,
+  Github,
+  Globe2,
+  Layers,
+  MailCheck,
+  Menu,
+  MessageSquare,
+  Play,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
+  SquareArrowOutUpRight,
+  X,
+  Workflow,
 } from "lucide-react";
+import {
+  siAnthropic,
+  siGithub,
+  siLinear,
+  siNotion,
+  siPostgresql,
+  siPosthog,
+  siStripe,
+  siVercel,
+  type SimpleIcon,
+} from "simple-icons";
 
-/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-   Scroll reveal hook
-   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
+type ToolLogo = {
+  name: string;
+  icon?: SimpleIcon;
+  iconNode?: React.ReactNode;
+};
 
-function useScrollReveal() {
-  const ref = useRef<HTMLDivElement>(null);
-  const [isVisible, setIsVisible] = useState(false);
+type HeroDemoPhase = "typing" | "sent" | "working" | "done";
 
-  useEffect(() => {
-    const element = ref.current;
-    if (!element) return;
+type WorkflowDemo = {
+  id: string;
+  label: string;
+  title: string;
+  text: string;
+  prompt: string;
+  preview: "website" | "tool" | "document" | "video" | "image";
+  accent: string;
+  bg: string;
+  border: string;
+  connectors: string[];
+  outputs: Array<{ label: string; detail: string }>;
+};
 
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setIsVisible(true);
-          observer.unobserve(element);
-        }
-      },
-      { threshold: 0.1, rootMargin: "0px 0px -60px 0px" }
-    );
+type DemoScene = "request" | "connector" | "working" | "output";
 
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
+type PricingPlan = {
+  id: string;
+  name: string;
+  price: string;
+  cadence?: string;
+  summary: string;
+  fit: string;
+  features: string[];
+  featured?: boolean;
+};
 
-  return [ref, isVisible] as const;
-}
+const navItems = [
+  { label: "Product", href: "#product" },
+  { label: "Use cases", href: "#use-cases" },
+  { label: "Integrations", href: "#integrations" },
+  { label: "Pricing", href: "#pricing" },
+  { label: "Privacy", href: "/privacy" },
+];
 
-/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-   Typewriter effect
-   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
+const toolLogos: ToolLogo[] = [
+  { name: "Gmail", iconNode: <GmailLogo /> },
+  { name: "Calendar", iconNode: <GoogleCalendarLogo /> },
+  { name: "Drive", iconNode: <GoogleDriveLogo /> },
+  { name: "Docs", iconNode: <GoogleDocsLogo /> },
+  { name: "Sheets", iconNode: <GoogleSheetsLogo /> },
+  { name: "GitHub", icon: siGithub },
+  { name: "Vercel", icon: siVercel },
+  { name: "Notion", icon: siNotion },
+  { name: "Postgres", icon: siPostgresql },
+  { name: "Stripe", icon: siStripe },
+  { name: "PostHog", icon: siPosthog },
+  { name: "Linear", icon: siLinear },
+  { name: "Codex", iconNode: <CodexLogo /> },
+  { name: "Gemini", iconNode: <GeminiLogo /> },
+  { name: "Anthropic", icon: siAnthropic },
+  { name: "OpenCode", iconNode: <OpenCodeLogo /> },
+];
 
-function useTypewriter(phrases: string[], speed = 60, pause = 2000) {
-  const [text, setText] = useState("");
-  const [phraseIndex, setPhraseIndex] = useState(0);
-  const [charIndex, setCharIndex] = useState(0);
-  const [isDeleting, setIsDeleting] = useState(false);
+const heroPrompt = "Build a launch dashboard that syncs Stripe, writes the page, and drafts the investor update.";
 
-  useEffect(() => {
-    const currentPhrase = phrases[phraseIndex];
+const heroPhases: HeroDemoPhase[] = ["typing", "sent", "working", "done"];
 
-    const timeout = setTimeout(
-      () => {
-        if (!isDeleting) {
-          setText(currentPhrase.slice(0, charIndex + 1));
-          setCharIndex((prev) => prev + 1);
-
-          if (charIndex + 1 === currentPhrase.length) {
-            setTimeout(() => setIsDeleting(true), pause);
-          }
-        } else {
-          setText(currentPhrase.slice(0, charIndex - 1));
-          setCharIndex((prev) => prev - 1);
-
-          if (charIndex <= 1) {
-            setIsDeleting(false);
-            setPhraseIndex((prev) => (prev + 1) % phrases.length);
-          }
-        }
-      },
-      isDeleting ? speed / 2 : speed
-    );
-
-    return () => clearTimeout(timeout);
-  }, [charIndex, isDeleting, phraseIndex, phrases, speed, pause]);
-
-  return text;
-}
-
-/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-   Main Marketing Page
-   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
-
-export default function MarketingPage() {
-  const [scrollY, setScrollY] = useState(0);
-
-  useEffect(() => {
-    const handleScroll = () => setScrollY(window.scrollY);
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
-
-  return (
-    <div className="relative min-h-screen overflow-hidden">
-      {/* Noise texture overlay */}
-      <div className="noise-overlay pointer-events-none fixed inset-0 z-50" />
-
-      <Navbar scrollY={scrollY} />
-      <HeroSection />
-      <LogoBar />
-      <ProductOverview />
-      <ConnectorsShowcase />
-      <HowItWorks />
-      <UseCasesSection />
-      <FeaturesDeepDive />
-      <ComparisonSection />
-      <TestimonialsSection />
-      <PricingSection />
-      <CTASection />
-      <Footer />
-    </div>
-  );
-}
-/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-   Navbar
-   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
-
-function Navbar({ scrollY }: { scrollY: number }) {
-  const isScrolled = scrollY > 50;
-  const [mobileOpen, setMobileOpen] = useState(false);
-
-  return (
-    <nav
-      className={`fixed top-0 left-0 right-0 z-40 transition-all duration-500 ${
-        isScrolled
-          ? "bg-black/80 backdrop-blur-xl border-b border-white/[0.06]"
-          : "bg-transparent"
-      }`}
-    >
-      <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 lg:px-8">
-        <Link href="/marketing" className="flex items-center gap-2 group">
-          <span className="text-lg font-extrabold tracking-tight transition-opacity group-hover:opacity-80">FounderOS</span>
-        </Link>
-
-        <div className="hidden items-center gap-8 md:flex">
-          <a href="#features" className="text-sm font-medium text-zinc-400 transition hover:text-white">
-            Features
-          </a>
-          <a href="#integrations" className="text-sm font-medium text-zinc-400 transition hover:text-white">
-            Integrations
-          </a>
-          <a href="#how-it-works" className="text-sm font-medium text-zinc-400 transition hover:text-white">
-            How it works
-          </a>
-          <a href="#pricing" className="text-sm font-medium text-zinc-400 transition hover:text-white">
-            Pricing
-          </a>
-        </div>
-
-        <div className="hidden items-center gap-3 md:flex">
-          <Link
-            href="/"
-            className="rounded-lg px-4 py-2 text-sm font-semibold text-zinc-300 transition hover:text-white"
-          >
-            Sign in
-          </Link>
-          <Link
-            href="/"
-            className="btn-shimmer rounded-lg px-5 py-2.5 text-sm font-bold text-black transition hover:opacity-90"
-          >
-            Get started
-          </Link>
-        </div>
-
-        {/* Mobile menu button */}
-        <button
-          type="button"
-          onClick={() => setMobileOpen(!mobileOpen)}
-          className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 md:hidden"
-          aria-label="Toggle menu"
-        >
-          <div className="flex flex-col gap-1">
-            <span className={`block h-0.5 w-5 bg-white transition-transform ${mobileOpen ? "translate-y-1.5 rotate-45" : ""}`} />
-            <span className={`block h-0.5 w-5 bg-white transition-opacity ${mobileOpen ? "opacity-0" : ""}`} />
-            <span className={`block h-0.5 w-5 bg-white transition-transform ${mobileOpen ? "-translate-y-1.5 -rotate-45" : ""}`} />
-          </div>
-        </button>
-      </div>
-
-      {/* Mobile menu */}
-      {mobileOpen && (
-        <div className="border-t border-white/[0.06] bg-black/95 backdrop-blur-xl px-6 py-6 md:hidden">
-          <div className="flex flex-col gap-4">
-            <a href="#features" onClick={() => setMobileOpen(false)} className="text-sm font-medium text-zinc-300 hover:text-white">Features</a>
-            <a href="#integrations" onClick={() => setMobileOpen(false)} className="text-sm font-medium text-zinc-300 hover:text-white">Integrations</a>
-            <a href="#how-it-works" onClick={() => setMobileOpen(false)} className="text-sm font-medium text-zinc-300 hover:text-white">How it works</a>
-            <a href="#pricing" onClick={() => setMobileOpen(false)} className="text-sm font-medium text-zinc-300 hover:text-white">Pricing</a>
-            <div className="h-px bg-white/[0.06]" />
-            <Link href="/" className="text-sm font-semibold text-zinc-300 hover:text-white">Sign in</Link>
-            <Link href="/" className="rounded-lg bg-white px-5 py-2.5 text-center text-sm font-bold text-black">Get started</Link>
-          </div>
-        </div>
-      )}
-    </nav>
-  );
-}
-
-/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-   Hero Section
-   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
-
-function HeroSection() {
-  const typedText = useTypewriter(
-    [
-      "Draft an investor update",
-      "Summarize customer feedback",
-      "Create a competitive analysis",
-      "Prepare board meeting notes",
-      "Schedule weekly reports",
+const workflowDemos: WorkflowDemo[] = [
+  {
+    id: "websites",
+    label: "Websites",
+    title: "Describe the site. Get the preview, copy, code, and launch steps.",
+    text: "FounderOS turns loose product direction into a reviewable web build, then keeps the change loop and release gate in the same workspace.",
+    prompt: "Build a polished launch page for NorthstarCRM with pricing, a product preview, and a launch email.",
+    preview: "website",
+    accent: "text-emerald-700",
+    bg: "bg-emerald-50",
+    border: "border-emerald-200",
+    connectors: ["Docs", "Codex", "GitHub", "Vercel", "Gmail"],
+    outputs: [
+      { label: "Website preview", detail: "Responsive page ready to review" },
+      { label: "Launch copy", detail: "Hero, pricing, email, and changelog" },
+      { label: "Release gate", detail: "Publish waits for approval" },
     ],
-    50,
-    2500
-  );
+  },
+  {
+    id: "tools",
+    label: "Tools",
+    title: "Ask for an internal tool and watch the right systems join the build.",
+    text: "Dashboards, admin tools, analysis surfaces, and lightweight operators can be produced from live business context instead of blank-page specs.",
+    prompt: "Create a revenue health dashboard that syncs Stripe, product events, and open pipeline risks.",
+    preview: "tool",
+    accent: "text-sky-700",
+    bg: "bg-sky-50",
+    border: "border-sky-200",
+    connectors: ["Stripe", "Postgres", "PostHog", "Linear"],
+    outputs: [
+      { label: "Dashboard", detail: "Revenue, churn, and follow-up views" },
+      { label: "Data trail", detail: "Source systems shown inline" },
+      { label: "Next actions", detail: "Tasks opened for owners" },
+    ],
+  },
+  {
+    id: "documents",
+    label: "Documents",
+    title: "Turn scattered knowledge into docs that are sourced, useful, and saved.",
+    text: "FounderOS can use your files, decisions, meetings, and workspace memory to draft reports, briefs, policies, updates, and customer notes.",
+    prompt: "Turn the launch notes into an investor update, a sales one-pager, and a customer FAQ.",
+    preview: "document",
+    accent: "text-violet-700",
+    bg: "bg-violet-50",
+    border: "border-violet-200",
+    connectors: ["Drive", "Docs", "Notion", "Gmail"],
+    outputs: [
+      { label: "Investor update", detail: "Drafted with source notes" },
+      { label: "Sales one-pager", detail: "Positioning and proof points" },
+      { label: "FAQ", detail: "Ready for review" },
+    ],
+  },
+  {
+    id: "videos",
+    label: "Videos",
+    title: "Create video workflows without separating script, assets, and review.",
+    text: "Brief the story once, then FounderOS assembles the script, shot list, asset plan, captions, and review-ready video output.",
+    prompt: "Make a 45-second launch demo video with captions, product shots, and a founder voiceover script.",
+    preview: "video",
+    accent: "text-rose-700",
+    bg: "bg-rose-50",
+    border: "border-rose-200",
+    connectors: ["Drive", "Docs", "Codex", "Gemini"],
+    outputs: [
+      { label: "Storyboard", detail: "Five scenes with timings" },
+      { label: "Captions", detail: "Clean transcript and overlays" },
+      { label: "Render plan", detail: "Ready for production" },
+    ],
+  },
+  {
+    id: "images",
+    label: "Images",
+    title: "Generate campaign imagery with the product context already attached.",
+    text: "FounderOS can move from offer, audience, and brand notes into image directions, review boards, and final assets for launches or listings.",
+    prompt: "Create three image directions for the pricing launch and export the strongest social card.",
+    preview: "image",
+    accent: "text-amber-700",
+    bg: "bg-amber-50",
+    border: "border-amber-200",
+    connectors: ["Drive", "Docs", "Gemini", "Library"],
+    outputs: [
+      { label: "Directions", detail: "Three campaign routes" },
+      { label: "Social card", detail: "Final asset selected" },
+      { label: "Asset notes", detail: "Usage and copy saved" },
+    ],
+  },
+];
 
+const workflowFrames = [
+  { label: "Prompt", title: "Capture the ask", icon: <MessageSquare size={16} /> },
+  { label: "Plan", title: "Shape the work", icon: <Workflow size={16} /> },
+  { label: "Connect", title: "Use context", icon: <Database size={16} /> },
+  { label: "Create", title: "Produce outputs", icon: <Sparkles size={16} /> },
+  { label: "Review", title: "Pause safely", icon: <ShieldCheck size={16} /> },
+];
+
+const trustItems = [
+  {
+    title: "Open source",
+    text: "Run FounderOS yourself, extend it, and keep the operating layer inspectable.",
+    signal: "Source",
+  },
+  {
+    title: "Managed when useful",
+    text: "Use hosted reliability, model access, and connector support when you do not want to maintain the runtime.",
+    signal: "Hosted",
+  },
+  {
+    title: "Approval-first",
+    text: "Sending, publishing, spending, deletion, and live changes stop for review.",
+    signal: "Review",
+  },
+  {
+    title: "Cost-aware routing",
+    text: "Routine work can use lighter paths while complex work can escalate when needed.",
+    signal: "Spend",
+  },
+];
+
+const pricingPlans: PricingPlan[] = [
+  {
+    id: "open",
+    name: "Open source",
+    price: "$0",
+    summary: "Run FounderOS yourself and bring the local setup you already trust.",
+    fit: "Best when you want control and do not mind maintaining your own runtime.",
+    features: ["Core workspace", "Home, Work, Library, Schedules, Settings", "Bring your own keys", "Community extensibility"],
+  },
+  {
+    id: "managed",
+    name: "FounderOS Managed",
+    price: "$29",
+    cadence: "/ month",
+    summary: "Hosted reliability and managed orchestration for solo founders.",
+    fit: "Best when you want the product experience without tending the machinery.",
+    features: ["Managed model access", "Connector setup support", "Approval-first workflows", "Priority product updates"],
+    featured: true,
+  },
+  {
+    id: "team",
+    name: "Team",
+    price: "Custom",
+    summary: "Shared company context, review rules, and support for small teams.",
+    fit: "Best when multiple people share company memory and approval controls.",
+    features: ["Team workspaces", "Advanced controls", "Custom connector support", "Private onboarding"],
+  },
+];
+
+const demoScenes: DemoScene[] = ["request", "connector", "working", "output"];
+
+function SimpleBrandIcon({ icon, className = "h-5 w-5" }: { icon: SimpleIcon; className?: string }) {
   return (
-    <section className="relative min-h-screen flex items-center justify-center overflow-hidden">
-      {/* Gradient mesh background */}
-      <div className="mesh-gradient absolute inset-0" />
-      <div className="grid-bg absolute inset-0" />
-
-      {/* Floating particles */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="particle-1 absolute top-[15%] left-[10%] h-1 w-1 rounded-full bg-white/30" />
-        <div className="particle-2 absolute top-[25%] right-[15%] h-1.5 w-1.5 rounded-full bg-white/20" />
-        <div className="particle-3 absolute top-[60%] left-[20%] h-1 w-1 rounded-full bg-white/25" />
-        <div className="particle-4 absolute top-[70%] right-[25%] h-2 w-2 rounded-full bg-white/15" />
-        <div className="particle-5 absolute top-[40%] left-[70%] h-1 w-1 rounded-full bg-white/20" />
-        <div className="particle-1 absolute top-[80%] left-[50%] h-1.5 w-1.5 rounded-full bg-white/15" />
-        <div className="particle-2 absolute top-[10%] left-[60%] h-1 w-1 rounded-full bg-white/25" />
-        <div className="particle-3 absolute top-[50%] right-[10%] h-1 w-1 rounded-full bg-white/20" />
-      </div>
-
-      {/* Radial glow */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] radial-glow-top" />
-
-      <div className="relative z-10 mx-auto max-w-5xl px-6 pt-32 pb-20 text-center lg:px-8">
-        {/* Badge */}
-        <div className="reveal-up mb-8 inline-flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-4 py-1.5 backdrop-blur-sm">
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-          </span>
-          <span className="text-xs font-semibold text-zinc-300">
-            Now in early access
-          </span>
-        </div>
-
-        {/* Main heading */}
-        <h1 className="reveal-up stagger-1 text-5xl font-extrabold tracking-tight leading-[1.1] sm:text-6xl lg:text-7xl xl:text-8xl" style={{ opacity: 0 }}>
-          <span className="block">Run your business</span>
-          <span className="gradient-text block">with an AI team</span>
-        </h1>
-
-        {/* Subtitle */}
-        <p className="reveal-up stagger-3 mx-auto mt-8 max-w-2xl text-lg leading-relaxed text-zinc-400 sm:text-xl" style={{ opacity: 0 }}>
-          FounderOS is your AI-powered business assistant that handles the work you
-          don&apos;t have time for. Delegate tasks in plain English, and get polished
-          results â€” emails drafted, reports built, code shipped â€” all with your approval.
-        </p>
-
-        {/* Simulated prompt box */}
-        <div className="reveal-up stagger-4 mx-auto mt-12 max-w-xl" style={{ opacity: 0 }}>
-          <div className="flowing-border rounded-2xl bg-white/[0.04] p-1">
-            <div className="rounded-xl bg-zinc-950 px-6 py-4">
-              <div className="flex items-center gap-3 text-left">
-                <Sparkles size={16} className="shrink-0 text-zinc-500" />
-                <span className="text-sm text-zinc-400">
-                  {typedText}
-                  <span className="inline-block w-[2px] h-4 bg-zinc-500 ml-0.5 animate-pulse align-middle" />
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* CTA buttons */}
-        <div className="reveal-up stagger-5 mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row" style={{ opacity: 0 }}>
-          <Link
-            href="/"
-            className="btn-shimmer group inline-flex items-center gap-2 rounded-xl px-8 py-3.5 text-sm font-bold text-black transition hover:opacity-90"
-          >
-            Start building for free
-            <ArrowRight
-              size={16}
-              className="transition-transform group-hover:translate-x-0.5"
-            />
-          </Link>
-          <a
-            href="#features"
-            className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-8 py-3.5 text-sm font-semibold text-zinc-300 transition hover:bg-white/[0.06] hover:text-white"
-          >
-            See how it works
-          </a>
-        </div>
-
-        {/* Hero product screenshot */}
-        <div className="reveal-up stagger-6 mt-20" style={{ opacity: 0 }}>
-          <div className="screenshot-tilt">
-            <div className="screenshot-tilt-inner relative overflow-hidden rounded-2xl border border-white/[0.08] bg-zinc-900/50 shadow-2xl shadow-black/50">
-              <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/40 z-10 pointer-events-none" />
-              <img
-                src="/marketing/hero-dashboard.png"
-                alt="FounderOS Dashboard"
-                className="w-full h-auto object-cover object-top"
-                style={{ aspectRatio: "16/9" }}
-                loading="eager"
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Bottom gradient fade */}
-      <div className="absolute bottom-0 left-0 right-0 h-40 bg-gradient-to-t from-black to-transparent" />
-    </section>
-  );
-}
-
-/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-   Inline Brand Icons for Marketing Page
-   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
-
-function BrandIcon({ id, className = "h-4 w-4" }: { id: string; className?: string }) {
-  const icons: Record<string, { path: string; color: string; viewBox?: string }> = {
-    gmail: {
-      path: "M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 0 1 0 19.366V5.457c0-2.023 2.309-3.178 3.927-1.964L5.455 4.64 12 9.548l6.545-4.91 1.528-1.145C21.69 2.28 24 3.434 24 5.457z",
-      color: "#EA4335",
-    },
-    google_calendar: {
-      path: "M18.316 5.684H24v12.632h-5.684V5.684zM5.684 24h12.632v-5.684H5.684V24zM18.316 5.684V0H5.684v5.684h12.632zM5.684 18.316H0V5.684h5.684v12.632zM18.316 18.316H24V24h-5.684v-5.684zM0 18.316h5.684V24H0v-5.684zM0 0h5.684v5.684H0V0z",
-      color: "#4285F4",
-    },
-    google_drive: {
-      path: "M12 0L0 20.556h4.8L16.8 0H12zM7.2 0L0 12.444h4.8L12 0H7.2zM4.8 20.556L12 8.112l7.2 12.444H4.8zM19.2 20.556L12 8.112l2.4-4.146 9.6 16.59H19.2z",
-      color: "#4285F4",
-    },
-    google_docs: {
-      path: "M14.727 6.727H14V0H4.91c-.905 0-1.637.732-1.637 1.636v20.728c0 .904.732 1.636 1.636 1.636h14.182c.904 0 1.636-.732 1.636-1.636V6.727h-6.001zm-1.909 13.91H7.636v-1.637h5.182v1.636zm3.273-3.273H7.636v-1.637h8.455v1.637zm0-3.273H7.636V12.455h8.455v1.636zM14.727 6.727V0l6.546 6.727h-6.546z",
-      color: "#4285F4",
-    },
-    google_sheets: {
-      path: "M19.09 1.636H4.91c-.905 0-1.637.732-1.637 1.637v17.454c0 .905.732 1.637 1.636 1.637h14.182c.904 0 1.636-.732 1.636-1.637V3.273c0-.905-.732-1.637-1.636-1.637zM9.273 19.09H5.727v-2.454h3.546v2.455zm0-4.09H5.727v-2.455h3.546V15zm0-4.09H5.727V8.454h3.546v2.455zm8.454 8.181h-6.545v-2.454h6.545v2.455zm0-4.09h-6.545v-2.455h6.545V15zm0-4.09h-6.545V8.454h6.545v2.455z",
-      color: "#0F9D58",
-    },
-    opencode: {
-      path: "M3 3h18v6h-6v6h6v6H3v-6h6V9H3V3z",
-      color: "#ffffff",
-    },
-    github: {
-      path: "M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12",
-      color: "#ffffff",
-    },
-    vercel: {
-      path: "M12 1L24 22H0z",
-      color: "#ffffff",
-    },
-  };
-
-  const icon = icons[id];
-  if (!icon) return null;
-
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true">
-      <path fill={icon.color} d={icon.path} />
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" role="img">
+      <path fill={`#${icon.hex}`} d={icon.path} />
     </svg>
   );
 }
 
-/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-   Logo Bar / Social Proof
-   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
+function GmailLogo() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6 shrink-0" aria-hidden="true" role="img">
+      <path d="M4.5 6.5v11h3V9.86L12 13.2l4.5-3.34V17.5h3v-11l-7.5 5.55L4.5 6.5Z" fill="#EA4335" />
+      <path d="M4.5 6.5 12 12.05l7.5-5.55-1.45-2L12 8.98 5.95 4.5l-1.45 2Z" fill="#C5221F" />
+      <path d="M4.5 6.5v11h3V9.86L4.5 7.64V6.5Z" fill="#FBBC04" />
+      <path d="M16.5 9.86v7.64h3v-11l-3 2.22Z" fill="#34A853" />
+      <path d="M5.95 4.5 12 8.98l6.05-4.48A2.4 2.4 0 0 1 19.5 6.5L12 12.05 4.5 6.5A2.4 2.4 0 0 1 5.95 4.5Z" fill="#4285F4" opacity=".92" />
+    </svg>
+  );
+}
 
-function LogoBar() {
-  const [revealRef, revealVisible] = useScrollReveal();
+function GoogleCalendarLogo() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6 shrink-0" aria-hidden="true" role="img">
+      <path d="M5.2 3h13.6A2.2 2.2 0 0 1 21 5.2v13.6a2.2 2.2 0 0 1-2.2 2.2H5.2A2.2 2.2 0 0 1 3 18.8V5.2A2.2 2.2 0 0 1 5.2 3Z" fill="#fff" />
+      <path d="M5.2 3H12v5.2H3v-3A2.2 2.2 0 0 1 5.2 3Z" fill="#1A73E8" />
+      <path d="M12 3h6.8A2.2 2.2 0 0 1 21 5.2v3h-9V3Z" fill="#4285F4" />
+      <path d="M3 8.2h5.2V21h-3A2.2 2.2 0 0 1 3 18.8V8.2Z" fill="#FBBC04" />
+      <path d="M15.8 8.2H21v6.2h-5.2V8.2Z" fill="#EA4335" />
+      <path d="M8.2 8.2h7.6V21H8.2V8.2Z" fill="#fff" />
+      <path d="M15.8 14.4H21v4.4a2.2 2.2 0 0 1-2.2 2.2h-3v-6.6Z" fill="#34A853" />
+      <path d="M8 13.05c.07-.67.34-1.19.82-1.57.48-.38 1.1-.57 1.88-.57.8 0 1.43.2 1.9.6.47.4.7.93.7 1.58 0 .72-.32 1.23-.95 1.54.78.27 1.17.86 1.17 1.77 0 .72-.26 1.31-.79 1.75-.52.44-1.21.66-2.06.66-.82 0-1.49-.2-2.01-.6-.52-.4-.8-.96-.84-1.67h1.58c.06.59.49.89 1.28.89.38 0 .68-.09.9-.28.22-.2.33-.46.33-.8 0-.35-.12-.62-.36-.8-.23-.18-.57-.27-1.02-.27h-.72V13.9h.7c.37 0 .66-.08.87-.24.21-.17.32-.41.32-.73 0-.57-.34-.86-1.02-.86-.65 0-1.02.33-1.09.98H8Zm6.44-1.98h2.35v7.6h-1.56v-5.78l-1.46.72-.55-1.19 1.22-.63v-.72Z" fill="#3c4043" />
+    </svg>
+  );
+}
 
-  const integrations = [
-    { id: "gmail", name: "Gmail" },
-    { id: "google_calendar", name: "Google Calendar" },
-    { id: "google_drive", name: "Google Drive" },
-    { id: "google_docs", name: "Google Docs" },
-    { id: "google_sheets", name: "Google Sheets" },
-    { id: "opencode", name: "opencode" },
-    { id: "github", name: "GitHub" },
-    { id: "vercel", name: "Vercel" },
-  ];
+function GoogleDriveLogo() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6 shrink-0" aria-hidden="true" role="img">
+      <path d="M8.3 3.5h7.4l5.8 10.05h-7.42L8.3 3.5Z" fill="#0F9D58" />
+      <path d="M2.5 13.55 8.3 3.5l3.7 6.42-5.8 10.08-3.7-6.45Z" fill="#F4B400" />
+      <path d="M6.2 20h11.6l3.7-6.45H9.9L6.2 20Z" fill="#4285F4" />
+      <path d="M8.3 3.5 12 9.92h7.4L15.7 3.5H8.3Z" fill="#34A853" opacity=".9" />
+    </svg>
+  );
+}
+
+function GoogleDocsLogo() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6 shrink-0" aria-hidden="true" role="img">
+      <path d="M6 3.5h8.4L19 8.1v12.4H6V3.5Z" fill="#4285F4" />
+      <path d="M14.4 3.5v4.6H19l-4.6-4.6Z" fill="#AECBFA" />
+      <path d="M8.8 11.2h6.4v1.25H8.8V11.2Zm0 2.55h6.4V15H8.8v-1.25Zm0 2.55h4.7v1.25H8.8V16.3Z" fill="#fff" />
+    </svg>
+  );
+}
+
+function GoogleSheetsLogo() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6 shrink-0" aria-hidden="true" role="img">
+      <path d="M6 3.5h8.4L19 8.1v12.4H6V3.5Z" fill="#0F9D58" />
+      <path d="M14.4 3.5v4.6H19l-4.6-4.6Z" fill="#87D8A4" />
+      <path d="M8.7 11h6.6v6.6H8.7V11Zm1.15 1.15v1.45h1.95v-1.45H9.85Zm3.05 0v1.45h1.25v-1.45H12.9Zm-3.05 2.55v1.75h1.95V14.7H9.85Zm3.05 0v1.75h1.25V14.7H12.9Z" fill="#fff" />
+    </svg>
+  );
+}
+
+function GeminiLogo() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6 shrink-0" aria-hidden="true" role="img">
+      <defs>
+        <linearGradient id="gemini-logo-gradient" x1="4" x2="20" y1="20" y2="4" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#1A73E8" />
+          <stop offset=".34" stopColor="#8AB4F8" />
+          <stop offset=".68" stopColor="#C58AF9" />
+          <stop offset="1" stopColor="#8E24AA" />
+        </linearGradient>
+      </defs>
+      <path
+        d="M12 2.8c.82 4.62 3.15 8.14 8.2 9.2-5.05 1.06-7.38 4.58-8.2 9.2-.82-4.62-3.15-8.14-8.2-9.2 5.05-1.06 7.38-4.58 8.2-9.2Z"
+        fill="url(#gemini-logo-gradient)"
+      />
+    </svg>
+  );
+}
+
+function OpenCodeLogo() {
+  return (
+    <Image src="/marketing/opencode-logo.png" alt="" width={24} height={24} className="h-6 w-6 shrink-0 rounded-[3px]" />
+  );
+}
+
+function LogoMark() {
+  return (
+    <span className="inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-lg border border-zinc-950/10 bg-white shadow-sm">
+      <Image src="/marketing/founderos-mark-generated.png" alt="" width={36} height={36} className="h-full w-full object-cover" />
+    </span>
+  );
+}
+
+function CodexLogo() {
+  return (
+    <Image src="/marketing/codex-logo.svg" alt="" width={24} height={24} className="h-6 w-6 shrink-0" unoptimized />
+  );
+}
+
+export default function MarketingPage() {
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
-    <section className="relative border-t border-b border-white/[0.04] py-16 overflow-hidden">
-      <div
-        ref={revealRef}
-        className={`mx-auto max-w-7xl px-6 text-center transition-all duration-700 ${
-          revealVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6"
-        }`}
-      >
-        <p className="mb-2 text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">
-          Connects with the tools you already use
-        </p>
-        <p className="mb-10 text-sm text-zinc-600">
-          One-click connections. Zero engineering required.
-        </p>
+    <main className="min-h-screen bg-[#fbfaf7] text-zinc-950">
+      <Navbar mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} />
+      <HeroSection />
+      <ToolStrip />
+      <UseCasesSection />
+      <JourneySection />
+      <OrchestrationSection />
+      <PricingSection />
+      <Footer />
+    </main>
+  );
+}
 
-        {/* Integration marquee */}
-        <div className="relative overflow-hidden">
-          <div className="absolute left-0 top-0 bottom-0 w-20 bg-gradient-to-r from-black to-transparent z-10" />
-          <div className="absolute right-0 top-0 bottom-0 w-20 bg-gradient-to-l from-black to-transparent z-10" />
-          <div className="flex animate-marquee whitespace-nowrap">
-            {[...integrations, ...integrations].map((item, i) => (
-              <div
-                key={`${item.id}-${i}`}
-                className="mx-4 flex items-center gap-2.5 rounded-lg border border-white/[0.06] bg-white/[0.02] px-5 py-2.5 connector-icon-glow"
+function Navbar({
+  mobileOpen,
+  setMobileOpen,
+}: {
+  mobileOpen: boolean;
+  setMobileOpen: (value: boolean) => void;
+}) {
+  return (
+    <header className="sticky top-0 z-40 border-b border-zinc-950/[0.06] bg-[#fbfaf7]/90 backdrop-blur-xl">
+      <nav className="mx-auto flex max-w-[1480px] items-center justify-between px-5 py-4 sm:px-8">
+        <Link href="/marketing" className="flex items-center gap-3" aria-label="FounderOS marketing home">
+          <LogoMark />
+          <span className="text-xl font-bold text-zinc-950">FounderOS</span>
+        </Link>
+
+        <div className="hidden items-center gap-8 lg:flex">
+          {navItems.map((item) => (
+            <a key={item.label} href={item.href} className="text-sm font-medium text-zinc-700 transition hover:text-zinc-950">
+              {item.label}
+            </a>
+          ))}
+          <a href="#" className="text-sm font-medium text-zinc-700 transition hover:text-zinc-950">
+            GitHub
+          </a>
+        </div>
+
+        <div className="hidden items-center gap-3 lg:flex">
+          <Link href="/" className="rounded-lg px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:bg-white hover:text-zinc-950">
+            Log in
+          </Link>
+          <Link href="/" className="rounded-lg bg-zinc-950 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-800">
+            Get started
+          </Link>
+        </div>
+
+        <button
+          type="button"
+          className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-950/10 bg-white text-zinc-950 lg:hidden"
+          onClick={() => setMobileOpen(!mobileOpen)}
+          aria-label="Toggle navigation"
+        >
+          {mobileOpen ? <X size={18} /> : <Menu size={18} />}
+        </button>
+      </nav>
+
+      {mobileOpen && (
+        <div className="border-t border-zinc-950/[0.06] bg-[#fbfaf7] px-5 py-5 lg:hidden">
+          <div className="flex flex-col gap-4">
+            {navItems.map((item) => (
+              <a
+                key={item.label}
+                href={item.href}
+                onClick={() => setMobileOpen(false)}
+                className="text-sm font-medium text-zinc-700"
               >
-                <BrandIcon id={item.id} className="h-4 w-4 shrink-0" />
-                <span className="text-sm font-semibold text-zinc-400">{item.name}</span>
-              </div>
+                {item.label}
+              </a>
             ))}
+            <Link href="/" className="rounded-lg border border-zinc-950/10 bg-white px-4 py-2 text-center text-sm font-semibold">
+              Log in
+            </Link>
+            <Link href="/" className="rounded-lg bg-zinc-950 px-4 py-2 text-center text-sm font-semibold text-white">
+              Get started
+            </Link>
+          </div>
+        </div>
+      )}
+    </header>
+  );
+}
+
+function HeroSection() {
+  return (
+    <section id="product" className="relative overflow-hidden border-b border-zinc-950/[0.06] bg-[#fbfaf7]">
+      <div className="soft-grid pointer-events-none absolute inset-0" />
+      <div className="relative z-10 mx-auto max-w-[1480px] px-5 pb-10 pt-8 sm:px-8 sm:pb-14 lg:pt-10">
+        <div className="mx-auto max-w-4xl text-center">
+          <p className="mx-auto inline-flex items-center gap-2 rounded-full border border-zinc-950/[0.08] bg-white px-3 py-1 text-xs font-semibold text-zinc-500 shadow-sm">
+            <Sparkles size={13} />
+            All your tools, models, and knowledge in one operating workspace
+          </p>
+          <h1 className="mt-5 text-balance text-4xl font-bold leading-[1.02] text-zinc-950 sm:text-6xl">
+            Do everything, in one place, with all your context.
+          </h1>
+          <p className="mx-auto mt-5 max-w-3xl text-pretty text-base leading-7 text-zinc-600 sm:text-lg">
+            FounderOS turns your company knowledge, connected tools, agents, and approvals into one place that can create websites, tools, documents, videos, images, and workflows from a single request.
+          </p>
+
+          <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <Link href="/" className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-zinc-950 px-6 text-sm font-semibold text-white shadow-lg shadow-zinc-950/10 transition hover:bg-zinc-800">
+              Get started for free
+              <ArrowRight size={16} />
+            </Link>
+            <a href="#" className="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-zinc-950/[0.1] bg-white px-6 text-sm font-semibold text-zinc-950 shadow-sm transition hover:border-zinc-950/20">
+              Star on GitHub
+              <Github size={16} />
+            </a>
           </div>
         </div>
 
-        {/* Stats */}
-        <div className="mt-14 grid grid-cols-2 gap-8 sm:grid-cols-4">
-          {[
-            { value: "8", label: "Integrations" },
-            { value: "âˆž", label: "Tasks delegated" },
-            { value: "24/7", label: "Always running" },
-            { value: "< 1min", label: "Average response" },
-          ].map((stat, i) => (
-            <div
-              key={stat.label}
-              className={`transition-all duration-700 ${
-                revealVisible
-                  ? "opacity-100 translate-y-0"
-                  : "opacity-0 translate-y-4"
-              }`}
-              style={{ transitionDelay: `${i * 100 + 200}ms` }}
-            >
-              <p className="text-3xl font-extrabold tracking-tight text-white sm:text-4xl">
-                {stat.value}
-              </p>
-              <p className="mt-1 text-xs font-semibold text-zinc-500 uppercase tracking-wider">
-                {stat.label}
-              </p>
-            </div>
+        <div className="mt-8">
+          <HeroDemoStage />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function HeroDemoStage() {
+  const phaseIndex = useTimedScene(heroPhases.length, 2200);
+  const phase = heroPhases[phaseIndex];
+  const typedPrompt = useTypingPreview(heroPrompt, phase === "typing");
+  const connectorActive = phase === "working" || phase === "done";
+  const done = phase === "done";
+
+  return (
+    <article className={`hero-demo-stage is-${phase} mx-auto overflow-hidden rounded-2xl border border-zinc-950/[0.08] bg-white shadow-[0_30px_110px_rgba(15,23,42,0.12)]`}>
+      <div className="flex items-center justify-between gap-3 border-b border-zinc-950/[0.06] bg-white px-4 py-3 sm:px-5">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-zinc-950 text-white">
+            <Sparkles size={15} />
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-zinc-950">FounderOS live demo</p>
+            <p className="truncate text-[11px] font-medium text-zinc-500">
+              {phase === "typing" ? "Typing request" : phase === "sent" ? "Opening workspace" : phase === "working" ? "Running with connectors" : "Outputs ready"}
+            </p>
+          </div>
+        </div>
+        <div className="hidden items-center gap-1.5 sm:flex">
+          {heroPhases.map((item, index) => (
+            <span
+              key={item}
+              className={`h-2 rounded-full transition-all duration-300 ${index <= phaseIndex ? "w-8 bg-zinc-950" : "w-2 bg-zinc-200"}`}
+              aria-label={item}
+            />
           ))}
         </div>
       </div>
-    </section>
-  );
-}
 
-/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-   Product Overview â€” Bento Grid
-   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
-
-function ProductOverview() {
-  const [revealRef, revealVisible] = useScrollReveal();
-
-  const surfaces = [
-    {
-      icon: Home,
-      title: "Home",
-      desc: "Your universal command surface. Ask questions, start tasks, and get AI-powered suggestions â€” all from one intelligent prompt.",
-      image: "/marketing/hero-dashboard.png",
-      span: "col-span-2 row-span-2",
-      tag: "Command Center",
-    },
-    {
-      icon: BriefcaseBusiness,
-      title: "Work",
-      desc: "See what's active, what needs review, and what's done. FounderOS reports progress in real-time.",
-      image: "/marketing/work-dashboard.png",
-      span: "col-span-1 row-span-1",
-      tag: "Task Flow",
-    },
-    {
-      icon: Library,
-      title: "Library",
-      desc: "Queryable business knowledge â€” search, summarize, and reuse everything your business knows.",
-      image: "/marketing/library-dashboard.png",
-      span: "col-span-1 row-span-1",
-      tag: "Knowledge Base",
-    },
-    {
-      icon: CalendarClock,
-      title: "Schedules",
-      desc: "Recurring work in plain language. \"Send priorities every morning\" â€” that simple.",
-      image: "/marketing/schedules-dashboard.png",
-      span: "col-span-1 row-span-1",
-      tag: "Automation",
-    },
-    {
-      icon: Settings,
-      title: "Settings",
-      desc: "Connected services, review rules, spending limits, and preferences. Full control over how FounderOS works for you.",
-      image: null,
-      span: "col-span-1 row-span-1",
-      tag: "Configuration",
-    },
-  ];
-
-  return (
-    <section id="features" className="relative py-32">
-      <div className="radial-glow absolute inset-0 pointer-events-none" />
-
-      <div
-        ref={revealRef}
-        className="relative z-10 mx-auto max-w-7xl px-6 lg:px-8"
-      >
-        {/* Section header */}
-        <div
-          className={`mb-16 max-w-2xl transition-all duration-700 ${
-            revealVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-          }`}
-        >
-          <p className="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">
-            Five surfaces, one workspace
-          </p>
-          <h2 className="text-4xl font-extrabold tracking-tight leading-tight sm:text-5xl">
-            Everything your business needs.{" "}
-            <span className="text-zinc-500">Nothing it doesn&apos;t.</span>
-          </h2>
-          <p className="mt-4 text-base leading-relaxed text-zinc-400">
-            FounderOS organizes your AI workspace into five intuitive surfaces â€”
-            each designed for a specific way of working with your business.
-          </p>
-        </div>
-
-        {/* Bento grid */}
-        <div className="grid auto-rows-[280px] grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {surfaces.map((surface, i) => {
-            const Icon = surface.icon;
-            const isLarge = i === 0;
-
-            return (
-              <div
-                key={surface.title}
-                className={`group relative overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.02] transition-all duration-500 glass-dark-hover ${
-                  isLarge ? "sm:col-span-2 sm:row-span-2" : ""
-                } ${
-                  revealVisible
-                    ? "opacity-100 translate-y-0"
-                    : "opacity-0 translate-y-6"
-                }`}
-                style={{ transitionDelay: `${i * 100 + 100}ms` }}
-              >
-                {/* Card content */}
-                <div className="relative z-10 flex h-full flex-col justify-between p-6">
-                  <div>
-                    <div className="mb-3 flex items-center gap-2">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/[0.06] border border-white/[0.06]">
-                        <Icon size={16} className="text-zinc-300" />
-                      </div>
-                      <span className="rounded-full border border-white/[0.06] bg-white/[0.03] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
-                        {surface.tag}
-                      </span>
-                    </div>
-                    <h3 className="text-lg font-bold text-white">
-                      {surface.title}
-                    </h3>
-                    <p className="mt-1.5 text-sm leading-relaxed text-zinc-400 max-w-sm">
-                      {surface.desc}
-                    </p>
-                  </div>
-
-                  {surface.image && (
-                    <div className="mt-4 overflow-hidden rounded-lg border border-white/[0.06]">
-                      <img
-                        src={surface.image}
-                        alt={`${surface.title} interface`}
-                        className="w-full object-cover object-top transition-transform duration-700 group-hover:scale-[1.02]"
-                        style={{ maxHeight: isLarge ? "340px" : "120px" }}
-                        loading="lazy"
-                      />
-                    </div>
-                  )}
-
-                  {!surface.image && (
-                    <div className="mt-4 grid grid-cols-2 gap-2">
-                      {["Connections", "Rules", "Limits", "Team"].map((item) => (
-                        <div
-                          key={item}
-                          className="rounded-lg border border-white/[0.04] bg-white/[0.02] px-3 py-2 text-xs font-semibold text-zinc-500"
-                        >
-                          {item}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+      <div className="hero-demo-viewport">
+        <div className="hero-conversation-grid">
+          <div className="hero-chat-panel">
+            <div className="rounded-xl border border-zinc-950/[0.08] bg-white p-4 shadow-sm sm:p-5">
+              <div className="flex items-start justify-between gap-4 border-b border-zinc-950/[0.06] pb-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase text-zinc-400">Workspace</p>
+                  <h3 className="mt-1 text-xl font-bold leading-tight text-zinc-950">Launch dashboard and investor update</h3>
                 </div>
-
-                {/* Subtle glow on hover */}
-                <div className="absolute inset-0 opacity-0 transition-opacity duration-500 group-hover:opacity-100 bg-gradient-to-br from-white/[0.03] to-transparent" />
+                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${done ? "bg-emerald-100 text-emerald-700" : "bg-teal-100 text-teal-700"}`}>
+                  {done ? "Ready" : "Live"}
+                </span>
               </div>
-            );
-          })}
-        </div>
-      </div>
-    </section>
-  );
-}
 
-/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-   Connectors Showcase
-   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
-
-function ConnectorsShowcase() {
-  const [revealRef, revealVisible] = useScrollReveal();
-
-  const connectorGroups = [
-    {
-      title: "Google Workspace",
-      icon: Mail,
-      connectors: [
-        { id: "gmail", name: "Gmail", desc: "Draft replies, find useful email context, and prepare outbound messages.", active: true },
-        { id: "google_calendar", name: "Google Calendar", desc: "Read your schedule and prepare meeting changes.", active: true },
-        { id: "google_drive", name: "Google Drive", desc: "Import useful files into Library context.", active: true },
-        { id: "google_docs", name: "Google Docs", desc: "Import documents and export approved drafts.", active: true },
-        { id: "google_sheets", name: "Google Sheets", desc: "Read and analyze spreadsheet data for business context.", active: true },
-      ],
-    },
-    {
-      title: "Code & Hosting",
-      icon: GitBranch,
-      connectors: [
-        { id: "opencode", name: "opencode", desc: "Prepare opencode work privately inside FounderOS.", active: true },
-        { id: "github", name: "GitHub", desc: "Read repository context and prepare approved code changes.", active: true },
-        { id: "vercel", name: "Vercel", desc: "Create private review links and publish only after approval.", active: true },
-      ],
-    },
-  ];
-
-  return (
-    <section id="integrations" className="relative py-32">
-      <div className="grid-bg-fine absolute inset-0" />
-
-      <div ref={revealRef} className="relative z-10 mx-auto max-w-7xl px-6 lg:px-8">
-        {/* Section header */}
-        <div
-          className={`mb-6 text-center transition-all duration-700 ${
-            revealVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-          }`}
-        >
-          <p className="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">
-            Integrations
-          </p>
-          <h2 className="text-4xl font-extrabold tracking-tight sm:text-5xl">
-            Connects to your entire stack.{" "}
-            <span className="text-zinc-500">Natively.</span>
-          </h2>
-          <p className="mx-auto mt-4 max-w-2xl text-base leading-relaxed text-zinc-400">
-            From Google Workspace to opencode, FounderOS plugs into the tools you already use.
-            Every connection is secure, scoped, and approval-protected.
-          </p>
-        </div>
-
-        {/* Connector groups */}
-        <div className="space-y-8">
-          {connectorGroups.map((group, gi) => {
-            const GroupIcon = group.icon;
-
-            return (
-              <div
-                key={group.title}
-                className={`transition-all duration-700 ${
-                  revealVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6"
-                }`}
-                style={{ transitionDelay: `${gi * 100 + 150}ms` }}
-              >
-                {/* Group header */}
-                <div className="mb-4 flex items-center gap-2.5">
-                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/[0.05] border border-white/[0.06]">
-                    <GroupIcon size={14} className="text-zinc-400" />
-                  </div>
-                  <h3 className="text-sm font-bold text-zinc-300">{group.title}</h3>
-                </div>
-
-                {/* Connector cards row */}
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-                  {group.connectors.map((connector) => (
-                    <div
-                      key={connector.id}
-                      className={`connector-card group relative rounded-xl border bg-white/[0.02] p-4 ${
-                        connector.active
-                          ? "border-white/[0.08]"
-                          : "border-white/[0.04] opacity-70"
-                      }`}
-                    >
-                      <div className="flex items-start gap-3">
-                        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${
-                          connector.active
-                            ? "border-white/[0.08] bg-white/[0.04]"
-                            : "border-white/[0.04] bg-white/[0.02]"
-                        }`}>
-                          <BrandIcon id={connector.id} className="h-4 w-4" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-bold text-white">{connector.name}</p>
-                            {connector.active ? (
-                              <span className="relative flex h-1.5 w-1.5">
-                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                              </span>
-                            ) : (
-                              <span className="rounded-full bg-white/[0.04] px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-zinc-600">
-                                Soon
-                              </span>
-                            )}
-                          </div>
-                          <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 line-clamp-2">
-                            {connector.desc}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Security note */}
-        <div
-          className={`mt-12 flex items-center justify-center gap-3 transition-all duration-700 ${
-            revealVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-          }`}
-          style={{ transitionDelay: "600ms" }}
-        >
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/[0.04] border border-white/[0.06]">
-            <Lock size={14} className="text-zinc-500" />
-          </div>
-          <p className="text-sm text-zinc-500">
-            Every connection is <span className="font-semibold text-zinc-400">workspace-isolated</span>,{" "}
-            <span className="font-semibold text-zinc-400">scoped to minimum permissions</span>, and{" "}
-            <span className="font-semibold text-zinc-400">approval-protected</span> for sensitive actions.
-          </p>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-   How It Works
-   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
-
-function HowItWorks() {
-  const [revealRef, revealVisible] = useScrollReveal();
-
-  const steps = [
-    {
-      step: "01",
-      title: "Just ask",
-      desc: "Type what you need like you'd message an assistant. No setup, no workflow builders â€” just plain English.",
-      icon: MessageSquare,
-      example: '"Prepare this week\'s investor update with revenue numbers"',
-    },
-    {
-      step: "02",
-      title: "FounderOS gets to work",
-      desc: "It connects to your tools, pulls the right data, and does the actual work â€” writing, researching, building. You can watch progress in real-time.",
-      icon: Zap,
-      example: "Finds the right context, drafts the email, formats everything",
-    },
-    {
-      step: "03",
-      title: "You approve the result",
-      desc: "Nothing goes out without your say-so. Review the finished work, make tweaks if needed, and hit approve. You're always in control.",
-      icon: CheckCircle2,
-      example: "Review the draft, tweak if needed, send",
-    },
-  ];
-
-  return (
-    <section id="how-it-works" className="relative py-32">
-      <div className="radial-glow-top absolute inset-0 pointer-events-none" />
-
-      <div ref={revealRef} className="relative z-10 mx-auto max-w-5xl px-6 lg:px-8">
-        <div
-          className={`mb-20 text-center transition-all duration-700 ${
-            revealVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-          }`}
-        >
-          <p className="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">
-            Simple by design
-          </p>
-          <h2 className="text-4xl font-extrabold tracking-tight sm:text-5xl">
-            How it works.{" "}
-            <span className="text-zinc-500">It&apos;s this simple.</span>
-          </h2>
-        </div>
-
-        <div className="relative">
-          {/* Connecting vertical line */}
-          <div className="absolute left-6 top-0 bottom-0 w-px bg-gradient-to-b from-white/[0.1] via-white/[0.05] to-transparent hidden sm:block" />
-
-          <div className="space-y-16">
-            {steps.map((step, i) => {
-              const Icon = step.icon;
-
-              return (
-                <div
-                  key={step.step}
-                  className={`relative flex gap-8 sm:gap-12 transition-all duration-700 ${
-                    revealVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-                  }`}
-                  style={{ transitionDelay: `${i * 200 + 200}ms` }}
-                >
-                  {/* Step number */}
-                  <div className="relative z-10 hidden sm:block">
-                    <div className="glow-card flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-zinc-900">
-                      <span className="text-sm font-extrabold text-white">{step.step}</span>
-                    </div>
-                  </div>
-
-                  {/* Content */}
-                  <div className="flex-1 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-8 glass-dark-hover">
-                    <div className="flex items-start gap-4">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/[0.05]">
-                        <Icon size={20} className="text-zinc-300" />
-                      </div>
-                      <div>
-                        <span className="text-xs font-bold uppercase tracking-widest text-zinc-500 sm:hidden">
-                          Step {step.step}
-                        </span>
-                        <h3 className="text-xl font-bold text-white mt-1 sm:mt-0">
-                          {step.title}
-                        </h3>
-                        <p className="mt-2 text-sm leading-relaxed text-zinc-400">
-                          {step.desc}
-                        </p>
-                        <div className="mt-4 inline-flex items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-4 py-2">
-                          <ChevronRight size={12} className="text-zinc-600" />
-                          <span className="text-xs font-medium text-zinc-500 italic">
-                            {step.example}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-   Use Cases â€” Real Workflow Scenarios
-   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
-
-function UseCasesSection() {
-  const [revealRef, revealVisible] = useScrollReveal();
-  const [activeCase, setActiveCase] = useState(0);
-
-  const useCases = [
-    {
-      title: "Weekly investor update",
-      scenario: "\"Prepare this week's investor update\"",
-      outcome: "A polished investor email, drafted and ready to review in your inbox â€” in under 5 minutes.",
-      steps: [
-        { actor: "You", action: "Ask FounderOS to prepare the weekly investor update", connectors: [] },
-        { actor: "FounderOS", action: "Pulls the right business context from Google Workspace", connectors: ["google_drive", "google_sheets"] },
-        { actor: "FounderOS", action: "Analyzes week-over-week trends and highlights key wins", connectors: [] },
-        { actor: "FounderOS", action: "Formats the update with charts and a clean layout", connectors: [] },
-        { actor: "FounderOS", action: "Prepares a Gmail draft for your review", connectors: ["gmail"] },
-      ],
-    },
-    {
-      title: "Ship a website update",
-      scenario: "\"Update the pricing page to add a new tier\"",
-      outcome: "A preview deployment ready to review â€” your live site untouched until you approve.",
-      steps: [
-        { actor: "You", action: "Describe the change you want in plain English", connectors: [] },
-        { actor: "FounderOS", action: "Pulls your current codebase from GitHub", connectors: ["github"] },
-        { actor: "FounderOS", action: "Makes the code changes in a safe, isolated environment", connectors: [] },
-        { actor: "FounderOS", action: "Creates a preview deployment for you to review", connectors: ["vercel"] },
-        { actor: "You", action: "Review the preview, approve to go live", connectors: [] },
-      ],
-    },
-    {
-      title: "Research a competitor",
-      scenario: "\"Create a competitive analysis of Acme Corp\"",
-      outcome: "A thorough competitor brief saved to your knowledge base â€” ready to reference anytime.",
-      steps: [
-        { actor: "You", action: "Ask for a competitive analysis of a specific company", connectors: [] },
-        { actor: "FounderOS", action: "Researches their product, pricing, and positioning", connectors: [] },
-        { actor: "FounderOS", action: "Cross-references with your existing business knowledge", connectors: [] },
-        { actor: "FounderOS", action: "Creates a structured brief with comparisons", connectors: [] },
-        { actor: "FounderOS", action: "Saves it to your Library for future reference", connectors: [] },
-      ],
-    },
-    {
-      title: "Reply to a customer email",
-      scenario: "\"Draft a response to Jane's support email\"",
-      outcome: "A thoughtful, on-brand reply in your Gmail drafts â€” nothing sent without your approval.",
-      steps: [
-        { actor: "You", action: "Ask FounderOS to handle a specific customer email", connectors: [] },
-        { actor: "FounderOS", action: "Reads the email thread and understands the question", connectors: ["gmail"] },
-        { actor: "FounderOS", action: "Looks up relevant past decisions and context", connectors: [] },
-        { actor: "FounderOS", action: "Drafts a response in your voice and tone", connectors: [] },
-        { actor: "FounderOS", action: "Places the draft in Gmail for your review", connectors: ["gmail"] },
-      ],
-    },
-  ];
-
-  const currentCase = useCases[activeCase];
-
-  const actorColors: Record<string, string> = {
-    You: "bg-white text-black",
-    FounderOS: "bg-zinc-700 text-zinc-200 border-zinc-600",
-  };
-
-  return (
-    <section className="relative py-32">
-      <div className="radial-glow absolute inset-0 pointer-events-none" />
-
-      <div ref={revealRef} className="relative z-10 mx-auto max-w-7xl px-6 lg:px-8">
-        {/* Section header */}
-        <div
-          className={`mb-16 text-center transition-all duration-700 ${
-            revealVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-          }`}
-        >
-          <p className="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">
-            Real workflows
-          </p>
-          <h2 className="text-4xl font-extrabold tracking-tight sm:text-5xl">
-            See it in action.{" "}
-            <span className="text-zinc-500">Not just feature lists.</span>
-          </h2>
-          <p className="mx-auto mt-4 max-w-xl text-base leading-relaxed text-zinc-400">
-            Real examples of how founders use FounderOS to get things done â€”
-            from start to finish, with every step visible.
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-10 lg:flex-row lg:gap-16">
-          {/* Left: Use case selector */}
-          <div
-            className={`flex flex-col gap-2 lg:w-80 shrink-0 transition-all duration-700 ${
-              revealVisible ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-8"
-            }`}
-            style={{ transitionDelay: "200ms" }}
-          >
-            {useCases.map((uc, i) => (
-              <button
-                key={uc.title}
-                type="button"
-                onClick={() => setActiveCase(i)}
-                className={`use-case-card text-left rounded-xl border p-4 ${
-                  activeCase === i
-                    ? "border-white/[0.15] bg-white/[0.06]"
-                    : "border-white/[0.04] bg-white/[0.02]"
-                }`}
-              >
-                <p className={`text-sm font-bold ${
-                  activeCase === i ? "text-white" : "text-zinc-400"
-                }`}>
-                  {uc.title}
-                </p>
-                <p className="mt-1 text-xs text-zinc-500 leading-relaxed">
-                  {uc.scenario}
-                </p>
-              </button>
-            ))}
-          </div>
-
-          {/* Right: Step-by-step flow */}
-          <div
-            className={`flex-1 transition-all duration-700 ${
-              revealVisible ? "opacity-100 translate-x-0" : "opacity-0 translate-x-8"
-            }`}
-            style={{ transitionDelay: "300ms" }}
-          >
-            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-6 sm:p-8">
-              {/* Flow steps */}
-              <div className="space-y-1">
-                {currentCase.steps.map((step, si) => (
-                  <div key={`${activeCase}-${si}`} className="flex gap-4">
-                    {/* Timeline */}
-                    <div className="flex flex-col items-center">
-                      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold ${
-                        actorColors[step.actor] ?? "bg-zinc-800 text-zinc-400"
-                      }`}>
-                        {step.actor === "You" ? "You" : step.actor.slice(0, 2)}
-                      </div>
-                      {si < currentCase.steps.length - 1 && (
-                        <div className="w-px flex-1 bg-gradient-to-b from-white/[0.1] to-white/[0.03] my-1" />
-                      )}
-                    </div>
-
-                    {/* Content */}
-                    <div className="flex-1 pb-6">
-                      <div className="flex items-center gap-2">
-                        <span className={`text-xs font-bold ${
-                          step.actor === "You" ? "text-white" : "text-zinc-300"
-                        }`}>
-                          {step.actor}
-                        </span>
-                        {step.actor !== "You" && (
-                          <span className="text-[10px] font-semibold text-zinc-600">AI Worker</span>
-                        )}
-                      </div>
-                      <p className="mt-1 text-sm leading-relaxed text-zinc-400">
-                        {step.action}
-                      </p>
-                      {step.connectors.length > 0 && (
-                        <div className="mt-2 flex items-center gap-2">
-                          {step.connectors.map((c) => (
-                            <div
-                              key={c}
-                              className="flex items-center gap-1.5 rounded-md border border-white/[0.06] bg-white/[0.03] px-2 py-0.5"
-                            >
-                              <BrandIcon id={c} className="h-3 w-3" />
-                              <span className="text-[10px] font-semibold text-zinc-500">
-                                {c.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase())}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                {[
+                  ["Plan", "Map the request into build, finance, and comms work."],
+                  ["Context", "Read launch notes, revenue data, and saved decisions."],
+                  ["Create", "Generate the dashboard, launch page, and update draft."],
+                  ["Review", "Hold publish and send actions for approval."],
+                ].map(([label, detail], index) => (
+                  <div key={label} className="hero-progress-row flex items-start gap-3" style={{ transitionDelay: `${index * 120}ms` }}>
+                    <span className="hero-progress-dot mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-zinc-300" />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-zinc-950">{label}</span>
+                      <span className="mt-0.5 block text-xs leading-5 text-zinc-500">{detail}</span>
+                    </span>
                   </div>
                 ))}
               </div>
 
-              {/* Outcome */}
-              <div className="mt-4 rounded-xl border border-emerald-500/10 bg-emerald-500/[0.04] px-5 py-4">
-                <div className="flex items-start gap-3">
-                  <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-400" />
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-wider text-emerald-400">
-                      Result
-                    </p>
-                    <p className="mt-1 text-sm leading-relaxed text-zinc-300">
-                      {currentCase.outcome}
-                    </p>
-                  </div>
-                </div>
+              <div className="hero-output-card mt-5 grid gap-3 lg:grid-cols-[0.58fr_0.42fr]">
+                <WebsiteOutputFrame compact />
+                <HeroOutputSummary />
               </div>
             </div>
           </div>
+
+          <HeroConnectorMap active={connectorActive} />
         </div>
+
+        <HeroPromptComposer prompt={typedPrompt} done={phase !== "typing"} />
       </div>
-    </section>
+    </article>
   );
 }
 
-/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-   Features Deep Dive
-   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
+function useTimedScene(sceneCount: number, intervalMs: number) {
+  const [activeIndex, setActiveIndex] = useState(0);
 
-function FeatureRow({
-  title,
-  desc,
-  image,
-  features,
-  reversed,
-}: {
-  title: string;
-  desc: string;
-  image: string;
-  features: { icon: typeof Sparkles; text: string }[];
-  reversed?: boolean;
-}) {
-  const [revealRef, revealVisible] = useScrollReveal();
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setActiveIndex((value) => (value + 1) % sceneCount);
+    }, intervalMs);
 
+    return () => window.clearInterval(timer);
+  }, [intervalMs, sceneCount]);
+
+  return activeIndex;
+}
+
+function useTypingPreview(text: string, active: boolean) {
+  const [length, setLength] = useState(0);
+
+  useEffect(() => {
+    if (!active) return;
+
+    let current = 0;
+    const reset = window.setTimeout(() => setLength(0), 0);
+    const timer = window.setInterval(() => {
+      current = Math.min(current + 3, text.length);
+      setLength(current);
+    }, 42);
+
+    return () => {
+      window.clearTimeout(reset);
+      window.clearInterval(timer);
+    };
+  }, [active, text]);
+
+  return active ? text.slice(0, length) : text;
+}
+
+function HeroPromptComposer({ prompt, done }: { prompt: string; done: boolean }) {
   return (
-    <div
-      ref={revealRef}
-      className={`flex flex-col gap-12 lg:gap-20 ${
-        reversed ? "lg:flex-row-reverse" : "lg:flex-row"
-      } items-center`}
-    >
-      {/* Text */}
-      <div
-        className={`flex-1 transition-all duration-700 ${
-          revealVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-        }`}
-      >
-        <h3 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
-          {title}
-        </h3>
-        <p className="mt-4 text-base leading-relaxed text-zinc-400">{desc}</p>
-        <div className="mt-8 space-y-4">
-          {features.map((f, i) => {
-            const Icon = f.icon;
-            return (
-              <div
-                key={f.text}
-                className={`flex items-start gap-3 transition-all duration-500 ${
-                  revealVisible ? "opacity-100 translate-x-0" : "opacity-0 translate-x-4"
-                }`}
-                style={{ transitionDelay: `${i * 100 + 300}ms` }}
-              >
-                <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/[0.05]">
-                  <Icon size={13} className="text-zinc-400" />
-                </div>
-                <span className="text-sm text-zinc-300">{f.text}</span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Image */}
-      <div
-        className={`flex-1 transition-all duration-700 ${
-          revealVisible ? "opacity-100 translate-y-0 scale-100" : "opacity-0 translate-y-8 scale-95"
-        }`}
-        style={{ transitionDelay: "200ms" }}
-      >
-        <div className="screenshot-tilt">
-          <div className="screenshot-tilt-inner overflow-hidden rounded-2xl border border-white/[0.08] bg-zinc-900/50 shadow-2xl shadow-black/30">
-            <img
-              src={image}
-              alt={title}
-              className="w-full h-auto object-cover object-top"
-              style={{ aspectRatio: "16/10" }}
-              loading="lazy"
-            />
+    <div className="hero-prompt-spot">
+      <div className="rounded-2xl border border-zinc-950/[0.08] bg-white p-3 shadow-[0_22px_80px_rgba(15,23,42,0.16)]">
+        <div className="rounded-xl border border-zinc-950/[0.06] bg-zinc-950 p-3 text-white">
+          <div className="mb-3 flex items-center justify-between gap-3 border-b border-white/10 pb-3">
+            <span className="flex items-center gap-2 text-xs font-semibold text-zinc-300">
+              <MessageSquare size={14} />
+              Ask FounderOS
+            </span>
+            <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-zinc-950">{done ? "Sent" : "Typing"}</span>
+          </div>
+          <div className="flex min-h-20 items-end gap-3">
+            <p className="min-w-0 flex-1 text-sm font-medium leading-6 text-zinc-50 sm:text-base">
+              {prompt}
+              {!done && <span className="hero-typing-caret ml-0.5 inline-block h-4 w-0.5 translate-y-0.5 bg-teal-300" />}
+            </p>
+            <span className="hero-send-button flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white text-zinc-950">
+              <ArrowRight size={17} />
+            </span>
           </div>
         </div>
       </div>
@@ -1154,588 +625,699 @@ function FeatureRow({
   );
 }
 
-function FeaturesDeepDive() {
+function HeroConnectorMap({ active }: { active: boolean }) {
+  const connectors = ["Stripe", "Postgres", "Docs", "Codex", "Vercel", "Gmail"];
+
   return (
-    <section className="relative py-32">
-      <div className="mx-auto max-w-7xl space-y-32 px-6 lg:px-8">
-        <FeatureRow
-          title="Chat naturally. Get things done."
-          desc="FounderOS doesn't just answer questions â€” it understands your business, searches your knowledge base, and takes real action. No prompts to memorize, no workflows to build."
-          image="/marketing/ai-conversation.png"
-          features={[
-            { icon: Search, text: "Searches your entire business knowledge base automatically" },
-            { icon: Brain, text: "Understands context from previous conversations and decisions" },
-            { icon: Zap, text: "Seamlessly transitions from asking to doing â€” no mode switching" },
-            { icon: FileText, text: "Creates documents, analyses, and reports from natural conversation" },
-          ]}
-        />
+    <aside className={`hero-connector-map ${active ? "is-active" : ""}`}>
+      <div className="relative z-10 grid grid-cols-2 gap-3 lg:grid-cols-1">
+        <div className="col-span-2 rounded-xl border border-zinc-950/[0.08] bg-white p-4 shadow-sm lg:col-span-1">
+          <p className="text-xs font-semibold uppercase text-zinc-400">Context selected</p>
+          <p className="mt-2 text-sm font-semibold leading-6 text-zinc-950">FounderOS brings in only the systems needed for this request.</p>
+        </div>
+        {connectors.map((name, index) => (
+          <div
+            key={name}
+            className="hero-connector-node flex items-center justify-between gap-3 rounded-xl border border-zinc-950/[0.08] bg-white p-3 shadow-sm"
+            style={{ transitionDelay: `${index * 90}ms` }}
+          >
+            <span className="flex min-w-0 items-center gap-3">
+              <ConnectorLogo name={name} />
+              <span className="truncate text-sm font-semibold text-zinc-800">{name}</span>
+            </span>
+            <span className={`h-2 w-2 rounded-full ${active ? "bg-teal-500" : "bg-zinc-300"}`} />
+          </div>
+        ))}
+      </div>
+    </aside>
+  );
+}
 
-        <FeatureRow
-          title="Task management that works for you"
-          desc="Delegate complex work in plain English. FounderOS breaks it down, executes step by step, and brings polished results back for your review â€” all visible in real-time."
-          image="/marketing/work-dashboard.png"
-          features={[
-            { icon: Workflow, text: "Multi-step task execution with live progress updates" },
-            { icon: Users, text: "Coordinates multi-step work automatically" },
-            { icon: Shield, text: "Built-in approval gates for sensitive actions" },
-            { icon: Clock, text: "Full history of what was done and why" },
-          ]}
-          reversed
-        />
+function HeroOutputSummary() {
+  return (
+    <div className="grid gap-3">
+      {[
+        { label: "Revenue dashboard", detail: "Stripe and Postgres synced" },
+        { label: "Launch page", detail: "Preview generated" },
+        { label: "Investor update", detail: "Draft saved for approval" },
+      ].map((item) => (
+        <div key={item.label} className="rounded-lg border border-zinc-950/[0.08] bg-[#fbfaf7] p-3">
+          <p className="text-sm font-semibold text-zinc-950">{item.label}</p>
+          <p className="mt-1 text-xs leading-5 text-zinc-600">{item.detail}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
 
-        <FeatureRow
-          title="A memory for your entire business"
-          desc="Library isn't a file cabinet â€” it's a searchable knowledge base that grows with your business. Every document, decision, and insight is organized and connected."
-          image="/marketing/library-dashboard.png"
-          features={[
-            { icon: Search, text: "Search across everything your business knows" },
-            { icon: Layers, text: "Automatic organization and relationship mapping" },
-            { icon: Globe, text: "Pulls in knowledge from Gmail, Drive, Docs, and Sheets" },
-            { icon: Lock, text: "Completely private â€” your data stays in your workspace" },
-          ]}
+function ConnectorLogoRow({ connectors }: { connectors: string[] }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {connectors.map((name, index) => (
+        <div key={name} className="video-logo-token flex items-center gap-2 rounded-xl border border-zinc-950/[0.08] bg-white px-3 py-2 shadow-sm" style={{ animationDelay: `${index * 120}ms` }}>
+          <ConnectorLogo name={name} />
+          <span className="text-sm font-semibold text-zinc-800">{name}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ConnectorLogo({ name }: { name: string }) {
+  const tool = toolLogos.find((item) => item.name === name);
+
+  if (tool?.icon) return <SimpleBrandIcon icon={tool.icon} className="h-6 w-6 shrink-0" />;
+  if (tool?.iconNode) return <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center">{tool.iconNode}</span>;
+  if (name === "Library") return <FileText size={18} className="text-zinc-700" />;
+
+  return (
+    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-zinc-950 text-[10px] font-bold text-white">
+      {name.slice(0, 1)}
+    </span>
+  );
+}
+
+function WebsiteOutputFrame({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className={`mx-auto overflow-hidden rounded-xl border border-zinc-950/[0.1] bg-white shadow-[0_22px_80px_rgba(15,23,42,0.16)] ${compact ? "w-full max-w-2xl" : "max-w-5xl"}`}>
+      <div className="flex items-center justify-between gap-3 border-b border-zinc-950/[0.08] bg-zinc-100 px-3 py-2">
+        <div className="flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-red-400" />
+          <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
+          <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+        </div>
+        <span className="truncate rounded-md bg-white px-3 py-1 text-[11px] font-medium text-zinc-500">northstarcrm.com</span>
+      </div>
+      <div className="relative aspect-[16/9] bg-white">
+        <Image
+          src="/marketing/demo-output-northstarcrm.png"
+          alt="Generated NorthstarCRM marketing website output"
+          width={1792}
+          height={1024}
+          className="h-full w-full object-cover"
+          priority
         />
+      </div>
+    </div>
+  );
+}
+
+function ToolStrip() {
+  return (
+    <section id="integrations" className="border-b border-zinc-950/[0.06] bg-white py-12 sm:py-14">
+      <div className="mx-auto max-w-[1480px] px-5 sm:px-8">
+        <div className="grid gap-8 lg:grid-cols-[0.35fr_0.65fr] lg:items-center">
+          <div>
+            <h2 className="text-3xl font-bold leading-tight text-zinc-950 sm:text-4xl">Connect the work to the tools that actually finish it.</h2>
+            <p className="mt-4 text-sm leading-6 text-zinc-600">
+              Apps, databases, docs, build systems, models, and approval gates stay in one operating loop.
+            </p>
+            <a href="#orchestration" className="mt-5 inline-flex items-center gap-1 text-sm font-semibold text-zinc-950">
+              See orchestration
+              <ChevronRight size={15} />
+            </a>
+          </div>
+
+          <div className="connector-runway overflow-hidden rounded-2xl border border-zinc-950/[0.08] bg-[#fbfaf7] p-3 shadow-sm">
+            <div className="connector-rail grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6">
+              {toolLogos.map((tool, index) => (
+                <div
+                  key={tool.name}
+                  className="connector-chip flex min-h-12 items-center gap-2 rounded-lg border border-zinc-950/[0.08] bg-white px-3 py-2 shadow-sm"
+                  style={{ animationDelay: `${index * 80}ms` }}
+                >
+                  {tool.icon ? (
+                    <SimpleBrandIcon icon={tool.icon} className="h-6 w-6 shrink-0" />
+                  ) : tool.iconNode ? (
+                    <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center text-zinc-700">{tool.iconNode}</span>
+                  ) : (
+                    <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-zinc-950 text-[11px] font-bold text-white">+</span>
+                  )}
+                  <span className="min-w-0 truncate text-sm font-medium leading-tight text-zinc-800">{tool.name}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   );
 }
 
-/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-   Comparison Section
-   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
+function UseCasesSection() {
+  return (
+    <section id="use-cases" className="bg-[#fbfaf7] py-20 sm:py-24">
+      <div className="mx-auto max-w-[1480px] px-5 sm:px-8">
+        <div className="max-w-4xl">
+          <p className="text-xs font-semibold uppercase text-zinc-400">Workflow demos</p>
+          <h2 className="mt-3 text-4xl font-bold leading-tight text-zinc-950 sm:text-5xl">One request can become the whole output, not another tab to manage.</h2>
+          <p className="mt-4 text-lg leading-8 text-zinc-600">
+            Each demo keeps the explanation beside the product motion: the ask, the context FounderOS pulls in, the connector moments, and the finished thing you can review.
+          </p>
+        </div>
 
-function ComparisonSection() {
-  const [revealRef, revealVisible] = useScrollReveal();
+        <div className="mt-10 divide-y divide-zinc-950/[0.08]">
+          {workflowDemos.map((workflow) => (
+            <article key={workflow.id} className="workflow-demo-row grid gap-7 py-10 first:pt-0 last:pb-0 lg:grid-cols-[0.42fr_0.58fr] lg:items-center">
+              <div className="min-w-0">
+                <span className={`inline-flex items-center gap-2 rounded-full border ${workflow.border} ${workflow.bg} px-3 py-1 text-xs font-semibold ${workflow.accent}`}>
+                  <WorkflowIcon workflow={workflow} />
+                  {workflow.label}
+                </span>
+                <h3 className="mt-5 text-3xl font-bold leading-tight text-zinc-950 sm:text-4xl">{workflow.title}</h3>
+                <p className="mt-4 max-w-xl text-base leading-7 text-zinc-600">{workflow.text}</p>
 
-  const competitors = [
-    { name: "FounderOS", featured: true },
-    { name: "Hiring an EA", featured: false },
-    { name: "Zapier + ChatGPT", featured: false },
-    { name: "Single-purpose AI tools", featured: false },
-  ];
+                <div className="mt-6 rounded-xl bg-zinc-950 p-4 text-white shadow-[0_16px_54px_rgba(15,23,42,0.16)]">
+                  <p className="flex items-center gap-2 text-xs font-semibold text-zinc-300">
+                    <MessageSquare size={14} />
+                    Example request
+                  </p>
+                  <p className="mt-3 text-sm font-medium leading-6">{workflow.prompt}</p>
+                </div>
 
-  const features = [
-    {
-      label: "Natural language delegation",
-      values: [true, true, false, "Limited"],
-    },
-    {
-      label: "Multi-step task execution",
-      values: [true, true, "Manual setup", false],
-    },
-    {
-      label: "Persistent business memory",
-      values: [true, "Partial", false, "Docs only"],
-    },
-    {
-      label: "Connected integrations",
-      values: ["8 native", "Manual", "5,000+ (no AI)", "Limited"],
-    },
-    {
-      label: "Built-in approval gates",
-      values: [true, "Informal", false, false],
-    },
-    {
-      label: "24/7 availability",
-      values: [true, false, true, true],
-    },
-    {
-      label: "Specialized AI capabilities",
-      values: ["Built-in", false, false, false],
-    },
-    {
-      label: "Cost",
-      values: ["From $0/mo", "$3-6k/mo", "$60+/mo", "$10/mo"],
-    },
-  ];
+                <div className="mt-5">
+                  <ConnectorLogoRow connectors={workflow.connectors} />
+                </div>
+              </div>
 
-  function renderCell(value: boolean | string) {
-    if (value === true) {
-      return (
-        <div className="flex items-center justify-center">
-          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/20">
-            <Check size={12} className="text-emerald-400" />
+              <WorkflowDemoPanel workflow={workflow} />
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function WorkflowIcon({ workflow }: { workflow: WorkflowDemo }) {
+  if (workflow.preview === "website") return <Globe2 size={15} />;
+  if (workflow.preview === "tool") return <BarChart3 size={15} />;
+  if (workflow.preview === "document") return <FileText size={15} />;
+  if (workflow.preview === "video") return <Play size={15} fill="currentColor" />;
+  return <Sparkles size={15} />;
+}
+
+function WorkflowDemoPanel({ workflow }: { workflow: WorkflowDemo }) {
+  const sceneIndex = useTimedScene(demoScenes.length, 2500);
+  const scene = demoScenes[sceneIndex];
+  const sceneMeta = getSceneMeta(workflow, scene);
+
+  return (
+    <div className={`workflow-demo-device workflow-${workflow.preview} overflow-hidden rounded-2xl border border-zinc-950/[0.08] bg-white shadow-[0_24px_90px_rgba(15,23,42,0.1)]`}>
+      <div className="flex items-center justify-between gap-3 border-b border-zinc-950/[0.06] bg-white/80 px-4 py-3 backdrop-blur">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${workflow.border} ${workflow.bg} ${workflow.accent}`}>
+            <WorkflowIcon workflow={workflow} />
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-zinc-950">{workflow.label} workflow</p>
+            <p className="truncate text-xs font-medium text-zinc-500">Live output with connectors</p>
           </div>
         </div>
-      );
-    }
-    if (value === false) {
-      return (
-        <div className="flex items-center justify-center">
-          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-white/[0.04]">
-            <X size={12} className="text-zinc-600" />
-          </div>
+        <div className="hidden items-center gap-1.5 sm:flex">
+          {demoScenes.map((item, index) => (
+            <span
+              key={item}
+              className={`h-2 rounded-full transition-all duration-300 ${index === sceneIndex ? "w-7 bg-zinc-950" : "w-2 bg-zinc-200"}`}
+              aria-label={item}
+            />
+          ))}
         </div>
-      );
-    }
+      </div>
+
+      <div className="workflow-scene-shell p-4 sm:p-5">
+        <div className="workflow-scene-guidance">
+          <p className="text-xs font-semibold uppercase text-zinc-400">0{sceneIndex + 1} / {sceneMeta.label}</p>
+          <h4 className="mt-2 text-2xl font-bold leading-tight text-zinc-950">{sceneMeta.title}</h4>
+          <p className="mt-2 max-w-lg text-sm leading-6 text-zinc-600">{sceneMeta.text}</p>
+        </div>
+
+        <div className="workflow-scene-stage mt-5">
+          <WorkflowSceneObject workflow={workflow} scene={scene} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function getSceneMeta(workflow: WorkflowDemo, scene: DemoScene) {
+  const connector = workflow.connectors[0];
+
+  if (scene === "request") {
+    return {
+      label: "Ask",
+      title: "One clear request starts the work.",
+      text: "FounderOS keeps the input focused, then opens the workspace around the task.",
+    };
+  }
+
+  if (scene === "connector") {
+    return {
+      label: "Connect",
+      title: `${connector} appears only when the workflow needs it.`,
+      text: "The connector moment is visible, so the user sees what context is being used.",
+    };
+  }
+
+  if (scene === "working") {
+    return {
+      label: "Create",
+      title: `The ${workflow.label.toLowerCase()} output takes shape live.`,
+      text: "The demo focuses on one object at a time instead of showing every artifact at once.",
+    };
+  }
+
+  return {
+    label: "Output",
+    title: "The finished object is ready to review.",
+    text: workflow.outputs.map((output) => output.label).join(", "),
+  };
+}
+
+function WorkflowSceneObject({ workflow, scene }: { workflow: WorkflowDemo; scene: DemoScene }) {
+  if (scene === "request") return <FocusedPromptObject workflow={workflow} />;
+  if (scene === "connector") return <ConnectorFocusObject workflow={workflow} />;
+  if (scene === "working") return <WorkflowWorkingObject workflow={workflow} />;
+  return <WorkflowFinalObject workflow={workflow} />;
+}
+
+function FocusedPromptObject({ workflow }: { workflow: WorkflowDemo }) {
+  return (
+    <div className="mx-auto max-w-xl rounded-2xl border border-zinc-950/[0.08] bg-zinc-950 p-4 text-white shadow-[0_20px_70px_rgba(15,23,42,0.18)]">
+      <p className="flex items-center gap-2 border-b border-white/10 pb-3 text-xs font-semibold text-zinc-300">
+        <MessageSquare size={14} />
+        Ask FounderOS
+      </p>
+      <p className="mt-4 text-base font-medium leading-7">{workflow.prompt}</p>
+      <div className="mt-5 flex justify-end">
+        <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-white text-zinc-950">
+          <ArrowRight size={17} />
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function ConnectorFocusObject({ workflow }: { workflow: WorkflowDemo }) {
+  const connector = workflow.connectors[0];
+
+  return (
+    <div className="mx-auto flex min-h-72 max-w-lg items-center justify-center">
+      <div className="workflow-connector-focus rounded-2xl border border-zinc-950/[0.08] bg-white p-6 text-center shadow-[0_24px_80px_rgba(15,23,42,0.12)]">
+        <span className={`mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border ${workflow.border} ${workflow.bg}`}>
+          <ConnectorLogo name={connector} />
+        </span>
+        <h5 className="mt-5 text-2xl font-bold text-zinc-950">{connector}</h5>
+        <p className="mt-2 text-sm leading-6 text-zinc-500">Connected for this step</p>
+      </div>
+    </div>
+  );
+}
+
+function WorkflowWorkingObject({ workflow }: { workflow: WorkflowDemo }) {
+  if (workflow.preview === "website") {
     return (
-      <span className="text-xs font-medium text-zinc-400 text-center block">{value}</span>
+      <div className="mx-auto max-w-xl overflow-hidden rounded-2xl border border-zinc-950/[0.08] bg-white shadow-[0_24px_80px_rgba(15,23,42,0.12)]">
+        <div className="flex items-center gap-1.5 border-b border-zinc-950/[0.08] bg-zinc-100 px-4 py-3">
+          <span className="h-2.5 w-2.5 rounded-full bg-red-400" />
+          <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
+          <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+        </div>
+        <div className="p-5">
+          <div className="h-8 w-2/3 rounded-lg bg-emerald-100" />
+          <div className="mt-4 grid gap-3 sm:grid-cols-[0.48fr_0.52fr]">
+            <div className="space-y-2">
+              <div className="h-3 rounded-full bg-zinc-200" />
+              <div className="h-3 w-5/6 rounded-full bg-zinc-200" />
+              <div className="mt-4 h-9 w-28 rounded-lg bg-zinc-950" />
+            </div>
+            <div className="rounded-xl bg-[#fbfaf7] p-3">
+              <div className="workflow-scan h-28 rounded-lg bg-white" />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (workflow.preview === "tool") {
+    return (
+      <div className="mx-auto max-w-xl rounded-2xl border border-zinc-950/[0.08] bg-zinc-950 p-5 text-white shadow-[0_24px_80px_rgba(15,23,42,0.16)]">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold">Revenue health</p>
+            <p className="text-xs text-zinc-400">Live dashboard build</p>
+          </div>
+          <span className="rounded-full bg-sky-300 px-2.5 py-1 text-[11px] font-semibold text-zinc-950">Syncing</span>
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          {[
+            ["MRR", "$84.2k", "+12%"],
+            ["Churn risk", "14", "Needs action"],
+            ["Pipeline", "$192k", "Weighted"],
+          ].map(([label, value, detail]) => (
+            <div key={label} className="rounded-xl bg-white/10 p-3">
+              <p className="text-[11px] font-semibold uppercase text-zinc-400">{label}</p>
+              <p className="mt-2 text-lg font-bold">{value}</p>
+              <p className="mt-1 text-[11px] text-zinc-400">{detail}</p>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 space-y-2">
+          {[74, 48, 88, 62].map((width, index) => (
+            <div key={width} className="h-3 overflow-hidden rounded-full bg-zinc-100">
+              <span className="workflow-bar block h-full rounded-full bg-sky-300" style={{ width: `${width}%`, animationDelay: `${index * 140}ms` }} />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (workflow.preview === "document") {
+    return (
+      <div className="workflow-paper mx-auto max-w-md rounded-[10px] border border-zinc-950/[0.1] bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.12)]">
+        <div className="border-b border-zinc-950/[0.08] pb-5">
+          <p className="text-xs font-semibold uppercase text-violet-600">Draft document</p>
+          <h4 className="mt-2 text-xl font-bold leading-tight text-zinc-950">Investor update: Pricing launch</h4>
+        </div>
+        <div className="mt-5 space-y-3">
+          {["Highlights", "Revenue signal", "Customer proof", "Next milestones"].map((item, index) => (
+            <div key={item} className="workflow-doc-line rounded-lg bg-[#fbfaf7] p-3" style={{ animationDelay: `${index * 130}ms` }}>
+              <p className="text-sm font-semibold text-zinc-950">{item}</p>
+              <div className="mt-2 space-y-1.5">
+                <span className="block h-2 rounded-full bg-violet-100" />
+                <span className="block h-2 w-4/5 rounded-full bg-violet-100" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (workflow.preview === "video") {
+    return (
+      <div className="mx-auto max-w-xl rounded-2xl border border-zinc-950/[0.08] bg-white p-3 shadow-[0_24px_80px_rgba(15,23,42,0.12)]">
+        <div className="relative aspect-video overflow-hidden rounded-lg bg-zinc-950 text-white">
+          <Image src="/marketing/founder-workspace-hero.png" alt="" width={1600} height={1000} className="h-full w-full object-cover opacity-55" />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="flex h-14 w-14 items-center justify-center rounded-full bg-white text-zinc-950 shadow-lg">
+              <Play size={22} fill="currentColor" />
+            </span>
+          </div>
+          <div className="absolute bottom-3 left-3 right-3 rounded-lg bg-black/55 p-3 backdrop-blur">
+            <p className="text-xs font-semibold">Scene 03: product proof</p>
+            <p className="mt-1 text-[11px] text-zinc-300">Caption and voiceover aligned</p>
+          </div>
+        </div>
+        <div className="mt-3 h-2 overflow-hidden rounded-full bg-zinc-100">
+          <span className="workflow-playhead block h-full rounded-full bg-rose-400" />
+        </div>
+      </div>
     );
   }
 
   return (
-    <section className="relative py-32 border-t border-white/[0.04]">
-      <div className="grid-bg-fine absolute inset-0" />
+    <div className="workflow-campaign-canvas mx-auto max-w-xl rounded-2xl border border-zinc-950/[0.08] bg-white p-4 shadow-[0_24px_80px_rgba(15,23,42,0.12)]">
+      <div className="relative aspect-[4/3] overflow-hidden rounded-xl">
+        <Image src="/marketing/usecase-product-build-v2.png" alt="" fill sizes="(max-width: 1024px) 80vw, 420px" className="object-cover" />
+      </div>
+      <div className="mt-4 flex items-center justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold text-zinc-950">Launch visual direction</p>
+          <p className="mt-1 text-xs text-zinc-500">Selected social card</p>
+        </div>
+        <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">Export</span>
+      </div>
+    </div>
+  );
+}
 
-      <div ref={revealRef} className="relative z-10 mx-auto max-w-5xl px-6 lg:px-8">
-        <div
-          className={`mb-16 text-center transition-all duration-700 ${
-            revealVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-          }`}
-        >
-          <p className="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">
-            Why FounderOS
+function WorkflowFinalObject({ workflow }: { workflow: WorkflowDemo }) {
+  if (workflow.preview === "website") return <WebsiteOutputFrame compact />;
+
+  return (
+    <div className={`workflow-final-object workflow-final-${workflow.preview} mx-auto max-w-xl rounded-2xl border border-zinc-950/[0.08] bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.12)]`}>
+      <span className={`flex h-12 w-12 items-center justify-center rounded-xl border ${workflow.border} ${workflow.bg} ${workflow.accent}`}>
+        <WorkflowIcon workflow={workflow} />
+      </span>
+      <p className="mt-5 text-xs font-semibold uppercase text-zinc-400">Final output</p>
+      <h5 className="mt-2 text-2xl font-bold leading-tight text-zinc-950">{workflow.outputs[0].label}</h5>
+      <p className="mt-2 text-sm leading-6 text-zinc-600">{workflow.outputs[0].detail}</p>
+      <div className="mt-5 flex flex-wrap gap-2">
+        {workflow.outputs.slice(1).map((output) => (
+          <span key={output.label} className="rounded-full border border-zinc-950/[0.08] bg-[#fbfaf7] px-3 py-1.5 text-xs font-semibold text-zinc-600">
+            {output.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function JourneySection() {
+  return (
+    <section className="border-y border-zinc-950/[0.06] bg-white py-20 sm:py-24">
+      <div className="mx-auto grid max-w-[1480px] gap-10 px-5 sm:px-8 lg:grid-cols-[0.82fr_1.18fr] lg:items-center">
+        <div>
+          <h2 className="text-4xl font-bold leading-tight text-zinc-950 sm:text-5xl">The interface stays simple until the work needs depth.</h2>
+          <p className="mt-5 text-lg leading-8 text-zinc-600">
+            FounderOS starts with the prompt box, then expands into transparent progress, connected context, outputs, previews, and review checkpoints.
           </p>
-          <h2 className="text-4xl font-extrabold tracking-tight sm:text-5xl">
-            One platform{" "}
-            <span className="text-zinc-500">instead of twelve.</span>
-          </h2>
-          <p className="mx-auto mt-4 max-w-lg text-base leading-relaxed text-zinc-400">
-            See how FounderOS compares to the alternatives founders typically cobble together.
+          <div className="mt-7 flex flex-wrap gap-2">
+            {["Simple input", "Visible progress", "Saved outputs", "Approval gates"].map((item) => (
+              <span key={item} className="rounded-full border border-zinc-950/[0.08] bg-[#fbfaf7] px-3 py-1.5 text-sm font-medium text-zinc-700">
+                {item}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <WorkflowFilm />
+      </div>
+    </section>
+  );
+}
+
+function WorkflowFilm() {
+  return (
+    <div className="workflow-film overflow-hidden rounded-2xl border border-zinc-950/[0.08] bg-[#fbfaf7] p-4 shadow-sm sm:p-5">
+      <div className="grid gap-3 sm:grid-cols-5">
+        {workflowFrames.map((frame, index) => (
+          <div key={frame.label} className="workflow-frame rounded-lg border border-zinc-950/[0.08] bg-white p-3 shadow-sm" style={{ animationDelay: `${index * 550}ms` }}>
+            <div className="flex items-center justify-between gap-3">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-950 text-white">{frame.icon}</span>
+              <span className="text-[11px] font-semibold text-zinc-400">0{index + 1}</span>
+            </div>
+            <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">{frame.label}</p>
+            <h3 className="mt-2 text-sm font-semibold text-zinc-950">{frame.title}</h3>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 grid overflow-hidden rounded-xl border border-zinc-950/[0.08] bg-white lg:grid-cols-[0.46fr_0.54fr]">
+        <div className="border-b border-zinc-950/[0.06] p-5 lg:border-b-0 lg:border-r">
+          <p className="text-sm font-semibold text-zinc-950">Build a launch page, summarize the revenue impact, and prepare a customer note.</p>
+          <div className="mt-4 space-y-2">
+            {["Plan drafted", "Connectors selected", "Outputs generated", "Review needed"].map((item, index) => (
+              <div key={item} className="flex items-center gap-2 text-sm text-zinc-700">
+                <span className={`h-2 w-2 rounded-full ${index < 3 ? "bg-emerald-500" : "bg-amber-400"}`} />
+                <span>{item}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid gap-3 p-5 sm:grid-cols-3">
+          {[
+            { label: "Website", icon: <Globe2 size={16} />, detail: "Preview" },
+            { label: "Doc", icon: <FileText size={16} />, detail: "Saved" },
+            { label: "Email", icon: <MailCheck size={16} />, detail: "Approval" },
+          ].map((item) => (
+            <div key={item.label} className="rounded-lg border border-zinc-950/[0.08] bg-[#fbfaf7] p-3">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-zinc-950 shadow-sm">{item.icon}</span>
+              <p className="mt-4 text-sm font-semibold text-zinc-950">{item.label}</p>
+              <p className="mt-1 text-xs font-medium text-zinc-500">{item.detail}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OrchestrationSection() {
+  return (
+    <section id="orchestration" className="bg-[#fbfaf7] py-20 sm:py-24">
+      <div className="mx-auto grid max-w-[1480px] gap-10 px-5 sm:px-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
+        <div>
+          <h2 className="text-4xl font-bold leading-tight text-zinc-950 sm:text-5xl">One operating layer for context, tools, models, and approvals.</h2>
+          <p className="mt-5 text-lg leading-8 text-zinc-600">
+            FounderOS can run open source with your setup or managed with hosted orchestration. The visible experience stays focused on work, not provider plumbing.
+          </p>
+          <div className="mt-8 divide-y divide-zinc-950/[0.07] rounded-2xl border border-zinc-950/[0.08] bg-white shadow-sm">
+            {trustItems.map((item) => (
+              <div key={item.title} className="grid gap-3 p-5 sm:grid-cols-[0.22fr_0.78fr]">
+                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-400">{item.signal}</span>
+                <span>
+                  <span className="block text-base font-semibold text-zinc-950">{item.title}</span>
+                  <span className="mt-1 block text-sm leading-6 text-zinc-600">{item.text}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <OrchestrationDemo />
+      </div>
+    </section>
+  );
+}
+
+function OrchestrationDemo() {
+  const routes = [
+    { label: "Context", icon: <Database size={16} />, detail: "Docs, memory, decisions" },
+    { label: "Build", icon: <Code2 size={16} />, detail: "Codex, OpenCode, GitHub" },
+    { label: "Operate", icon: <RefreshCw size={16} />, detail: "Schedules and workflows" },
+    { label: "Revenue", icon: <BarChart3 size={16} />, detail: "Stripe, CRM, Sheets" },
+    { label: "Publish", icon: <Globe2 size={16} />, detail: "Vercel and previews" },
+    { label: "Review", icon: <ShieldCheck size={16} />, detail: "Approval gates" },
+  ];
+
+  return (
+    <div className="orchestration-demo relative overflow-hidden rounded-2xl border border-zinc-950/[0.08] bg-white p-5 shadow-[0_24px_90px_rgba(15,23,42,0.1)]">
+      <div className="rounded-xl border border-zinc-950/[0.08] bg-zinc-950 p-5 text-white">
+        <div className="flex items-center gap-3">
+          <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-white text-zinc-950">
+            <Layers size={18} />
+          </span>
+          <div>
+            <p className="text-base font-semibold">FounderOS</p>
+            <p className="text-sm text-zinc-300">Operating layer</p>
+          </div>
+        </div>
+        <div className="mt-5 h-2 overflow-hidden rounded-full bg-white/10">
+          <span className="orchestration-progress block h-full rounded-full bg-teal-300" />
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        {routes.map((route, index) => (
+          <div key={route.label} className="orchestration-route rounded-lg border border-zinc-950/[0.08] bg-[#fbfaf7] p-4" style={{ animationDelay: `${index * 160}ms` }}>
+            <div className="flex items-center gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-zinc-950 shadow-sm">{route.icon}</span>
+              <span>
+                <span className="block text-sm font-semibold text-zinc-950">{route.label}</span>
+                <span className="block text-xs leading-5 text-zinc-500">{route.detail}</span>
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PricingSection() {
+  const [selectedPlanId, setSelectedPlanId] = useState("managed");
+  const selectedPlan = pricingPlans.find((plan) => plan.id === selectedPlanId) ?? pricingPlans[1];
+
+  return (
+    <section id="pricing" className="border-y border-zinc-950/[0.06] bg-white py-20 sm:py-24">
+      <div className="mx-auto max-w-[1480px] px-5 sm:px-8">
+        <div className="max-w-3xl">
+          <p className="text-xs font-semibold uppercase text-zinc-400">Pricing</p>
+          <h2 className="mt-3 text-4xl font-bold leading-tight text-zinc-950 sm:text-5xl">Pick the operating mode that fits how much you want to own.</h2>
+          <p className="mt-5 text-lg leading-8 text-zinc-600">
+            Start with self-hosted control, move to managed momentum, or bring the workspace into a team setting when shared memory and controls matter.
           </p>
         </div>
 
-        {/* Comparison table */}
-        <div
-          className={`overflow-x-auto transition-all duration-700 ${
-            revealVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-          }`}
-          style={{ transitionDelay: "200ms" }}
-        >
-          <div className="min-w-[640px]">
-            {/* Header row */}
-            <div className="grid grid-cols-5 gap-2 mb-3">
-              <div /> {/* Empty first column */}
-              {competitors.map((comp) => (
-                <div
-                  key={comp.name}
-                  className={`text-center rounded-t-xl px-3 py-3 ${
-                    comp.featured
-                      ? "bg-white/[0.06] border border-b-0 border-white/[0.1] comparison-featured"
-                      : ""
-                  }`}
-                >
-                  <p className={`text-xs font-bold ${
-                    comp.featured ? "text-white" : "text-zinc-500"
-                  }`}>
-                    {comp.name}
-                  </p>
-                  {comp.featured && (
-                    <span className="mt-1 inline-block rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-zinc-300">
-                      You are here
-                    </span>
-                  )}
+        <div className="mt-10 grid gap-4 lg:grid-cols-3">
+          {pricingPlans.map((plan) => {
+            const selected = selectedPlan.id === plan.id;
+
+            return (
+              <button
+                key={plan.id}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => setSelectedPlanId(plan.id)}
+                className={`pricing-plan-card rounded-2xl border p-5 text-left transition ${
+                  selected ? "border-zinc-950 bg-zinc-950 text-white shadow-[0_24px_80px_rgba(15,23,42,0.18)]" : "border-zinc-950/[0.08] bg-[#fbfaf7] text-zinc-950 hover:border-zinc-950/20"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-lg font-bold">{plan.name}</p>
+                    <p className={`mt-2 text-sm leading-6 ${selected ? "text-zinc-300" : "text-zinc-600"}`}>{plan.summary}</p>
+                  </div>
+                  {plan.featured && <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${selected ? "bg-white text-zinc-950" : "bg-zinc-950 text-white"}`}>Managed</span>}
+                </div>
+                <p className="mt-6 flex items-end gap-1">
+                  <span className="text-4xl font-bold tracking-tight">{plan.price}</span>
+                  {plan.cadence && <span className={`pb-1 text-sm font-medium ${selected ? "text-zinc-300" : "text-zinc-500"}`}>{plan.cadence}</span>}
+                </p>
+                <p className={`mt-4 text-sm leading-6 ${selected ? "text-zinc-300" : "text-zinc-600"}`}>{plan.fit}</p>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-5 grid overflow-hidden rounded-2xl border border-zinc-950/[0.08] bg-[#fbfaf7] shadow-[0_24px_90px_rgba(15,23,42,0.08)] lg:grid-cols-[0.38fr_0.62fr]">
+          <div className="bg-white p-6 sm:p-8">
+            <p className="text-sm font-semibold text-zinc-500">Selected plan</p>
+            <h3 className="mt-3 text-3xl font-bold leading-tight text-zinc-950">{selectedPlan.name}</h3>
+            <p className="mt-4 text-sm leading-6 text-zinc-600">{selectedPlan.summary}</p>
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+              <Link href="/subscription" className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-zinc-950 px-5 text-sm font-semibold text-white">
+                View subscription
+                <ArrowRight size={15} />
+              </Link>
+              <Link href="/" className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-zinc-950/[0.12] bg-white px-5 text-sm font-semibold text-zinc-950">
+                Get started
+                <SquareArrowOutUpRight size={15} />
+              </Link>
+            </div>
+          </div>
+
+          <div className="border-t border-zinc-950/[0.08] p-6 sm:p-8 lg:border-l lg:border-t-0">
+            <p className="text-sm font-semibold text-zinc-950">What this includes</p>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              {selectedPlan.features.map((feature) => (
+                <div key={feature} className="flex gap-3 rounded-xl border border-zinc-950/[0.08] bg-white p-4">
+                  <Check size={16} className="mt-0.5 shrink-0 text-teal-600" />
+                  <span className="text-sm leading-6 text-zinc-700">{feature}</span>
                 </div>
               ))}
             </div>
-
-            {/* Feature rows */}
-            {features.map((feature, fi) => (
-              <div
-                key={feature.label}
-                className={`grid grid-cols-5 gap-2 transition-all duration-500 ${
-                  revealVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-                }`}
-                style={{ transitionDelay: `${fi * 60 + 300}ms` }}
-              >
-                {/* Feature label */}
-                <div className="flex items-center px-3 py-3">
-                  <span className="text-xs font-medium text-zinc-400">
-                    {feature.label}
-                  </span>
-                </div>
-
-                {/* Values */}
-                {feature.values.map((val, vi) => (
-                  <div
-                    key={`${feature.label}-${vi}`}
-                    className={`flex items-center justify-center px-3 py-3 ${
-                      vi === 0
-                        ? "bg-white/[0.04] border-x border-white/[0.06]"
-                        : fi % 2 === 0
-                        ? "bg-white/[0.01]"
-                        : ""
-                    } ${
-                      fi === features.length - 1 && vi === 0
-                        ? "rounded-b-xl border-b border-white/[0.06]"
-                        : ""
-                    }`}
-                  >
-                    {renderCell(val)}
-                  </div>
-                ))}
-              </div>
-            ))}
           </div>
         </div>
       </div>
     </section>
   );
 }
-
-/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-   Testimonials
-   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
-
-function TestimonialsSection() {
-  const [revealRef, revealVisible] = useScrollReveal();
-
-  const testimonials = [
-    {
-      quote:
-        "FounderOS replaced my project manager, my executive assistant, and half my morning routine. I just tell it what I need and it happens.",
-      name: "Alex Rivera",
-      title: "CEO, Meridian Labs",
-      initials: "AR",
-    },
-    {
-      quote:
-        "The Library feature alone saved me hours every week. I can ask 'what did we decide about pricing?' and get an instant, sourced answer.",
-      name: "Sarah Chen",
-      title: "Founder, Luma Health",
-      initials: "SC",
-    },
-    {
-      quote:
-        "I was skeptical about AI replacing workflows. But FounderOS doesn't replace â€” it amplifies. I'm running a 10-person operation solo.",
-      name: "Marcus Okonkwo",
-      title: "Founder, Nexus Capital",
-      initials: "MO",
-    },
-  ];
-
-  return (
-    <section className="relative py-32 border-t border-white/[0.04]">
-      <div className="radial-glow absolute inset-0 pointer-events-none" />
-
-      <div ref={revealRef} className="relative z-10 mx-auto max-w-7xl px-6 lg:px-8">
-        <div
-          className={`mb-16 text-center transition-all duration-700 ${
-            revealVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-          }`}
-        >
-          <p className="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">
-            From founders like you
-          </p>
-          <h2 className="text-4xl font-extrabold tracking-tight sm:text-5xl">
-            Built for founders who{" "}
-            <span className="text-zinc-500">do it all.</span>
-          </h2>
-        </div>
-
-        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {testimonials.map((t, i) => (
-            <div
-              key={t.name}
-              className={`group rounded-2xl border border-white/[0.06] bg-white/[0.02] p-8 transition-all duration-500 glass-dark-hover ${
-                revealVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-              }`}
-              style={{ transitionDelay: `${i * 150 + 200}ms` }}
-            >
-              {/* Stars */}
-              <div className="mb-6 flex gap-1">
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <Star
-                    key={star}
-                    size={14}
-                    className="fill-zinc-400 text-zinc-400"
-                  />
-                ))}
-              </div>
-
-              <p className="text-sm leading-relaxed text-zinc-300 italic">
-                &ldquo;{t.quote}&rdquo;
-              </p>
-
-              <div className="mt-8 flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.05] border border-white/[0.08] text-xs font-bold text-zinc-400">
-                  {t.initials}
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-white">{t.name}</p>
-                  <p className="text-xs text-zinc-500">{t.title}</p>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-   Pricing
-   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
-
-function PricingSection() {
-  const [revealRef, revealVisible] = useScrollReveal();
-
-  const plans = [
-    {
-      name: "Starter",
-      price: "Free",
-      period: "",
-      desc: "For founders exploring AI-powered workflows.",
-      features: [
-        "1 workspace",
-        "Full AI capabilities",
-        "50 tasks per month",
-        "Basic Library (500 items)",
-        "Community support",
-      ],
-      cta: "Get started free",
-      featured: false,
-    },
-    {
-      name: "Pro",
-      price: "$49",
-      period: "/month",
-      desc: "For founders running their business with AI.",
-      features: [
-        "1 workspace",
-        "Unlimited AI tasks",
-        "Unlimited Library",
-        "All integrations (Gmail, Drive, GitHub, Vercel)",
-        "Scheduled automations",
-        "Priority support",
-        "Custom review rules",
-      ],
-      cta: "Start 14-day trial",
-      featured: true,
-    },
-    {
-      name: "Enterprise",
-      price: "Custom",
-      period: "",
-      desc: "For teams and organizations.",
-      features: [
-        "Multiple workspaces",
-        "Custom AI configurations",
-        "Advanced security & compliance",
-        "Dedicated support",
-        "Custom integrations",
-        "SLA guarantee",
-      ],
-      cta: "Contact sales",
-      featured: false,
-    },
-  ];
-
-  return (
-    <section id="pricing" className="relative py-32 border-t border-white/[0.04]">
-      <div className="grid-bg-fine absolute inset-0" />
-
-      <div ref={revealRef} className="relative z-10 mx-auto max-w-7xl px-6 lg:px-8">
-        <div
-          className={`mb-16 text-center transition-all duration-700 ${
-            revealVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-          }`}
-        >
-          <p className="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">
-            Pricing
-          </p>
-          <h2 className="text-4xl font-extrabold tracking-tight sm:text-5xl">
-            Start free.{" "}
-            <span className="text-zinc-500">Scale when you&apos;re ready.</span>
-          </h2>
-          <p className="mx-auto mt-4 max-w-lg text-base text-zinc-400">
-            No credit card required. Get started in seconds and upgrade when FounderOS
-            becomes essential to your workflow.
-          </p>
-        </div>
-
-        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {plans.map((plan, i) => (
-            <div
-              key={plan.name}
-              className={`relative rounded-2xl border p-8 transition-all duration-500 ${
-                plan.featured
-                  ? "border-white/20 bg-white/[0.05] glow-card"
-                  : "border-white/[0.06] bg-white/[0.02] glass-dark-hover"
-              } ${
-                revealVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-              }`}
-              style={{ transitionDelay: `${i * 150 + 200}ms` }}
-            >
-              {plan.featured && (
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-white px-4 py-1 text-[10px] font-bold uppercase tracking-widest text-black">
-                  Most popular
-                </div>
-              )}
-
-              <h3 className="text-lg font-bold text-white">{plan.name}</h3>
-              <div className="mt-3 flex items-baseline gap-1">
-                <span className="text-4xl font-extrabold tracking-tight text-white">
-                  {plan.price}
-                </span>
-                {plan.period && (
-                  <span className="text-sm text-zinc-500">{plan.period}</span>
-                )}
-              </div>
-              <p className="mt-3 text-sm text-zinc-400">{plan.desc}</p>
-
-              <div className="mt-8 space-y-3">
-                {plan.features.map((feature) => (
-                  <div key={feature} className="flex items-start gap-2.5">
-                    <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-zinc-500" />
-                    <span className="text-sm text-zinc-300">{feature}</span>
-                  </div>
-                ))}
-              </div>
-
-              <Link
-                href="/"
-                className={`mt-8 block rounded-xl px-6 py-3 text-center text-sm font-bold transition ${
-                  plan.featured
-                    ? "bg-white text-black hover:bg-zinc-200"
-                    : "border border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.06] hover:text-white"
-                }`}
-              >
-                {plan.cta}
-              </Link>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-   CTA Section
-   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
-
-function CTASection() {
-  const [revealRef, revealVisible] = useScrollReveal();
-
-  return (
-    <section className="relative py-32 overflow-hidden">
-      <div className="mesh-gradient absolute inset-0" />
-      <div className="grid-bg absolute inset-0" />
-
-      <div
-        ref={revealRef}
-        className={`relative z-10 mx-auto max-w-3xl px-6 text-center transition-all duration-700 ${
-          revealVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-        }`}
-      >
-        <h2 className="text-4xl font-extrabold tracking-tight sm:text-5xl lg:text-6xl">
-          Ready to run your business{" "}
-          <span className="gradient-text">with AI?</span>
-        </h2>
-        <p className="mx-auto mt-6 max-w-lg text-lg leading-relaxed text-zinc-400">
-          Join founders who replaced chaos with clarity. Start for free, no
-          credit card required.
-        </p>
-
-        <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
-          <Link
-            href="/"
-            className="btn-shimmer group inline-flex items-center gap-2 rounded-xl px-10 py-4 text-base font-bold text-black transition hover:opacity-90"
-          >
-            Get started for free
-            <ArrowRight size={18} className="transition-transform group-hover:translate-x-0.5" />
-          </Link>
-        </div>
-
-        <p className="mt-6 text-xs text-zinc-600">
-          Free forever on Starter. Upgrade anytime.
-        </p>
-      </div>
-    </section>
-  );
-}
-
-/* â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-   Footer
-   â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” */
 
 function Footer() {
-  const columns = [
-    {
-      title: "Product",
-      links: [
-        { label: "Features", href: "#features" },
-        { label: "Pricing", href: "#pricing" },
-        { label: "Integrations", href: "#" },
-        { label: "Changelog", href: "#" },
-      ],
-    },
-    {
-      title: "Company",
-      links: [
-        { label: "About", href: "#" },
-        { label: "Blog", href: "#" },
-        { label: "Careers", href: "#" },
-        { label: "Contact", href: "#" },
-      ],
-    },
-    {
-      title: "Resources",
-      links: [
-        { label: "Documentation", href: "#" },
-        { label: "API Reference", href: "#" },
-        { label: "Status", href: "#" },
-        { label: "Community", href: "#" },
-      ],
-    },
-    {
-      title: "Legal",
-      links: [
-        { label: "Privacy", href: "#" },
-        { label: "Terms", href: "#" },
-        { label: "Security", href: "#" },
-      ],
-    },
-  ];
-
   return (
-    <footer className="border-t border-white/[0.04] py-16">
-      <div className="mx-auto max-w-7xl px-6 lg:px-8">
-        <div className="flex flex-col gap-12 lg:flex-row lg:gap-20">
-          {/* Brand */}
-          <div className="max-w-xs">
-            <div className="flex items-center gap-2">
-              <span className="text-lg font-extrabold tracking-tight">FounderOS</span>
-            </div>
-            <p className="mt-4 text-sm leading-relaxed text-zinc-500">
-              The AI assistant that runs your business. Delegate anything,
-              approve everything.
-            </p>
-          </div>
-
-          {/* Link columns */}
-          <div className="grid flex-1 grid-cols-2 gap-8 sm:grid-cols-4">
-            {columns.map((col) => (
-              <div key={col.title}>
-                <p className="text-xs font-bold uppercase tracking-widest text-zinc-500">
-                  {col.title}
-                </p>
-                <div className="mt-4 flex flex-col gap-3">
-                  {col.links.map((link) => (
-                    <a
-                      key={link.label}
-                      href={link.href}
-                      className="text-sm text-zinc-400 transition hover:text-white"
-                    >
-                      {link.label}
-                    </a>
-                  ))}
-                </div>
-              </div>
-            ))}
+    <footer className="bg-[#fbfaf7] py-12">
+      <div className="mx-auto flex max-w-[1480px] flex-col gap-8 px-5 sm:px-8 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-center gap-3">
+          <LogoMark />
+          <div>
+            <p className="font-semibold text-zinc-950">FounderOS</p>
+            <p className="text-sm text-zinc-500">One workspace for anything your business needs.</p>
           </div>
         </div>
-
-        <div className="mt-16 flex flex-col items-center justify-between gap-4 border-t border-white/[0.04] pt-8 sm:flex-row">
-          <p className="text-xs text-zinc-600">
-            Â© {new Date().getFullYear()} FounderOS. All rights reserved.
-          </p>
-          <div className="flex items-center gap-6">
-            <a href="#" className="text-xs text-zinc-600 transition hover:text-zinc-400">Twitter</a>
-            <a href="#" className="text-xs text-zinc-600 transition hover:text-zinc-400">LinkedIn</a>
-            <a href="#" className="text-xs text-zinc-600 transition hover:text-zinc-400">GitHub</a>
-          </div>
+        <div className="flex flex-wrap gap-5 text-sm font-medium text-zinc-600">
+          <a href="#product" className="hover:text-zinc-950">Product</a>
+          <a href="#use-cases" className="hover:text-zinc-950">Use cases</a>
+          <a href="#integrations" className="hover:text-zinc-950">Integrations</a>
+          <Link href="/subscription" className="hover:text-zinc-950">Subscription</Link>
+          <Link href="/privacy" className="hover:text-zinc-950">Privacy</Link>
+          <Link href="/terms" className="hover:text-zinc-950">Terms</Link>
+          <a href="#" className="hover:text-zinc-950">GitHub</a>
         </div>
       </div>
     </footer>
