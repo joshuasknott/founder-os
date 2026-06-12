@@ -27,6 +27,12 @@ type TrustItem = {
   signal: string;
 };
 
+type WorkflowStep = {
+  label: string;
+  title: string;
+  text: string;
+};
+
 const githubUrl = "https://github.com/joshuasknott/founder-os";
 
 const navItems = [
@@ -71,7 +77,30 @@ const trustItems: TrustItem[] = [
   },
 ];
 
-const heroPrompt = "Review my launch plan, draft the update, and prepare the preview for approval.";
+const heroPrompt = "Review the NorthstarCRM launch plan, draft the update, refresh the preview, and queue the email for approval.";
+
+const workflowSteps: WorkflowStep[] = [
+  {
+    label: "Input",
+    title: "Founder asks once",
+    text: "The launch plan and request become one brief instead of a pile of tabs.",
+  },
+  {
+    label: "Sources used",
+    title: "Context is pulled in",
+    text: "Docs, Sheets, GitHub, Vercel, and Gmail provide the plan, numbers, product state, preview, and delivery path.",
+  },
+  {
+    label: "Work produced",
+    title: "A review package appears",
+    text: "FounderOS prepares the draft update, source summary, and refreshed landing-page preview.",
+  },
+  {
+    label: "Approval",
+    title: "Nothing leaves without review",
+    text: "The email stays queued and the preview waits for approval before anything is sent or published.",
+  },
+];
 
 function SimpleBrandIcon({ icon, className = "h-5 w-5" }: { icon: SimpleIcon; className?: string }) {
   return (
@@ -310,15 +339,15 @@ function HeroDemoStage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-400">Review package</p>
-                <h3 className="mt-2 text-2xl font-bold leading-tight text-zinc-950">Investor update draft</h3>
+                <h3 className="mt-2 text-2xl font-bold leading-tight text-zinc-950">Launch update package</h3>
               </div>
               <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">Ready</span>
             </div>
             <div className="mt-5 space-y-3">
               {[
-                ["Summary", "Launch plan, risks, and next milestones"],
-                ["Sources", "Docs and Sheets referenced"],
-                ["Approval", "Email draft waits for your review"],
+                ["Input", "NorthstarCRM launch plan and request"],
+                ["Sources", "Docs, Sheets, GitHub, Vercel, and Gmail"],
+                ["Approval", "Email and preview wait for review"],
               ].map(([label, detail]) => (
                 <div key={label} className="hero-review-row rounded-xl border border-zinc-950/[0.08] bg-[#fbfaf7] p-3">
                   <p className="text-sm font-semibold text-zinc-950">{label}</p>
@@ -393,35 +422,47 @@ function WorkflowProofSection() {
       <div className="mx-auto grid max-w-[1180px] gap-10 px-5 sm:px-8 lg:grid-cols-[0.42fr_0.58fr] lg:items-center">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">One strong workflow</p>
-          <h2 className="mt-3 text-3xl font-bold leading-tight text-zinc-950 sm:text-5xl">A launch request becomes reviewable work.</h2>
+          <h2 className="mt-3 text-3xl font-bold leading-tight text-zinc-950 sm:text-5xl">One launch request becomes a review package.</h2>
           <p className="mt-5 text-base leading-7 text-zinc-600 sm:text-lg">
-            FounderOS can turn direction, notes, and live service context into a draft update, source summary, preview, and approval gate without making the founder manage tabs or tools.
+            The use case stays narrow: a founder asks once, FounderOS gathers the connected context, prepares the update and preview, then waits before anything is sent or published.
           </p>
           <div className="mt-6 rounded-xl bg-zinc-950 p-4 text-white shadow-[0_16px_54px_rgba(15,23,42,0.16)]">
             <p className="flex items-center gap-2 text-xs font-semibold text-zinc-300">
               <MessageSquare size={14} />
-              Example request
+              Input
             </p>
             <p className="mt-3 text-sm font-medium leading-6">{heroPrompt}</p>
           </div>
-          <div className="mt-5">
+          <div className="mt-5 space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">Sources used</p>
             <ConnectorLogoRow connectors={connectors} />
           </div>
         </div>
 
         <div className="space-y-4">
           <WebsiteOutputFrame />
-          <div className="grid gap-3 sm:grid-cols-3">
-            {[
-              ["Preview", "Ready to review"],
-              ["Sources", "Docs and Sheets linked"],
-              ["Approval", "Email waits before send"],
-            ].map(([label, detail]) => (
-              <div key={label} className="rounded-lg border border-zinc-950/[0.08] bg-[#fbfaf7] p-4">
-                <p className="text-sm font-semibold text-zinc-950">{label}</p>
-                <p className="mt-1 text-xs leading-5 text-zinc-600">{detail}</p>
+          <div className="rounded-xl border border-zinc-950/[0.08] bg-[#fbfaf7] p-4 sm:p-5">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">Sequence</p>
+                <h3 className="mt-1 text-lg font-bold text-zinc-950">What the founder reviews</h3>
               </div>
-            ))}
+              <span className="w-fit rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">Approval required</span>
+            </div>
+            <div className="mt-4 grid gap-3">
+              {workflowSteps.map((step, index) => (
+                <div key={step.label} className="grid gap-3 rounded-lg border border-zinc-950/[0.08] bg-white p-4 sm:grid-cols-[40px_1fr]">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-950 text-sm font-bold text-white">
+                    {index + 1}
+                  </span>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">{step.label}</p>
+                    <h4 className="mt-1 text-base font-bold text-zinc-950">{step.title}</h4>
+                    <p className="mt-1 text-sm leading-6 text-zinc-600">{step.text}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
