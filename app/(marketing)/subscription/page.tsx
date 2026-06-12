@@ -15,8 +15,8 @@ const plans = [
     summary: "Use FounderOS locally, bring your own keys, and connect the services you configure.",
     features: [
       "Home, Work, Library, Schedules, and Settings",
-      "Local OpenCode support when configured on this computer",
-      "Bring your own model and provider keys",
+      "Local build support when configured on this computer",
+      "Bring your own runtime keys",
       "Approval gates for publishing, sending, spending, and deletion",
     ],
   },
@@ -25,8 +25,8 @@ const plans = [
     price: "$29 / month",
     summary: "A hosted FounderOS workspace for founders who want the product without running the machinery.",
     features: [
-      "Hosted model access and reliability",
-      "Connector setup guidance for Google Workspace, GitHub, Vercel, and finance context",
+      "Hosted reliability and runtime support",
+      "Connector setup guidance for Google Workspace, GitHub, and Vercel",
       "Managed updates and priority fixes",
       "Private previews and approval-first work runs",
     ],
@@ -52,15 +52,15 @@ const faqs = [
   },
   {
     q: "What does the managed subscription add?",
-    a: "Managed FounderOS adds hosted reliability, model access, connector setup support, and a subscription-backed operating path so you do not have to maintain the runtime yourself.",
+    a: "Managed FounderOS adds hosted reliability, connector setup support, and a subscription-backed operating path so you do not have to maintain the runtime yourself.",
   },
   {
     q: "Does FounderOS spend money or publish without review?",
     a: "No. Sensitive actions such as sending external messages, publishing publicly, spending money, deleting important data, or changing live assets are approval-gated.",
   },
   {
-    q: "How does OpenCode fit in?",
-    a: "FounderOS uses OpenCode as the preferred local build engine when this computer is configured and authenticated. Managed plans can reduce how much setup the founder has to maintain.",
+    q: "How does local build support fit in?",
+    a: "FounderOS can use a configured local build engine for preview work. Managed plans can reduce how much setup the founder has to maintain.",
   },
 ];
 
@@ -77,7 +77,7 @@ export default function SubscriptionPage() {
             </Link>
             <h1 className="mt-8 text-5xl font-bold leading-tight text-zinc-950 sm:text-6xl">Subscription that matches how you want to run FounderOS.</h1>
             <p className="mt-5 max-w-2xl text-lg leading-8 text-zinc-600">
-              Start with the open-source workspace. Upgrade when you want hosted model access, managed reliability, connector help, and fewer runtime details to maintain.
+              Start with the open-source workspace. Upgrade when you want hosted reliability, connector help, runtime support, and fewer setup details to maintain.
             </p>
           </div>
           <SubscriptionDemo />
@@ -154,7 +154,7 @@ function SubscriptionDemo() {
     <div className="overflow-hidden rounded-2xl border border-zinc-950/[0.08] bg-white shadow-[0_24px_90px_rgba(15,23,42,0.08)]">
       <div className="border-b border-zinc-950/[0.06] bg-zinc-950 p-5 text-white">
         <p className="text-sm font-semibold">Managed workspace simulation</p>
-        <p className="mt-1 text-sm leading-6 text-zinc-300">Model access, connectors, reliability, and approvals in one operating path.</p>
+        <p className="mt-1 text-sm leading-6 text-zinc-300">Connectors, reliability, runtime support, and approvals in one operating path.</p>
       </div>
       <div className="grid gap-3 p-5 sm:grid-cols-3">
         {[
@@ -171,7 +171,7 @@ function SubscriptionDemo() {
       </div>
       <div className="border-t border-zinc-950/[0.06] p-5">
         <div className="space-y-2">
-          {["Connect Google Workspace and GitHub", "Route build work through Codex or OpenCode", "Pause publish, send, spend, and delete actions for approval"].map((item) => (
+          {["Connect Google Workspace and GitHub", "Prepare build work through local or managed runtime support", "Pause publish, send, spend, and delete actions for approval"].map((item) => (
             <div key={item} className="flex items-center gap-3 rounded-lg border border-zinc-950/[0.07] bg-[#fbfaf7] px-3 py-2.5 text-sm text-zinc-700">
               <Check size={15} className="shrink-0 text-teal-600" />
               <span>{item}</span>

@@ -15,7 +15,7 @@ const sections = [
   },
   {
     title: "Subscriptions",
-    body: "Managed subscriptions may include hosted model access, connector setup support, product updates, and reliability improvements. Open-source use remains available for self-managed deployments.",
+    body: "Managed subscriptions may include hosted reliability, runtime support, connector setup support, and product updates. Open-source use remains available for self-managed deployments.",
   },
   {
     title: "Connected tools",

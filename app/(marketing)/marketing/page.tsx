@@ -26,13 +26,7 @@ import {
   Workflow,
 } from "lucide-react";
 import {
-  siAnthropic,
   siGithub,
-  siLinear,
-  siNotion,
-  siPostgresql,
-  siPosthog,
-  siStripe,
   siVercel,
   type SimpleIcon,
 } from "simple-icons";
@@ -88,18 +82,12 @@ const toolLogos: ToolLogo[] = [
   { name: "Sheets", iconNode: <GoogleSheetsLogo /> },
   { name: "GitHub", icon: siGithub },
   { name: "Vercel", icon: siVercel },
-  { name: "Notion", icon: siNotion },
-  { name: "Postgres", icon: siPostgresql },
-  { name: "Stripe", icon: siStripe },
-  { name: "PostHog", icon: siPosthog },
-  { name: "Linear", icon: siLinear },
-  { name: "Codex", iconNode: <CodexLogo /> },
-  { name: "Gemini", iconNode: <GeminiLogo /> },
-  { name: "Anthropic", icon: siAnthropic },
-  { name: "OpenCode", iconNode: <OpenCodeLogo /> },
+  { name: "Local build", iconNode: <Code2 size={18} /> },
 ];
 
-const heroPrompt = "Build a launch dashboard that syncs Stripe, writes the page, and drafts the investor update.";
+const githubUrl = "https://github.com/joshuasknott/founder-os";
+
+const heroPrompt = "Review my launch plan, draft the update, and prepare the preview for approval.";
 
 const heroPhases: HeroDemoPhase[] = ["typing", "sent", "working", "done"];
 
@@ -114,7 +102,7 @@ const workflowDemos: WorkflowDemo[] = [
     accent: "text-emerald-700",
     bg: "bg-emerald-50",
     border: "border-emerald-200",
-    connectors: ["Docs", "Codex", "GitHub", "Vercel", "Gmail"],
+    connectors: ["Docs", "GitHub", "Vercel", "Gmail", "Local build"],
     outputs: [
       { label: "Website preview", detail: "Responsive page ready to review" },
       { label: "Launch copy", detail: "Hero, pricing, email, and changelog" },
@@ -124,16 +112,16 @@ const workflowDemos: WorkflowDemo[] = [
   {
     id: "tools",
     label: "Tools",
-    title: "Ask for an internal tool and watch the right systems join the build.",
-    text: "Dashboards, admin tools, analysis surfaces, and lightweight operators can be produced from live business context instead of blank-page specs.",
-    prompt: "Create a revenue health dashboard that syncs Stripe, product events, and open pipeline risks.",
+    title: "Ask for an operating view and keep the source context attached.",
+    text: "Dashboards, summaries, and lightweight working views can be shaped from live workspace context instead of blank-page specs.",
+    prompt: "Create a weekly operating dashboard from Sheets, launch notes, and open GitHub work.",
     preview: "tool",
     accent: "text-sky-700",
     bg: "bg-sky-50",
     border: "border-sky-200",
-    connectors: ["Stripe", "Postgres", "PostHog", "Linear"],
+    connectors: ["Sheets", "Drive", "GitHub", "Docs"],
     outputs: [
-      { label: "Dashboard", detail: "Revenue, churn, and follow-up views" },
+      { label: "Dashboard", detail: "Status, risks, and follow-up views" },
       { label: "Data trail", detail: "Source systems shown inline" },
       { label: "Next actions", detail: "Tasks opened for owners" },
     ],
@@ -148,45 +136,11 @@ const workflowDemos: WorkflowDemo[] = [
     accent: "text-violet-700",
     bg: "bg-violet-50",
     border: "border-violet-200",
-    connectors: ["Drive", "Docs", "Notion", "Gmail"],
+    connectors: ["Drive", "Docs", "Sheets", "Gmail"],
     outputs: [
       { label: "Investor update", detail: "Drafted with source notes" },
       { label: "Sales one-pager", detail: "Positioning and proof points" },
       { label: "FAQ", detail: "Ready for review" },
-    ],
-  },
-  {
-    id: "videos",
-    label: "Videos",
-    title: "Create video workflows without separating script, assets, and review.",
-    text: "Brief the story once, then FounderOS assembles the script, shot list, asset plan, captions, and review-ready video output.",
-    prompt: "Make a 45-second launch demo video with captions, product shots, and a founder voiceover script.",
-    preview: "video",
-    accent: "text-rose-700",
-    bg: "bg-rose-50",
-    border: "border-rose-200",
-    connectors: ["Drive", "Docs", "Codex", "Gemini"],
-    outputs: [
-      { label: "Storyboard", detail: "Five scenes with timings" },
-      { label: "Captions", detail: "Clean transcript and overlays" },
-      { label: "Render plan", detail: "Ready for production" },
-    ],
-  },
-  {
-    id: "images",
-    label: "Images",
-    title: "Generate campaign imagery with the product context already attached.",
-    text: "FounderOS can move from offer, audience, and brand notes into image directions, review boards, and final assets for launches or listings.",
-    prompt: "Create three image directions for the pricing launch and export the strongest social card.",
-    preview: "image",
-    accent: "text-amber-700",
-    bg: "bg-amber-50",
-    border: "border-amber-200",
-    connectors: ["Drive", "Docs", "Gemini", "Library"],
-    outputs: [
-      { label: "Directions", detail: "Three campaign routes" },
-      { label: "Social card", detail: "Final asset selected" },
-      { label: "Asset notes", detail: "Usage and copy saved" },
     ],
   },
 ];
@@ -207,7 +161,7 @@ const trustItems = [
   },
   {
     title: "Managed when useful",
-    text: "Use hosted reliability, model access, and connector support when you do not want to maintain the runtime.",
+    text: "Use hosted reliability and setup support when you do not want to maintain the runtime.",
     signal: "Hosted",
   },
   {
@@ -216,8 +170,8 @@ const trustItems = [
     signal: "Review",
   },
   {
-    title: "Cost-aware routing",
-    text: "Routine work can use lighter paths while complex work can escalate when needed.",
+    title: "Cost controls",
+    text: "Spending limits and approval rules stay visible before FounderOS takes sensitive action.",
     signal: "Spend",
   },
 ];
@@ -238,7 +192,7 @@ const pricingPlans: PricingPlan[] = [
     cadence: "/ month",
     summary: "Hosted reliability and managed orchestration for solo founders.",
     fit: "Best when you want the product experience without tending the machinery.",
-    features: ["Managed model access", "Connector setup support", "Approval-first workflows", "Priority product updates"],
+    features: ["Hosted reliability", "Connector setup support", "Approval-first workflows", "Priority product updates"],
     featured: true,
   },
   {
@@ -319,42 +273,11 @@ function GoogleSheetsLogo() {
   );
 }
 
-function GeminiLogo() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-6 w-6 shrink-0" aria-hidden="true" role="img">
-      <defs>
-        <linearGradient id="gemini-logo-gradient" x1="4" x2="20" y1="20" y2="4" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#1A73E8" />
-          <stop offset=".34" stopColor="#8AB4F8" />
-          <stop offset=".68" stopColor="#C58AF9" />
-          <stop offset="1" stopColor="#8E24AA" />
-        </linearGradient>
-      </defs>
-      <path
-        d="M12 2.8c.82 4.62 3.15 8.14 8.2 9.2-5.05 1.06-7.38 4.58-8.2 9.2-.82-4.62-3.15-8.14-8.2-9.2 5.05-1.06 7.38-4.58 8.2-9.2Z"
-        fill="url(#gemini-logo-gradient)"
-      />
-    </svg>
-  );
-}
-
-function OpenCodeLogo() {
-  return (
-    <Image src="/marketing/opencode-logo.png" alt="" width={24} height={24} className="h-6 w-6 shrink-0 rounded-[3px]" />
-  );
-}
-
 function LogoMark() {
   return (
     <span className="inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-lg border border-zinc-950/10 bg-white shadow-sm">
       <Image src="/marketing/founderos-mark-generated.png" alt="" width={36} height={36} className="h-full w-full object-cover" />
     </span>
-  );
-}
-
-function CodexLogo() {
-  return (
-    <Image src="/marketing/codex-logo.svg" alt="" width={24} height={24} className="h-6 w-6 shrink-0" unoptimized />
   );
 }
 
@@ -396,7 +319,7 @@ function Navbar({
               {item.label}
             </a>
           ))}
-          <a href="#" className="text-sm font-medium text-zinc-700 transition hover:text-zinc-950">
+          <a href={githubUrl} className="text-sm font-medium text-zinc-700 transition hover:text-zinc-950">
             GitHub
           </a>
         </div>
@@ -454,13 +377,13 @@ function HeroSection() {
         <div className="mx-auto max-w-4xl text-center">
           <p className="mx-auto inline-flex items-center gap-2 rounded-full border border-zinc-950/[0.08] bg-white px-3 py-1 text-xs font-semibold text-zinc-500 shadow-sm">
             <Sparkles size={13} />
-            All your tools, models, and knowledge in one operating workspace
+            Your live services and company knowledge in one operating workspace
           </p>
           <h1 className="mt-5 text-balance text-4xl font-bold leading-[1.02] text-zinc-950 sm:text-6xl">
-            Do everything, in one place, with all your context.
+            Ask, delegate, review, and reuse business context in one place.
           </h1>
           <p className="mx-auto mt-5 max-w-3xl text-pretty text-base leading-7 text-zinc-600 sm:text-lg">
-            FounderOS turns your company knowledge, connected tools, agents, and approvals into one place that can create websites, tools, documents, videos, images, and workflows from a single request.
+            FounderOS connects your company knowledge, Google Workspace, GitHub, Vercel, local build setup, and approvals so work can move from request to review without exposing the machinery.
           </p>
 
           <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
@@ -468,8 +391,8 @@ function HeroSection() {
               Get started for free
               <ArrowRight size={16} />
             </Link>
-            <a href="#" className="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-zinc-950/[0.1] bg-white px-6 text-sm font-semibold text-zinc-950 shadow-sm transition hover:border-zinc-950/20">
-              Star on GitHub
+            <a href={githubUrl} className="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-zinc-950/[0.1] bg-white px-6 text-sm font-semibold text-zinc-950 shadow-sm transition hover:border-zinc-950/20">
+              View GitHub
               <Github size={16} />
             </a>
           </div>
@@ -522,7 +445,7 @@ function HeroDemoStage() {
               <div className="flex items-start justify-between gap-4 border-b border-zinc-950/[0.06] pb-4">
                 <div>
                   <p className="text-xs font-semibold uppercase text-zinc-400">Workspace</p>
-                  <h3 className="mt-1 text-xl font-bold leading-tight text-zinc-950">Launch dashboard and investor update</h3>
+                  <h3 className="mt-1 text-xl font-bold leading-tight text-zinc-950">Launch plan and review package</h3>
                 </div>
                 <span className={`rounded-full px-3 py-1 text-xs font-semibold ${done ? "bg-emerald-100 text-emerald-700" : "bg-teal-100 text-teal-700"}`}>
                   {done ? "Ready" : "Live"}
@@ -531,9 +454,9 @@ function HeroDemoStage() {
 
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 {[
-                  ["Plan", "Map the request into build, finance, and comms work."],
-                  ["Context", "Read launch notes, revenue data, and saved decisions."],
-                  ["Create", "Generate the dashboard, launch page, and update draft."],
+                  ["Plan", "Map the request into build, document, and comms work."],
+                  ["Context", "Read launch notes, source files, and saved decisions."],
+                  ["Create", "Prepare the preview, summary, and update draft."],
                   ["Review", "Hold publish and send actions for approval."],
                 ].map(([label, detail], index) => (
                   <div key={label} className="hero-progress-row flex items-start gap-3" style={{ transitionDelay: `${index * 120}ms` }}>
@@ -626,7 +549,7 @@ function HeroPromptComposer({ prompt, done }: { prompt: string; done: boolean })
 }
 
 function HeroConnectorMap({ active }: { active: boolean }) {
-  const connectors = ["Stripe", "Postgres", "Docs", "Codex", "Vercel", "Gmail"];
+  const connectors = ["Docs", "Sheets", "Drive", "GitHub", "Vercel", "Gmail"];
 
   return (
     <aside className={`hero-connector-map ${active ? "is-active" : ""}`}>
@@ -657,8 +580,8 @@ function HeroOutputSummary() {
   return (
     <div className="grid gap-3">
       {[
-        { label: "Revenue dashboard", detail: "Stripe and Postgres synced" },
-        { label: "Launch page", detail: "Preview generated" },
+        { label: "Launch preview", detail: "Ready to review" },
+        { label: "Source summary", detail: "Docs and Sheets referenced" },
         { label: "Investor update", detail: "Draft saved for approval" },
       ].map((item) => (
         <div key={item.label} className="rounded-lg border border-zinc-950/[0.08] bg-[#fbfaf7] p-3">
@@ -730,7 +653,7 @@ function ToolStrip() {
           <div>
             <h2 className="text-3xl font-bold leading-tight text-zinc-950 sm:text-4xl">Connect the work to the tools that actually finish it.</h2>
             <p className="mt-4 text-sm leading-6 text-zinc-600">
-              Apps, databases, docs, build systems, models, and approval gates stay in one operating loop.
+              Google Workspace, GitHub, Vercel, local build support, and approval gates stay in one operating loop.
             </p>
             <a href="#orchestration" className="mt-5 inline-flex items-center gap-1 text-sm font-semibold text-zinc-950">
               See orchestration
@@ -769,10 +692,10 @@ function UseCasesSection() {
     <section id="use-cases" className="bg-[#fbfaf7] py-20 sm:py-24">
       <div className="mx-auto max-w-[1480px] px-5 sm:px-8">
         <div className="max-w-4xl">
-          <p className="text-xs font-semibold uppercase text-zinc-400">Workflow demos</p>
+          <p className="text-xs font-semibold uppercase text-zinc-400">Live workflow examples</p>
           <h2 className="mt-3 text-4xl font-bold leading-tight text-zinc-950 sm:text-5xl">One request can become the whole output, not another tab to manage.</h2>
           <p className="mt-4 text-lg leading-8 text-zinc-600">
-            Each demo keeps the explanation beside the product motion: the ask, the context FounderOS pulls in, the connector moments, and the finished thing you can review.
+            Each example keeps the explanation beside the product motion: the ask, the live context FounderOS can use, and the reviewable result.
           </p>
         </div>
 
@@ -1152,7 +1075,7 @@ function OrchestrationSection() {
     <section id="orchestration" className="bg-[#fbfaf7] py-20 sm:py-24">
       <div className="mx-auto grid max-w-[1480px] gap-10 px-5 sm:px-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
         <div>
-          <h2 className="text-4xl font-bold leading-tight text-zinc-950 sm:text-5xl">One operating layer for context, tools, models, and approvals.</h2>
+          <h2 className="text-4xl font-bold leading-tight text-zinc-950 sm:text-5xl">One operating layer for context, live tools, and approvals.</h2>
           <p className="mt-5 text-lg leading-8 text-zinc-600">
             FounderOS can run open source with your setup or managed with hosted orchestration. The visible experience stays focused on work, not provider plumbing.
           </p>
@@ -1178,9 +1101,9 @@ function OrchestrationSection() {
 function OrchestrationDemo() {
   const routes = [
     { label: "Context", icon: <Database size={16} />, detail: "Docs, memory, decisions" },
-    { label: "Build", icon: <Code2 size={16} />, detail: "Codex, OpenCode, GitHub" },
+    { label: "Build", icon: <Code2 size={16} />, detail: "Local build, GitHub" },
     { label: "Operate", icon: <RefreshCw size={16} />, detail: "Schedules and workflows" },
-    { label: "Revenue", icon: <BarChart3 size={16} />, detail: "Stripe, CRM, Sheets" },
+    { label: "Plan", icon: <BarChart3 size={16} />, detail: "Docs and Sheets context" },
     { label: "Publish", icon: <Globe2 size={16} />, detail: "Vercel and previews" },
     { label: "Review", icon: <ShieldCheck size={16} />, detail: "Approval gates" },
   ];
@@ -1307,7 +1230,7 @@ function Footer() {
           <LogoMark />
           <div>
             <p className="font-semibold text-zinc-950">FounderOS</p>
-            <p className="text-sm text-zinc-500">One workspace for anything your business needs.</p>
+            <p className="text-sm text-zinc-500">One workspace to ask, delegate, review, and reuse business context.</p>
           </div>
         </div>
         <div className="flex flex-wrap gap-5 text-sm font-medium text-zinc-600">
@@ -1317,7 +1240,7 @@ function Footer() {
           <Link href="/subscription" className="hover:text-zinc-950">Subscription</Link>
           <Link href="/privacy" className="hover:text-zinc-950">Privacy</Link>
           <Link href="/terms" className="hover:text-zinc-950">Terms</Link>
-          <a href="#" className="hover:text-zinc-950">GitHub</a>
+          <a href={githubUrl} className="hover:text-zinc-950">GitHub</a>
         </div>
       </div>
     </footer>

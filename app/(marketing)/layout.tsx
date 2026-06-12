@@ -8,20 +8,20 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "FounderOS - One workspace for anything your business needs",
+  title: "FounderOS - One workspace to ask, delegate, review, and reuse context",
   description:
-    "FounderOS is an open-source, AI-native workspace that connects your context, tools, models, and agents so you can run tasks, workflows, or an entire business.",
+    "FounderOS is an open-source, AI-native workspace for a non-technical founder to use company knowledge, live services, and approvals in one calm operating layer.",
   openGraph: {
-    title: "FounderOS - One workspace for anything your business needs",
+    title: "FounderOS - One workspace to ask, delegate, review, and reuse context",
     description:
-      "Connect your tools, context, models, and keys in one adaptive workspace for agentic work.",
+      "Connect company knowledge, Google Workspace, GitHub, Vercel, local build support, and approval gates in one founder-facing workspace.",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "FounderOS - One workspace for anything your business needs",
+    title: "FounderOS - One workspace to ask, delegate, review, and reuse context",
     description:
-      "An open-source, AI-native workspace for tasks, workflows, knowledge, automations, and transparent orchestration.",
+      "An open-source, AI-native workspace for business context, visible work, recurring requests, and approval-gated action.",
   },
 };
 

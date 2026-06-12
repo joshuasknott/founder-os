@@ -5,7 +5,7 @@ import { ArrowLeft } from "lucide-react";
 
 export const metadata: Metadata = {
   title: "FounderOS Privacy Policy",
-  description: "FounderOS privacy policy for workspace context, connected services, approvals, and model access.",
+  description: "FounderOS privacy policy for workspace context, connected services, approvals, and runtime access.",
 };
 
 const sections = [
@@ -15,11 +15,11 @@ const sections = [
   },
   {
     title: "Connected services",
-    body: "When you connect services such as Google Workspace, GitHub, Vercel, or Stripe-derived finance context, FounderOS uses the access you grant to read or prepare the work you request. Sensitive actions remain approval-gated.",
+    body: "When you connect services such as Google Workspace, GitHub, Vercel, or local build support, FounderOS uses the access you grant to read or prepare the work you request. Sensitive actions remain approval-gated.",
   },
   {
-    title: "Model and local runtime access",
-    body: "FounderOS can use local OpenCode, your own keys, or managed model access depending on setup. The product should avoid exposing provider and routing details to founders, but privacy rules still apply before context is used.",
+    title: "Runtime access",
+    body: "FounderOS can use a local build setup, your own keys, or managed runtime access depending on setup. Privacy rules still apply before workspace context is used.",
   },
   {
     title: "Approvals",
@@ -33,7 +33,7 @@ const sections = [
 
 export default function PrivacyPage() {
   return (
-    <LegalPage title="Privacy Policy" intro="How FounderOS handles workspace context, connected services, model access, and approval-gated work." sections={sections} />
+    <LegalPage title="Privacy Policy" intro="How FounderOS handles workspace context, connected services, runtime access, and approval-gated work." sections={sections} />
   );
 }
 
