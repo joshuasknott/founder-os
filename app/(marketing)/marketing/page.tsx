@@ -37,8 +37,6 @@ type ToolLogo = {
   iconNode?: React.ReactNode;
 };
 
-type HeroDemoPhase = "typing" | "sent" | "working" | "done";
-
 type WorkflowDemo = {
   id: string;
   label: string;
@@ -88,8 +86,6 @@ const toolLogos: ToolLogo[] = [
 const githubUrl = "https://github.com/joshuasknott/founder-os";
 
 const heroPrompt = "Review my launch plan, draft the update, and prepare the preview for approval.";
-
-const heroPhases: HeroDemoPhase[] = ["typing", "sent", "working", "done"];
 
 const workflowDemos: WorkflowDemo[] = [
   {
@@ -407,79 +403,66 @@ function HeroSection() {
 }
 
 function HeroDemoStage() {
-  const phaseIndex = useTimedScene(heroPhases.length, 2200);
-  const phase = heroPhases[phaseIndex];
-  const typedPrompt = useTypingPreview(heroPrompt, phase === "typing");
-  const connectorActive = phase === "working" || phase === "done";
-  const done = phase === "done";
-
   return (
-    <article className={`hero-demo-stage is-${phase} mx-auto overflow-hidden rounded-2xl border border-zinc-950/[0.08] bg-white shadow-[0_30px_110px_rgba(15,23,42,0.12)]`}>
+    <article className="hero-demo-stage hero-brief-stage mx-auto overflow-hidden rounded-2xl border border-zinc-950/[0.08] bg-white shadow-[0_30px_110px_rgba(15,23,42,0.12)]">
       <div className="flex items-center justify-between gap-3 border-b border-zinc-950/[0.06] bg-white px-4 py-3 sm:px-5">
         <div className="flex min-w-0 items-center gap-3">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-zinc-950 text-white">
             <Sparkles size={15} />
           </span>
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-zinc-950">FounderOS live demo</p>
-            <p className="truncate text-[11px] font-medium text-zinc-500">
-              {phase === "typing" ? "Typing request" : phase === "sent" ? "Opening workspace" : phase === "working" ? "Running with connectors" : "Outputs ready"}
-            </p>
+            <p className="truncate text-sm font-semibold text-zinc-950">FounderOS request flow</p>
+            <p className="truncate text-[11px] font-medium text-zinc-500">One request becomes one reviewable outcome</p>
           </div>
         </div>
-        <div className="hidden items-center gap-1.5 sm:flex">
-          {heroPhases.map((item, index) => (
-            <span
-              key={item}
-              className={`h-2 rounded-full transition-all duration-300 ${index <= phaseIndex ? "w-8 bg-zinc-950" : "w-2 bg-zinc-200"}`}
-              aria-label={item}
-            />
-          ))}
-        </div>
+        <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">Ready for review</span>
       </div>
 
-      <div className="hero-demo-viewport">
-        <div className="hero-conversation-grid">
-          <div className="hero-chat-panel">
-            <div className="rounded-xl border border-zinc-950/[0.08] bg-white p-4 shadow-sm sm:p-5">
-              <div className="flex items-start justify-between gap-4 border-b border-zinc-950/[0.06] pb-4">
-                <div>
-                  <p className="text-xs font-semibold uppercase text-zinc-400">Workspace</p>
-                  <h3 className="mt-1 text-xl font-bold leading-tight text-zinc-950">Launch plan and review package</h3>
-                </div>
-                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${done ? "bg-emerald-100 text-emerald-700" : "bg-teal-100 text-teal-700"}`}>
-                  {done ? "Ready" : "Live"}
-                </span>
-              </div>
-
-              <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                {[
-                  ["Plan", "Map the request into build, document, and comms work."],
-                  ["Context", "Read launch notes, source files, and saved decisions."],
-                  ["Create", "Prepare the preview, summary, and update draft."],
-                  ["Review", "Hold publish and send actions for approval."],
-                ].map(([label, detail], index) => (
-                  <div key={label} className="hero-progress-row flex items-start gap-3" style={{ transitionDelay: `${index * 120}ms` }}>
-                    <span className="hero-progress-dot mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-zinc-300" />
-                    <span className="min-w-0">
-                      <span className="block text-sm font-semibold text-zinc-950">{label}</span>
-                      <span className="mt-0.5 block text-xs leading-5 text-zinc-500">{detail}</span>
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="hero-output-card mt-5 grid gap-3 lg:grid-cols-[0.58fr_0.42fr]">
-                <WebsiteOutputFrame compact />
-                <HeroOutputSummary />
-              </div>
+      <div className="hero-brief-viewport">
+        <div className="hero-brief-grid">
+          <div className="hero-request-card rounded-2xl border border-zinc-950/[0.08] bg-zinc-950 p-4 text-white shadow-[0_22px_80px_rgba(15,23,42,0.16)] sm:p-5">
+            <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-3">
+              <span className="flex items-center gap-2 text-xs font-semibold text-zinc-300">
+                <MessageSquare size={14} />
+                Ask FounderOS
+              </span>
+              <span className="hero-request-status rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-zinc-950">Sent</span>
             </div>
+            <p className="mt-4 text-base font-semibold leading-7 text-zinc-50">{heroPrompt}</p>
           </div>
 
-          <HeroConnectorMap active={connectorActive} />
-        </div>
+          <div className="hero-brief-path" aria-hidden="true">
+            <span className="hero-path-dot" />
+            <span className="hero-path-line" />
+            <span className="hero-path-dot" />
+          </div>
 
-        <HeroPromptComposer prompt={typedPrompt} done={phase !== "typing"} />
+          <div className="hero-review-card rounded-2xl border border-zinc-950/[0.08] bg-white p-5 shadow-[0_24px_90px_rgba(15,23,42,0.12)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-400">Review package</p>
+                <h3 className="mt-2 text-2xl font-bold leading-tight text-zinc-950">Investor update draft</h3>
+              </div>
+              <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">Ready</span>
+            </div>
+            <div className="mt-5 space-y-3">
+              {[
+                ["Summary", "Launch plan, risks, and next milestones"],
+                ["Sources", "Docs and Sheets referenced"],
+                ["Approval", "Email draft waits for your review"],
+              ].map(([label, detail]) => (
+                <div key={label} className="hero-review-row rounded-xl border border-zinc-950/[0.08] bg-[#fbfaf7] p-3">
+                  <p className="text-sm font-semibold text-zinc-950">{label}</p>
+                  <p className="mt-1 text-xs leading-5 text-zinc-600">{detail}</p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+              <span className="inline-flex h-10 items-center justify-center rounded-lg bg-zinc-950 px-4 text-sm font-semibold text-white">Review draft</span>
+              <span className="inline-flex h-10 items-center justify-center rounded-lg border border-zinc-950/[0.1] bg-white px-4 text-sm font-semibold text-zinc-700">Open sources</span>
+            </div>
+          </div>
+        </div>
       </div>
     </article>
   );
@@ -497,100 +480,6 @@ function useTimedScene(sceneCount: number, intervalMs: number) {
   }, [intervalMs, sceneCount]);
 
   return activeIndex;
-}
-
-function useTypingPreview(text: string, active: boolean) {
-  const [length, setLength] = useState(0);
-
-  useEffect(() => {
-    if (!active) return;
-
-    let current = 0;
-    const reset = window.setTimeout(() => setLength(0), 0);
-    const timer = window.setInterval(() => {
-      current = Math.min(current + 3, text.length);
-      setLength(current);
-    }, 42);
-
-    return () => {
-      window.clearTimeout(reset);
-      window.clearInterval(timer);
-    };
-  }, [active, text]);
-
-  return active ? text.slice(0, length) : text;
-}
-
-function HeroPromptComposer({ prompt, done }: { prompt: string; done: boolean }) {
-  return (
-    <div className="hero-prompt-spot">
-      <div className="rounded-2xl border border-zinc-950/[0.08] bg-white p-3 shadow-[0_22px_80px_rgba(15,23,42,0.16)]">
-        <div className="rounded-xl border border-zinc-950/[0.06] bg-zinc-950 p-3 text-white">
-          <div className="mb-3 flex items-center justify-between gap-3 border-b border-white/10 pb-3">
-            <span className="flex items-center gap-2 text-xs font-semibold text-zinc-300">
-              <MessageSquare size={14} />
-              Ask FounderOS
-            </span>
-            <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-zinc-950">{done ? "Sent" : "Typing"}</span>
-          </div>
-          <div className="flex min-h-20 items-end gap-3">
-            <p className="min-w-0 flex-1 text-sm font-medium leading-6 text-zinc-50 sm:text-base">
-              {prompt}
-              {!done && <span className="hero-typing-caret ml-0.5 inline-block h-4 w-0.5 translate-y-0.5 bg-teal-300" />}
-            </p>
-            <span className="hero-send-button flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white text-zinc-950">
-              <ArrowRight size={17} />
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function HeroConnectorMap({ active }: { active: boolean }) {
-  const connectors = ["Docs", "Sheets", "Drive", "GitHub", "Vercel", "Gmail"];
-
-  return (
-    <aside className={`hero-connector-map ${active ? "is-active" : ""}`}>
-      <div className="relative z-10 grid grid-cols-2 gap-3 lg:grid-cols-1">
-        <div className="col-span-2 rounded-xl border border-zinc-950/[0.08] bg-white p-4 shadow-sm lg:col-span-1">
-          <p className="text-xs font-semibold uppercase text-zinc-400">Context selected</p>
-          <p className="mt-2 text-sm font-semibold leading-6 text-zinc-950">FounderOS brings in only the systems needed for this request.</p>
-        </div>
-        {connectors.map((name, index) => (
-          <div
-            key={name}
-            className="hero-connector-node flex items-center justify-between gap-3 rounded-xl border border-zinc-950/[0.08] bg-white p-3 shadow-sm"
-            style={{ transitionDelay: `${index * 90}ms` }}
-          >
-            <span className="flex min-w-0 items-center gap-3">
-              <ConnectorLogo name={name} />
-              <span className="truncate text-sm font-semibold text-zinc-800">{name}</span>
-            </span>
-            <span className={`h-2 w-2 rounded-full ${active ? "bg-teal-500" : "bg-zinc-300"}`} />
-          </div>
-        ))}
-      </div>
-    </aside>
-  );
-}
-
-function HeroOutputSummary() {
-  return (
-    <div className="grid gap-3">
-      {[
-        { label: "Launch preview", detail: "Ready to review" },
-        { label: "Source summary", detail: "Docs and Sheets referenced" },
-        { label: "Investor update", detail: "Draft saved for approval" },
-      ].map((item) => (
-        <div key={item.label} className="rounded-lg border border-zinc-950/[0.08] bg-[#fbfaf7] p-3">
-          <p className="text-sm font-semibold text-zinc-950">{item.label}</p>
-          <p className="mt-1 text-xs leading-5 text-zinc-600">{item.detail}</p>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 function ConnectorLogoRow({ connectors }: { connectors: string[] }) {
