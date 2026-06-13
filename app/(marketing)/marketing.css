@@ -80,6 +80,12 @@
     transform: translateY(0);
   }
 
+  .marketing-logo-mark {
+    background-image: url("/marketing/founderos-mark-generated.png");
+    background-position: center;
+    background-size: cover;
+  }
+
   .text-balance {
     text-wrap: balance;
   }

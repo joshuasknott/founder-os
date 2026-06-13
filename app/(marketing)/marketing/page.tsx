@@ -1,19 +1,14 @@
-"use client";
-
-import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import {
   ArrowRight,
   Code2,
-  FileText,
   Github,
-  Menu,
   MessageSquare,
   Sparkles,
-  X,
 } from "lucide-react";
 import { siGithub, siVercel, type SimpleIcon } from "simple-icons";
+import { MarketingNavbar } from "./MarketingNavbar";
 
 type ToolLogo = {
   name: string;
@@ -34,14 +29,6 @@ type WorkflowStep = {
 };
 
 const githubUrl = "https://github.com/joshuasknott/founder-os";
-
-const navItems = [
-  { label: "Product", href: "#product" },
-  { label: "Workflow", href: "#workflow" },
-  { label: "Integrations", href: "#integrations" },
-  { label: "Trust", href: "#trust" },
-  { label: "Privacy", href: "/privacy" },
-];
 
 const toolLogos: ToolLogo[] = [
   { name: "Gmail", iconNode: <GmailLogo /> },
@@ -177,14 +164,12 @@ function LogoMark() {
 }
 
 export default function MarketingPage() {
-  const [mobileOpen, setMobileOpen] = useState(false);
-
   return (
     <>
       <a href="#main-content" className="skip-link">
         Skip to main content
       </a>
-      <Navbar mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} />
+      <MarketingNavbar />
       <main id="main-content" tabIndex={-1} className="min-h-screen bg-[#fbfaf7] text-zinc-950 focus:outline-none">
         <HeroSection />
         <WorkflowProofSection />
@@ -194,79 +179,6 @@ export default function MarketingPage() {
       </main>
       <Footer />
     </>
-  );
-}
-
-function Navbar({
-  mobileOpen,
-  setMobileOpen,
-}: {
-  mobileOpen: boolean;
-  setMobileOpen: (value: boolean) => void;
-}) {
-  return (
-    <header className="sticky top-0 z-40 border-b border-zinc-950/[0.06] bg-[#fbfaf7]/90 backdrop-blur-xl">
-      <nav aria-label="Primary navigation" className="mx-auto flex max-w-[1180px] items-center justify-between px-5 py-4 sm:px-8">
-        <Link href="/marketing" className="flex items-center gap-3" aria-label="FounderOS marketing home">
-          <LogoMark />
-          <span className="text-xl font-bold text-zinc-950">FounderOS</span>
-        </Link>
-
-        <div className="hidden items-center gap-8 lg:flex">
-          {navItems.map((item) => (
-            <a key={item.label} href={item.href} className="text-sm font-medium text-zinc-700 transition hover:text-zinc-950">
-              {item.label}
-            </a>
-          ))}
-          <a href={githubUrl} className="text-sm font-medium text-zinc-700 transition hover:text-zinc-950">
-            GitHub
-          </a>
-        </div>
-
-        <div className="hidden items-center gap-3 lg:flex">
-          <Link href="/" className="rounded-lg px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:bg-white hover:text-zinc-950">
-            Log in
-          </Link>
-          <Link href="/" className="rounded-lg bg-zinc-950 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-800">
-            Get started
-          </Link>
-        </div>
-
-        <button
-          type="button"
-          className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-950/10 bg-white text-zinc-950 lg:hidden"
-          onClick={() => setMobileOpen(!mobileOpen)}
-          aria-label={mobileOpen ? "Close navigation" : "Open navigation"}
-          aria-expanded={mobileOpen}
-          aria-controls="mobile-navigation"
-        >
-          {mobileOpen ? <X size={18} /> : <Menu size={18} />}
-        </button>
-      </nav>
-
-      {mobileOpen && (
-        <nav id="mobile-navigation" aria-label="Mobile navigation" className="border-t border-zinc-950/[0.06] bg-[#fbfaf7] px-5 py-5 lg:hidden">
-          <div className="flex flex-col gap-4">
-            {navItems.map((item) => (
-              <a
-                key={item.label}
-                href={item.href}
-                onClick={() => setMobileOpen(false)}
-                className="rounded-md py-2 text-sm font-medium text-zinc-700"
-              >
-                {item.label}
-              </a>
-            ))}
-            <Link href="/" className="rounded-lg border border-zinc-950/10 bg-white px-4 py-2 text-center text-sm font-semibold">
-              Log in
-            </Link>
-            <Link href="/" className="rounded-lg bg-zinc-950 px-4 py-2 text-center text-sm font-semibold text-white">
-              Get started
-            </Link>
-          </div>
-        </nav>
-      )}
-    </header>
   );
 }
 
@@ -387,8 +299,6 @@ function ConnectorLogo({ name }: { name: string }) {
 
   if (tool?.icon) return <SimpleBrandIcon icon={tool.icon} className="h-6 w-6 shrink-0" />;
   if (tool?.iconNode) return <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center">{tool.iconNode}</span>;
-  if (name === "Library") return <FileText size={18} className="text-zinc-700" />;
-
   return (
     <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-zinc-950 text-[10px] font-bold text-white">
       {name.slice(0, 1)}
@@ -411,10 +321,10 @@ function WebsiteOutputFrame() {
         <Image
           src="/marketing/demo-output-northstarcrm.png"
           alt="NorthstarCRM launch website preview prepared for founder review"
-          width={1792}
-          height={1024}
+          width={1368}
+          height={770}
+          sizes="(min-width: 1024px) 684px, calc(100vw - 40px)"
           className="h-full w-full object-cover"
-          priority
         />
       </div>
     </div>
