@@ -180,15 +180,20 @@ export default function MarketingPage() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
-    <main className="min-h-screen bg-[#fbfaf7] text-zinc-950">
+    <>
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
       <Navbar mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} />
-      <HeroSection />
-      <WorkflowProofSection />
-      <ToolStrip />
-      <TrustSection />
-      <FinalCta />
+      <main id="main-content" tabIndex={-1} className="min-h-screen bg-[#fbfaf7] text-zinc-950 focus:outline-none">
+        <HeroSection />
+        <WorkflowProofSection />
+        <ToolStrip />
+        <TrustSection />
+        <FinalCta />
+      </main>
       <Footer />
-    </main>
+    </>
   );
 }
 
@@ -201,7 +206,7 @@ function Navbar({
 }) {
   return (
     <header className="sticky top-0 z-40 border-b border-zinc-950/[0.06] bg-[#fbfaf7]/90 backdrop-blur-xl">
-      <nav className="mx-auto flex max-w-[1180px] items-center justify-between px-5 py-4 sm:px-8">
+      <nav aria-label="Primary navigation" className="mx-auto flex max-w-[1180px] items-center justify-between px-5 py-4 sm:px-8">
         <Link href="/marketing" className="flex items-center gap-3" aria-label="FounderOS marketing home">
           <LogoMark />
           <span className="text-xl font-bold text-zinc-950">FounderOS</span>
@@ -231,21 +236,23 @@ function Navbar({
           type="button"
           className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-950/10 bg-white text-zinc-950 lg:hidden"
           onClick={() => setMobileOpen(!mobileOpen)}
-          aria-label="Toggle navigation"
+          aria-label={mobileOpen ? "Close navigation" : "Open navigation"}
+          aria-expanded={mobileOpen}
+          aria-controls="mobile-navigation"
         >
           {mobileOpen ? <X size={18} /> : <Menu size={18} />}
         </button>
       </nav>
 
       {mobileOpen && (
-        <div className="border-t border-zinc-950/[0.06] bg-[#fbfaf7] px-5 py-5 lg:hidden">
+        <nav id="mobile-navigation" aria-label="Mobile navigation" className="border-t border-zinc-950/[0.06] bg-[#fbfaf7] px-5 py-5 lg:hidden">
           <div className="flex flex-col gap-4">
             {navItems.map((item) => (
               <a
                 key={item.label}
                 href={item.href}
                 onClick={() => setMobileOpen(false)}
-                className="text-sm font-medium text-zinc-700"
+                className="rounded-md py-2 text-sm font-medium text-zinc-700"
               >
                 {item.label}
               </a>
@@ -257,7 +264,7 @@ function Navbar({
               Get started
             </Link>
           </div>
-        </div>
+        </nav>
       )}
     </header>
   );
@@ -302,7 +309,7 @@ function HeroSection() {
 
 function HeroDemoStage() {
   return (
-    <article className="hero-demo-stage hero-brief-stage mx-auto overflow-hidden rounded-2xl border border-zinc-950/[0.08] bg-white shadow-[0_30px_110px_rgba(15,23,42,0.12)]">
+    <div className="hero-demo-stage hero-brief-stage mx-auto overflow-hidden rounded-2xl border border-zinc-950/[0.08] bg-white shadow-[0_30px_110px_rgba(15,23,42,0.12)]">
       <div className="flex items-center justify-between gap-3 border-b border-zinc-950/[0.06] bg-white px-4 py-3 sm:px-5">
         <div className="flex min-w-0 items-center gap-3">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-zinc-950 text-white">
@@ -338,8 +345,8 @@ function HeroDemoStage() {
           <div className="hero-review-card rounded-2xl border border-zinc-950/[0.08] bg-white p-5 shadow-[0_24px_90px_rgba(15,23,42,0.12)]">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-400">Review package</p>
-                <h3 className="mt-2 text-2xl font-bold leading-tight text-zinc-950">Launch update package</h3>
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-600">Review package</p>
+                <p className="mt-2 text-2xl font-bold leading-tight text-zinc-950">Launch update package</p>
               </div>
               <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">Ready</span>
             </div>
@@ -358,7 +365,7 @@ function HeroDemoStage() {
           </div>
         </div>
       </div>
-    </article>
+    </div>
   );
 }
 
@@ -403,7 +410,7 @@ function WebsiteOutputFrame() {
       <div className="relative aspect-[16/9] bg-white">
         <Image
           src="/marketing/demo-output-northstarcrm.png"
-          alt="Generated NorthstarCRM marketing website output"
+          alt="NorthstarCRM launch website preview prepared for founder review"
           width={1792}
           height={1024}
           className="h-full w-full object-cover"
@@ -421,7 +428,7 @@ function WorkflowProofSection() {
     <section id="workflow" className="bg-white py-16 sm:py-20">
       <div className="mx-auto grid max-w-[1180px] gap-10 px-5 sm:px-8 lg:grid-cols-[0.42fr_0.58fr] lg:items-center">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">One strong workflow</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-600">One strong workflow</p>
           <h2 className="mt-3 text-3xl font-bold leading-tight text-zinc-950 sm:text-5xl">One launch request becomes a review package.</h2>
           <p className="mt-5 text-base leading-7 text-zinc-600 sm:text-lg">
             The use case stays narrow: a founder asks once, FounderOS gathers the connected context, prepares the update and preview, then waits before anything is sent or published.
@@ -434,7 +441,7 @@ function WorkflowProofSection() {
             <p className="mt-3 text-sm font-medium leading-6">{heroPrompt}</p>
           </div>
           <div className="mt-5 space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">Sources used</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-600">Sources used</p>
             <ConnectorLogoRow connectors={connectors} />
           </div>
         </div>
@@ -444,7 +451,7 @@ function WorkflowProofSection() {
           <div className="rounded-xl border border-zinc-950/[0.08] bg-[#fbfaf7] p-4 sm:p-5">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">Sequence</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-600">Sequence</p>
                 <h3 className="mt-1 text-lg font-bold text-zinc-950">What the founder reviews</h3>
               </div>
               <span className="w-fit rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">Approval required</span>
@@ -456,7 +463,7 @@ function WorkflowProofSection() {
                     {index + 1}
                   </span>
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">{step.label}</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-600">{step.label}</p>
                     <h4 className="mt-1 text-base font-bold text-zinc-950">{step.title}</h4>
                     <p className="mt-1 text-sm leading-6 text-zinc-600">{step.text}</p>
                   </div>
@@ -475,7 +482,7 @@ function ToolStrip() {
     <section id="integrations" className="border-y border-zinc-950/[0.06] bg-[#fbfaf7] py-16 sm:py-20">
       <div className="mx-auto max-w-[1180px] px-5 sm:px-8">
         <div className="max-w-3xl">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">Live integrations</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-600">Live integrations</p>
           <h2 className="mt-3 text-3xl font-bold leading-tight text-zinc-950 sm:text-5xl">The active services are explicit.</h2>
           <p className="mt-4 text-base leading-7 text-zinc-600 sm:text-lg">
             FounderOS markets only the services it can use now: Google Workspace, GitHub, Vercel, and configured local build support.
@@ -506,7 +513,7 @@ function TrustSection() {
     <section id="trust" className="bg-white py-16 sm:py-20">
       <div className="mx-auto grid max-w-[1180px] gap-10 px-5 sm:px-8 lg:grid-cols-[0.38fr_0.62fr] lg:items-start">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">Trust and control</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-600">Trust and control</p>
           <h2 className="mt-3 text-3xl font-bold leading-tight text-zinc-950 sm:text-5xl">The founder stays in control.</h2>
           <p className="mt-5 text-base leading-7 text-zinc-600 sm:text-lg">
             FounderOS can help prepare and organize work, but sensitive actions stop for review before anything public, destructive, or costly happens.
@@ -516,7 +523,7 @@ function TrustSection() {
         <div className="grid gap-3 sm:grid-cols-2">
           {trustItems.map((item) => (
             <div key={item.title} className="rounded-lg border border-zinc-950/[0.08] bg-[#fbfaf7] p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">{item.signal}</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-600">{item.signal}</p>
               <h3 className="mt-3 text-lg font-bold text-zinc-950">{item.title}</h3>
               <p className="mt-2 text-sm leading-6 text-zinc-600">{item.text}</p>
             </div>
@@ -563,7 +570,7 @@ function Footer() {
             <p className="text-sm text-zinc-500">One workspace to ask, delegate, review, and reuse business context.</p>
           </div>
         </div>
-        <div className="flex flex-wrap gap-5 text-sm font-medium text-zinc-600">
+        <nav aria-label="Footer navigation" className="flex flex-wrap gap-5 text-sm font-medium text-zinc-600">
           <a href="#product" className="hover:text-zinc-950">Product</a>
           <a href="#workflow" className="hover:text-zinc-950">Workflow</a>
           <a href="#integrations" className="hover:text-zinc-950">Integrations</a>
@@ -571,7 +578,7 @@ function Footer() {
           <Link href="/privacy" className="hover:text-zinc-950">Privacy</Link>
           <Link href="/terms" className="hover:text-zinc-950">Terms</Link>
           <a href={githubUrl} className="hover:text-zinc-950">GitHub</a>
-        </div>
+        </nav>
       </div>
     </footer>
   );

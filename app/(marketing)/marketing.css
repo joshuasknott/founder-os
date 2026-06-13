@@ -22,9 +22,18 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
+  section[id] {
+    scroll-margin-top: 5.5rem;
+  }
+
   body {
     @apply bg-[#fbfaf7] text-zinc-950 font-sans antialiased;
     overflow-x: hidden;
+  }
+
+  :focus-visible {
+    outline: 3px solid #0f766e;
+    outline-offset: 3px;
   }
 
   ::selection {
@@ -52,6 +61,25 @@
 }
 
 @layer utilities {
+  .skip-link {
+    position: fixed;
+    top: 0.75rem;
+    left: 0.75rem;
+    z-index: 100;
+    transform: translateY(-200%);
+    border-radius: 0.5rem;
+    background: #ffffff;
+    padding: 0.75rem 1rem;
+    color: #09090b;
+    font-size: 0.875rem;
+    font-weight: 700;
+    box-shadow: 0 8px 30px rgba(24, 24, 27, 0.18);
+  }
+
+  .skip-link:focus {
+    transform: translateY(0);
+  }
+
   .text-balance {
     text-wrap: balance;
   }
@@ -90,11 +118,11 @@
   .hero-request-card {
     min-width: 0;
     transform: translateY(0);
-    animation: hero-request-send 6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+    animation: hero-request-send 6s cubic-bezier(0.22, 1, 0.36, 1) 1 forwards;
   }
 
   .hero-request-status {
-    animation: hero-status-ready 6s ease-in-out infinite;
+    animation: hero-status-ready 6s ease-in-out 1 forwards;
   }
 
   .hero-brief-path {
@@ -130,20 +158,20 @@
     background: linear-gradient(90deg, #14b8a6, #10b981);
     transform: scaleX(0);
     transform-origin: left center;
-    animation: hero-path-fill 6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+    animation: hero-path-fill 6s cubic-bezier(0.22, 1, 0.36, 1) 1 forwards;
   }
 
   .hero-review-card {
     min-width: 0;
     opacity: 0.72;
     transform: translateY(12px) scale(0.98);
-    animation: hero-review-rise 6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+    animation: hero-review-rise 6s cubic-bezier(0.22, 1, 0.36, 1) 1 forwards;
   }
 
   .hero-review-row {
     opacity: 0.72;
     transform: translateY(5px);
-    animation: hero-review-row 6s ease-in-out infinite;
+    animation: hero-review-row 6s ease-in-out 1 forwards;
   }
 
   .hero-review-row:nth-child(2) {
