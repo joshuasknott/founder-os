@@ -90,10 +90,18 @@ function connectorStateSecret() {
 }
 
 function connectorSiteUrl() {
-  return (
+  const configured = (
     process.env.NEXT_PUBLIC_SITE_URL
     ?? "http://localhost:3000"
   ).replace(/\/+$/g, "");
+
+  if (/^https?:\/\//i.test(configured)) return configured;
+
+  const isLocal =
+    configured.startsWith("localhost") ||
+    configured.startsWith("127.0.0.1") ||
+    configured.startsWith("[::1]");
+  return `${isLocal ? "http" : "https"}://${configured}`;
 }
 
 function connectorSiteUrlForOrigin(origin?: string) {

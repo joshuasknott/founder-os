@@ -2,6 +2,10 @@ import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = process.env.E2E_BASE_URL ?? "http://localhost:3000";
 const startWebServer = process.env.E2E_START_WEB_SERVER === "true";
+const reuseExistingServer = process.env.E2E_REUSE_EXISTING_SERVER === "true";
+const webServerUrl = new URL(baseURL);
+const webServerHost = webServerUrl.hostname || "localhost";
+const webServerPort = webServerUrl.port || (webServerUrl.protocol === "https:" ? "443" : "3000");
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -19,9 +23,9 @@ export default defineConfig({
   },
   webServer: startWebServer
     ? {
-        command: "npm run dev",
+        command: `npm run dev -- --hostname ${webServerHost} --port ${webServerPort}`,
         url: baseURL,
-        reuseExistingServer: true,
+        reuseExistingServer,
         timeout: 120_000,
       }
     : undefined,

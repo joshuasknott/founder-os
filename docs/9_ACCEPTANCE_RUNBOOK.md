@@ -144,6 +144,7 @@ Optional values:
 
 ```bash
 E2E_START_WEB_SERVER=true
+E2E_REUSE_EXISTING_SERVER=false
 FOUNDEROS_E2E_LIVE_CONNECTORS=false
 E2E_ACCEPTANCE_EMAIL_TO=
 E2E_ACCEPTANCE_CALENDAR_ATTENDEE=
@@ -154,8 +155,10 @@ E2E_ACCEPTANCE_GITHUB_BASE_BRANCH=main
 ```
 
 Use `E2E_START_WEB_SERVER=true` when Playwright should start `npm run dev`
-itself. Leave it false when Convex, Next, and the local runner are already
-running in separate terminals.
+itself. The server starts on the host and port from `E2E_BASE_URL`, and it will
+not reuse an existing server unless `E2E_REUSE_EXISTING_SERVER=true` is set.
+Leave `E2E_START_WEB_SERVER=false` when Convex, Next, and the local runner are
+already running in separate terminals.
 
 Run the browser checks:
 

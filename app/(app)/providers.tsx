@@ -18,9 +18,8 @@ import {
 } from "@/lib/account-deletion-pending";
 import { Loader2 } from "lucide-react";
 
-const convex = new ConvexReactClient(
-  process.env.NEXT_PUBLIC_CONVEX_URL as string
-);
+const convexUrl = normalizeAbsoluteUrl(process.env.NEXT_PUBLIC_CONVEX_URL);
+const convex = convexUrl ? new ConvexReactClient(convexUrl) : null;
 
 const ANY_READY_WORKSPACE_KEY = "founderos:workspace-ready:any";
 
@@ -29,11 +28,24 @@ installClerkAuthRefreshGuard();
 export default function ConvexClientProvider({ children }: { children: ReactNode }) {
   installClerkAuthRefreshGuard();
 
+  if (!convex) return <ConfigUnavailable />;
+
   return (
     <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
       <AuthGate>{children}</AuthGate>
     </ConvexProviderWithClerk>
   );
+}
+
+function normalizeAbsoluteUrl(value?: string) {
+  const cleaned = value?.trim().replace(/^["']|["']$/g, "").replace(/\/+$/g, "");
+  if (!cleaned) return null;
+  if (/^https?:\/\//i.test(cleaned)) return cleaned;
+  const isLocal =
+    cleaned.startsWith("localhost") ||
+    cleaned.startsWith("127.0.0.1") ||
+    cleaned.startsWith("[::1]");
+  return `${isLocal ? "http" : "https"}://${cleaned}`;
 }
 
 function AuthGate({ children }: { children: ReactNode }) {
@@ -485,6 +497,19 @@ function AuthUnavailable() {
         >
           Try again
         </button>
+      </div>
+    </main>
+  );
+}
+
+function ConfigUnavailable() {
+  return (
+    <main className="flex h-screen w-full items-center justify-center bg-surface px-4">
+      <div className="max-w-sm rounded-lg border border-amber-500/15 bg-white p-5 text-sm text-text-secondary shadow-sm">
+        <p className="font-semibold text-text-primary">Workspace setup needs configuration</p>
+        <p className="mt-2 leading-6">
+          FounderOS needs its workspace URL configured before the app can open.
+        </p>
       </div>
     </main>
   );
