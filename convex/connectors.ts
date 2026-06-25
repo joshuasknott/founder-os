@@ -6,6 +6,7 @@ import { anyApi, type FunctionReference } from "convex/server";
 import { actorFromIdentity, isAuthorizedWorkerToken, requireCurrentUser, requireWorkspaceAccess, workerActor } from "./authz";
 import { recordAuditEvent } from "./audit";
 import { appendItemVersion, createItemWithVersion } from "./itemModel";
+import { flexiblePayload, flexibleRecord } from "./itemValidators";
 import { buildConnectorImport } from "./connectorContent";
 import {
   connectorCredentialStorage,
@@ -2114,7 +2115,7 @@ export const startConnection = mutation({
   args: {
     workspaceId: v.id("workspaces"),
     connectorId: v.string(),
-    settings: v.optional(v.any()),
+    settings: v.optional(flexibleRecord),
   },
   handler: async (ctx, args) => {
     const current = await requireWorkspaceAccess(ctx, args.workspaceId, ["Owner"]);
@@ -2191,7 +2192,7 @@ export const completeManagedConnection = mutation({
     connectorId: v.string(),
     credentialHandle: v.string(),
     grantedScopes: v.array(v.string()),
-    settings: v.optional(v.any()),
+    settings: v.optional(flexibleRecord),
     connectedBy: v.optional(v.string()),
     tokenExpiresAt: v.optional(v.number()),
     refreshCredentialHandle: v.optional(v.string()),
@@ -2343,7 +2344,7 @@ export const setupApiKeyConnection = mutation({
     workspaceId: v.id("workspaces"),
     connectorId: v.string(),
     apiKey: v.string(),
-    settings: v.optional(v.any()),
+    settings: v.optional(flexibleRecord),
   },
   handler: async (ctx, args) => {
     const current = await requireWorkspaceAccess(ctx, args.workspaceId, ["Owner"]);
@@ -2472,7 +2473,7 @@ export const setupVercelConnection = action({
   args: {
     workspaceId: v.id("workspaces"),
     apiKey: v.string(),
-    settings: v.optional(v.any()),
+    settings: v.optional(flexibleRecord),
   },
   handler: async (ctx, args) => {
     const validation = validateApiKeyConnectorSetup({
@@ -2543,7 +2544,7 @@ export const setupManagedConnection = mutation({
   args: {
     workspaceId: v.id("workspaces"),
     connectorId: v.string(),
-    settings: v.optional(v.any()),
+    settings: v.optional(flexibleRecord),
   },
   handler: async (ctx, args) => {
     const current = await requireWorkspaceAccess(ctx, args.workspaceId, ["Owner"]);
@@ -2644,7 +2645,7 @@ export const setupManagedConnection = mutation({
 export const updateConnectionSettings = mutation({
   args: {
     connectionId: v.id("connectorConnections"),
-    settings: v.optional(v.any()),
+    settings: v.optional(flexibleRecord),
   },
   handler: async (ctx, args) => {
     const connection = await ctx.db.get(args.connectionId);
@@ -2777,7 +2778,7 @@ export const selectGitHubRepository = mutation({
 export const updateVercelConnectionFromProvider = internalMutation({
   args: {
     connectionId: v.id("connectorConnections"),
-    settings: v.optional(v.any()),
+    settings: v.optional(flexibleRecord),
     status: v.union(v.literal("connected"), v.literal("needs_attention")),
     healthy: v.boolean(),
     safeMessage: v.string(),
@@ -2994,7 +2995,7 @@ export const listVercelProjectsForConnection = action({
 export const selectVercelProject = action({
   args: {
     connectionId: v.id("connectorConnections"),
-    settings: v.any(),
+    settings: flexibleRecord,
   },
   handler: async (ctx, args) => {
     const existing = await ctx.runQuery(internalConnectors.getConnectionByIdForProvider, {
@@ -3623,7 +3624,7 @@ export const executeConnectorAction = action({
     workspaceId: v.id("workspaces"),
     connectorId: v.string(),
     actionType: v.string(),
-    actionPayload: v.optional(v.any()),
+    actionPayload: v.optional(flexiblePayload),
     approvalGranted: v.optional(v.boolean()),
     requestedBy: v.optional(v.string()),
     directiveId: v.optional(v.id("directives")),

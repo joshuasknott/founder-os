@@ -36,10 +36,15 @@ export const getAllAgents = query({
       .query("departments")
       .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
       .collect();
-    const departmentIds = new Set(departments.map((department) => department._id));
-    return (await ctx.db.query("agents").collect()).filter((agent) =>
-      departmentIds.has(agent.departmentId),
+    const agentGroups = await Promise.all(
+      departments.map((department) =>
+        ctx.db
+          .query("agents")
+          .withIndex("by_department", (q) => q.eq("departmentId", department._id))
+          .collect()
+      )
     );
+    return agentGroups.flat();
   },
 });
 
@@ -62,10 +67,15 @@ export const getAllPlaybooks = query({
       .query("departments")
       .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
       .collect();
-    const departmentIds = new Set(departments.map((department) => department._id));
-    return (await ctx.db.query("playbooks").collect()).filter((playbook) =>
-      departmentIds.has(playbook.departmentId),
+    const playbookGroups = await Promise.all(
+      departments.map((department) =>
+        ctx.db
+          .query("playbooks")
+          .withIndex("by_department", (q) => q.eq("departmentId", department._id))
+          .collect()
+      )
     );
+    return playbookGroups.flat();
   },
 });
 

@@ -34,6 +34,9 @@ const groupLabels: Record<GroupId, string> = {
   entities: "People, Companies, Ideas",
 };
 
+const SEARCH_SCAN_LIMIT = 300;
+const SEARCH_CHILD_LIMIT = 5;
+
 const stopWords = new Set([
   "a",
   "an",
@@ -317,40 +320,119 @@ async function buildKeywordResults(
 
   const [
     items,
-    itemVersions,
     documents,
     chatSessions,
-    chatMessages,
     directives,
     tasks,
     workRuns,
-    workRunUpdates,
-    workArtifacts,
     facts,
     entities,
   ] = await Promise.all([
-    ctx.db.query("items").collect(),
-    ctx.db.query("itemVersions").collect(),
-    ctx.db.query("documents").collect(),
-    ctx.db.query("chatSessions").collect(),
-    ctx.db.query("chatMessages").collect(),
-    ctx.db.query("directives").collect(),
-    ctx.db.query("tasks").collect(),
-    ctx.db.query("workRuns").collect(),
-    ctx.db.query("workRunUpdates").collect(),
-    ctx.db.query("workArtifacts").collect(),
-    ctx.db.query("facts").collect(),
-    ctx.db.query("entities").collect(),
+    workspaceId
+      ? ctx.db
+          .query("items")
+          .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+          .order("desc")
+          .take(SEARCH_SCAN_LIMIT)
+      : ctx.db.query("items").order("desc").take(SEARCH_SCAN_LIMIT),
+    workspaceId
+      ? ctx.db
+          .query("documents")
+          .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+          .order("desc")
+          .take(SEARCH_SCAN_LIMIT)
+      : ctx.db.query("documents").order("desc").take(SEARCH_SCAN_LIMIT),
+    workspaceId
+      ? ctx.db
+          .query("chatSessions")
+          .withIndex("by_workspace_lastMessage", (q) => q.eq("workspaceId", workspaceId))
+          .order("desc")
+          .take(SEARCH_SCAN_LIMIT)
+      : ctx.db.query("chatSessions").order("desc").take(SEARCH_SCAN_LIMIT),
+    workspaceId
+      ? ctx.db
+          .query("directives")
+          .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+          .order("desc")
+          .take(SEARCH_SCAN_LIMIT)
+      : ctx.db.query("directives").order("desc").take(SEARCH_SCAN_LIMIT),
+    workspaceId
+      ? ctx.db
+          .query("tasks")
+          .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+          .order("desc")
+          .take(SEARCH_SCAN_LIMIT)
+      : ctx.db.query("tasks").order("desc").take(SEARCH_SCAN_LIMIT),
+    workspaceId
+      ? ctx.db
+          .query("workRuns")
+          .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+          .order("desc")
+          .take(SEARCH_SCAN_LIMIT)
+      : ctx.db.query("workRuns").order("desc").take(SEARCH_SCAN_LIMIT),
+    workspaceId
+      ? ctx.db
+          .query("facts")
+          .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+          .order("desc")
+          .take(SEARCH_SCAN_LIMIT)
+      : ctx.db.query("facts").order("desc").take(SEARCH_SCAN_LIMIT),
+    workspaceId
+      ? ctx.db
+          .query("entities")
+          .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+          .order("desc")
+          .take(SEARCH_SCAN_LIMIT)
+      : ctx.db.query("entities").order("desc").take(SEARCH_SCAN_LIMIT),
   ]);
 
-  const scopedItems = (items as Doc<"items">[]).filter((item) => !workspaceId || item.workspaceId === workspaceId);
-  const scopedDocuments = (documents as Doc<"documents">[]).filter((document) => !workspaceId || document.workspaceId === workspaceId);
-  const scopedChatSessions = (chatSessions as Doc<"chatSessions">[]).filter((session) => !workspaceId || session.workspaceId === workspaceId);
-  const scopedDirectives = (directives as Doc<"directives">[]).filter((directive) => !workspaceId || directive.workspaceId === workspaceId);
-  const scopedTasks = (tasks as Doc<"tasks">[]).filter((task) => !workspaceId || task.workspaceId === workspaceId);
-  const scopedWorkRuns = (workRuns as Doc<"workRuns">[]).filter((run) => !workspaceId || run.workspaceId === workspaceId);
-  const scopedFacts = (facts as Doc<"facts">[]).filter((fact) => !workspaceId || fact.workspaceId === workspaceId);
-  const scopedEntities = (entities as Doc<"entities">[]).filter((entity) => !workspaceId || entity.workspaceId === workspaceId);
+  const scopedItems = items as Doc<"items">[];
+  const scopedDocuments = documents as Doc<"documents">[];
+  const scopedChatSessions = chatSessions as Doc<"chatSessions">[];
+  const scopedDirectives = directives as Doc<"directives">[];
+  const scopedTasks = tasks as Doc<"tasks">[];
+  const scopedWorkRuns = workRuns as Doc<"workRuns">[];
+  const scopedFacts = facts as Doc<"facts">[];
+  const scopedEntities = entities as Doc<"entities">[];
+
+  const [itemVersions, chatMessages, workRunUpdates, workArtifacts] = await Promise.all([
+    Promise.all(
+      scopedItems.map((item) =>
+        ctx.db
+          .query("itemVersions")
+          .withIndex("by_item", (q) => q.eq("itemId", item._id))
+          .order("desc")
+          .take(SEARCH_CHILD_LIMIT)
+      )
+    ).then((groups) => groups.flat()),
+    Promise.all(
+      scopedChatSessions.map((session) =>
+        ctx.db
+          .query("chatMessages")
+          .withIndex("by_session", (q) => q.eq("sessionId", session._id))
+          .order("desc")
+          .take(SEARCH_CHILD_LIMIT)
+      )
+    ).then((groups) => groups.flat()),
+    Promise.all(
+      scopedWorkRuns.map((run) =>
+        ctx.db
+          .query("workRunUpdates")
+          .withIndex("by_run", (q) => q.eq("runId", run._id))
+          .order("desc")
+          .take(SEARCH_CHILD_LIMIT)
+      )
+    ).then((groups) => groups.flat()),
+    Promise.all(
+      scopedWorkRuns.map((run) =>
+        ctx.db
+          .query("workArtifacts")
+          .withIndex("by_run", (q) => q.eq("runId", run._id))
+          .order("desc")
+          .take(SEARCH_CHILD_LIMIT)
+      )
+    ).then((groups) => groups.flat()),
+  ]);
 
   const itemsById = new Map<string, Doc<"items">>(scopedItems.map((item: Doc<"items">) => [item._id, item]));
   const sessionsById = new Map<string, Doc<"chatSessions">>(scopedChatSessions.map((session: Doc<"chatSessions">) => [session._id, session]));

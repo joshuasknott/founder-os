@@ -21,8 +21,6 @@ import { Loader2 } from "lucide-react";
 const convexUrl = normalizeAbsoluteUrl(process.env.NEXT_PUBLIC_CONVEX_URL);
 const convex = convexUrl ? new ConvexReactClient(convexUrl) : null;
 
-const ANY_READY_WORKSPACE_KEY = "founderos:workspace-ready:any";
-
 installClerkAuthRefreshGuard();
 
 export default function ConvexClientProvider({ children }: { children: ReactNode }) {
@@ -58,12 +56,9 @@ function AuthGate({ children }: { children: ReactNode }) {
   const [seededUserId, setSeededUserId] = useState<string | null>(null);
   const [seedError, setSeedError] = useState<{ userId: string; message: string } | null>(null);
   const [authTimedOut, setAuthTimedOut] = useState(false);
-  const [hasPassedGate, setHasPassedGate] = useState(false);
   const [hasLoadedAccount, setHasLoadedAccount] = useState(false);
   const [stableCurrentUser, setStableCurrentUser] = useState<Doc<"users"> | null | undefined>(undefined);
   const [stableWorkspaces, setStableWorkspaces] = useState<Doc<"workspaces">[] | undefined>(undefined);
-  const [rememberedReadyUserId, setRememberedReadyUserId] = useState<string | null>(null);
-  const [hasReadyAccountHint, setHasReadyAccountHint] = useState(false);
   const [hasHydrated, setHasHydrated] = useState(false);
   const [hasSeenSignedInUser, setHasSeenSignedInUser] = useState(false);
   const [confirmedSignedOut, setConfirmedSignedOut] = useState(false);
@@ -75,31 +70,20 @@ function AuthGate({ children }: { children: ReactNode }) {
   const shouldLoadWorkspace = Boolean(!accountDeletionPending && isAuthenticated && userId && seededUserId === userId);
   const currentUser = useQuery(api.users.current, shouldLoadWorkspace ? {} : "skip");
   const workspaces = useQuery(api.workspaces.get, shouldLoadWorkspace ? {} : "skip");
+  const readiness = useQuery(api.readiness.getCurrent, shouldLoadWorkspace ? {} : "skip");
   const displayedCurrentUser = currentUser ?? stableCurrentUser;
   const displayedWorkspaces = workspaces ?? stableWorkspaces;
   const workspace = displayedWorkspaces?.[0];
   const error = seedError && seedError.userId === userId ? seedError.message : null;
   const isReady = Boolean(isAuthenticated && userId && seededUserId === userId);
-  const workspaceLoaded = Boolean(
-    isReady &&
-    displayedCurrentUser !== undefined &&
-    displayedWorkspaces !== undefined &&
-    (!workspace || workspace.onboardingCompletedAt),
-  );
   const shouldShowOnboarding = Boolean(
     workspace &&
-    !workspace.onboardingCompletedAt &&
+    readiness &&
+    !readiness.ready &&
     displayedCurrentUser !== undefined,
   );
-  const hasRememberedReadyWorkspace = Boolean(userId && rememberedReadyUserId === userId);
   const canUseAuthenticatedShell = Boolean(isLoaded && isSignedIn && isAuthenticated);
-  const canKeepAppMounted = !accountDeletionPending && (
-    canUseAuthenticatedShell &&
-    (hasPassedGate ||
-      workspaceLoaded ||
-      hasRememberedReadyWorkspace ||
-      hasReadyAccountHint)
-  );
+  const canKeepAppMounted = !accountDeletionPending && canUseAuthenticatedShell && readiness?.ready === true;
   const canKeepResolvedAccountMounted = !accountDeletionPending && (canKeepAppMounted || shouldShowOnboarding);
 
   useEffect(() => {
@@ -113,7 +97,6 @@ function AuthGate({ children }: { children: ReactNode }) {
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled) return;
-      setHasReadyAccountHint(readReadyAccountHint());
       setAccountDeletionPending(readAccountDeletionPending());
       setHasHydrated(true);
     });
@@ -135,31 +118,6 @@ function AuthGate({ children }: { children: ReactNode }) {
       window.removeEventListener("storage", syncAccountDeletionPending);
     };
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const hasAnyReadyWorkspace = readReadyAccountHint();
-    if (!userId || typeof window === "undefined") {
-      queueMicrotask(() => {
-        if (cancelled) return;
-        setHasReadyAccountHint(hasAnyReadyWorkspace);
-        setRememberedReadyUserId(null);
-      });
-      return () => {
-        cancelled = true;
-      };
-    }
-    const hasRememberedWorkspace = readUserReadyWorkspace(userId);
-    queueMicrotask(() => {
-      if (!cancelled) {
-        setHasReadyAccountHint(hasAnyReadyWorkspace);
-        setRememberedReadyUserId(hasRememberedWorkspace ? userId : null);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [userId]);
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -184,16 +142,13 @@ function AuthGate({ children }: { children: ReactNode }) {
       lastSignedInUserIdRef.current = null;
       queueMicrotask(() => {
         if (cancelled) return;
-        setHasPassedGate(false);
         setHasLoadedAccount(false);
         setStableCurrentUser(undefined);
         setStableWorkspaces(undefined);
         setSeededUserId(null);
         setSeedError(null);
-        setHasReadyAccountHint(false);
         setHasSeenSignedInUser(false);
         setAccountDeletionPending(false);
-        clearReadyAccountHint();
         if (accountDeletionPending) {
           clearDeletedAccountReadyHints(deletedAccountUserId);
         }
@@ -213,7 +168,6 @@ function AuthGate({ children }: { children: ReactNode }) {
       seedingUserRef.current = null;
       queueMicrotask(() => {
         if (cancelled) return;
-        setHasPassedGate(false);
         setHasLoadedAccount(false);
         setStableCurrentUser(undefined);
         setStableWorkspaces(undefined);
@@ -274,23 +228,6 @@ function AuthGate({ children }: { children: ReactNode }) {
         }
       });
   }, [accountDeletionPending, isAuthenticated, isLoaded, isSignedIn, seedError?.userId, seededUserId, seedWorkspace, userId]);
-
-  useEffect(() => {
-    if (!workspaceLoaded) return;
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled) return;
-      setHasPassedGate(true);
-      if (userId && typeof window !== "undefined") {
-        rememberReadyWorkspace(userId);
-        setHasReadyAccountHint(true);
-        setRememberedReadyUserId(userId);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [userId, workspaceLoaded]);
 
   useEffect(() => {
     if (!isReady || currentUser === undefined || workspaces === undefined) return;
@@ -432,43 +369,6 @@ function connectorCallbackFallbackPath() {
     ((provider === "google_workspace" && code) || (provider === "github" && installationId)),
   );
   return isConnectorCallback ? `${window.location.pathname}${window.location.search}` : "/";
-}
-
-function readReadyAccountHint() {
-  if (typeof window === "undefined") return false;
-  try {
-    return window.localStorage.getItem(ANY_READY_WORKSPACE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function readUserReadyWorkspace(userId: string) {
-  if (typeof window === "undefined") return false;
-  try {
-    return window.localStorage.getItem(`founderos:workspace-ready:${userId}`) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function rememberReadyWorkspace(userId: string) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(ANY_READY_WORKSPACE_KEY, "1");
-    window.localStorage.setItem(`founderos:workspace-ready:${userId}`, "1");
-  } catch {
-    // The in-memory gate state still keeps the mounted app stable.
-  }
-}
-
-function clearReadyAccountHint() {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.removeItem(ANY_READY_WORKSPACE_KEY);
-  } catch {
-    // Local storage can be unavailable in private or locked-down browsers.
-  }
 }
 
 function PreparingWorkspace({ label }: { label: string }) {

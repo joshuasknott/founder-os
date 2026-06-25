@@ -1332,7 +1332,8 @@ export const getWorkPage = query({
     const runs = await ctx.db
       .query("workRuns")
       .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
-      .collect();
+      .order("desc")
+      .take(240);
 
     const pendingApprovals = [
       ...(await ctx.db

@@ -7,7 +7,11 @@ export const list = query({
   args: {},
   handler: async (ctx) => {
     const { workspaceId } = await requireCurrentUser(ctx);
-    return (await ctx.db.query("projects").collect()).filter((project) => project.workspaceId === workspaceId);
+    return await ctx.db
+      .query("projects")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .order("desc")
+      .take(200);
   },
 });
 
@@ -15,9 +19,11 @@ export const listSchedule = query({
   args: {},
   handler: async (ctx) => {
     const { workspaceId } = await requireCurrentUser(ctx);
-    return (await ctx.db.query("scheduleItems").withIndex("by_start").collect()).filter(
-      (item) => item.workspaceId === workspaceId,
-    );
+    return await ctx.db
+      .query("scheduleItems")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .order("desc")
+      .take(200);
   },
 });
 

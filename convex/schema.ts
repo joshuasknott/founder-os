@@ -213,6 +213,7 @@ export default defineSchema({
     onboardingCompletedAt: v.optional(v.number()),
     onboardingConnectorIds: v.optional(v.array(v.string())),
     reviewExternalActions: v.optional(v.boolean()),
+    externalActionApprovalConfirmedAt: v.optional(v.number()),
   }),
 
   api_keys: defineTable({
@@ -794,11 +795,12 @@ export default defineSchema({
     metadata: v.optional(v.any()),
     createdAt: v.number(),
     updatedAt: v.number(),
-  })
-    .index("by_entity", ["entityId"])
-    .index("by_item", ["itemId"])
-    .index("by_source_item", ["sourceItemId"])
-    .index("by_workspace_predicate", ["workspaceId", "predicate"]),
+    })
+      .index("by_entity", ["entityId"])
+      .index("by_item", ["itemId"])
+      .index("by_source_item", ["sourceItemId"])
+      .index("by_workspace", ["workspaceId"])
+      .index("by_workspace_predicate", ["workspaceId", "predicate"]),
 
   memoryEntries: defineTable({
     workspaceId: v.id("workspaces"),

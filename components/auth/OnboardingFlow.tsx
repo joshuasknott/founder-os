@@ -102,10 +102,12 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
   const setupManagedConnection = useMutation(api.connectors.setupManagedConnection);
   const selectGitHubRepository = useMutation(api.connectors.selectGitHubRepository);
   const services = useQuery(api.connectors.listForWorkspace, { workspaceId: workspace._id }) as ServiceCard[] | undefined;
+  const readiness = useQuery(api.readiness.getCurrent);
   const [name, setName] = useState(user?.name ?? "");
   const [businessName, setBusinessName] = useState(workspace.name);
   const [avatarUrl, setAvatarUrl] = useState(user?.avatarUrl ?? "");
   const [reviewExternalActions, setReviewExternalActions] = useState(true);
+  const [externalActionApprovalConfirmed, setExternalActionApprovalConfirmed] = useState(false);
   const [focusedConnectorId, setFocusedConnectorId] = useState(onboardingConnectorIds[0]);
   const [busyServiceId, setBusyServiceId] = useState<string | null>(null);
   const [isFinishing, setIsFinishing] = useState(false);
@@ -286,10 +288,8 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
     try {
       await saveBasics();
       await completeOnboarding({
-        workspaceId: workspace._id,
-        name: businessName.trim(),
-        connectorIds: connectedIds,
         reviewExternalActions,
+        externalActionApprovalConfirmed,
       });
       router.replace("/");
     } catch (saveError) {
@@ -563,13 +563,35 @@ export function OnboardingFlow({ user, workspace }: OnboardingFlowProps) {
             </span>
           </label>
 
+          {!reviewExternalActions && (
+            <label className="mt-3 flex items-start gap-3 rounded-lg border border-amber-500/15 bg-amber-50 px-3 py-3">
+              <input
+                type="checkbox"
+                checked={externalActionApprovalConfirmed}
+                onChange={(event) => setExternalActionApprovalConfirmed(event.target.checked)}
+                className="mt-1"
+              />
+              <span>
+                <span className="block text-sm font-semibold text-text-primary">Confirm external-action policy</span>
+                <span className="text-xs leading-5 text-text-secondary">
+                  I understand that I am choosing the external-action policy for this workspace.
+                </span>
+              </span>
+            </label>
+          )}
+
           {error && <p className="mt-4 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+          {!error && readiness?.blockingReason && (
+            <p className="mt-4 rounded-lg border border-black/[0.06] bg-surface px-3 py-2 text-sm text-text-secondary">
+              {readiness.blockingReason}
+            </p>
+          )}
 
           <div className="mt-6 flex justify-end">
             <button
               type="button"
               onClick={() => void finish()}
-              disabled={isFinishing || Boolean(busyServiceId)}
+              disabled={isFinishing || Boolean(busyServiceId) || (!reviewExternalActions && !externalActionApprovalConfirmed)}
               className="inline-flex items-center gap-2 rounded-lg bg-black px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isFinishing && <Loader2 size={15} className="animate-spin" />}

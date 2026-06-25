@@ -56,20 +56,32 @@ export async function requireIdentity(ctx: Pick<QueryCtx, "auth"> | Pick<Mutatio
 
 export function actorFromIdentity(identity: Identity, user?: Pick<Doc<"users">, "_id" | "name" | "email">) {
   return {
-    actorId: user ? String(user._id) : identity.subject,
+    actorId: user ? String(user._id) : identity.tokenIdentifier,
     actorName: user?.name ?? identity.name ?? identity.email ?? "Founder",
     actorType: "user" as const,
   };
 }
 
+export function externalIdFromIdentity(identity: Identity) {
+  return identity.tokenIdentifier;
+}
+
 export async function findUserForIdentity(ctx: DbCtx, identity: Identity) {
-  const externalId = identity.subject;
+  const externalId = externalIdFromIdentity(identity);
   const email = normalizeEmail(identity.email);
   const byExternal = await ctx.db
     .query("users")
     .withIndex("by_external", (q) => q.eq("externalId", externalId))
     .first();
   if (byExternal) return byExternal;
+  const legacySubject = identity.subject;
+  if (legacySubject && legacySubject !== externalId) {
+    const byLegacySubject = await ctx.db
+      .query("users")
+      .withIndex("by_external", (q) => q.eq("externalId", legacySubject))
+      .first();
+    if (byLegacySubject) return byLegacySubject;
+  }
   if (!email) return null;
   return await ctx.db
     .query("users")
@@ -80,6 +92,7 @@ export async function findUserForIdentity(ctx: DbCtx, identity: Identity) {
 export async function ensureUserWorkspace(ctx: MutationCtx) {
   const identity = await requireIdentity(ctx);
   const now = Date.now();
+  const externalId = externalIdFromIdentity(identity);
   const email = normalizeEmail(identity.email);
   const name = identity.name?.trim() || email.split("@")[0] || "Founder";
   const avatarUrl = typeof identity.pictureUrl === "string" ? identity.pictureUrl : undefined;
@@ -87,7 +100,7 @@ export async function ensureUserWorkspace(ctx: MutationCtx) {
   const existingUser = await findUserForIdentity(ctx, identity);
   if (existingUser) {
     const patch: Partial<Doc<"users">> = {
-      externalId: identity.subject,
+      externalId,
       name,
       email,
       status: "online",
@@ -111,7 +124,7 @@ export async function ensureUserWorkspace(ctx: MutationCtx) {
         });
 
   const userId = await ctx.db.insert("users", {
-    externalId: identity.subject,
+    externalId,
     workspaceId,
     name,
     email,

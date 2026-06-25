@@ -150,6 +150,7 @@ test("workspace seeding attaches Clerk identities to existing users by normalize
       async getUserIdentity() {
         return {
           subject: "user_clerk_123",
+          tokenIdentifier: "https://clerk.example|user_clerk_123",
           email: "ADA@EXAMPLE.COM",
           name: "Ada Founder",
           pictureUrl: "https://img.example/avatar.png",
@@ -167,7 +168,7 @@ test("workspace seeding attaches Clerk identities to existing users by normalize
     {
       id: "users:existing",
       patch: {
-        externalId: "user_clerk_123",
+        externalId: "https://clerk.example|user_clerk_123",
         name: "Ada Founder",
         email: "ada@example.com",
         status: "online",

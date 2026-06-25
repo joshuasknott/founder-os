@@ -44,6 +44,8 @@ import type * as memoryModel from "../memoryModel.js";
 import type * as modelOrchestration from "../modelOrchestration.js";
 import type * as modelProfiles from "../modelProfiles.js";
 import type * as projects from "../projects.js";
+import type * as readiness from "../readiness.js";
+import type * as readinessRuntime from "../readinessRuntime.js";
 import type * as search from "../search.js";
 import type * as seedRoster from "../seedRoster.js";
 import type * as stripeConnector from "../stripeConnector.js";
@@ -101,6 +103,8 @@ declare const fullApi: ApiFromModules<{
   modelOrchestration: typeof modelOrchestration;
   modelProfiles: typeof modelProfiles;
   projects: typeof projects;
+  readiness: typeof readiness;
+  readinessRuntime: typeof readinessRuntime;
   search: typeof search;
   seedRoster: typeof seedRoster;
   stripeConnector: typeof stripeConnector;

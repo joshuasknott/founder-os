@@ -2,6 +2,7 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { actorFromIdentity, isAuthorizedWorkerToken, requireCurrentUser, requireWorkspaceAccess, workerActor } from "./authz";
 import { recordAuditEvent } from "./audit";
+import { flexiblePayload } from "./itemValidators";
 import {
   appendApprovalAudit,
   approvalDecisionPatch,
@@ -47,7 +48,7 @@ export const createForRun = mutation({
     actionKind: sensitiveActionKind,
     actionTitle: v.string(),
     actionDescription: v.optional(v.string()),
-    actionPayload: v.optional(v.any()),
+    actionPayload: v.optional(flexiblePayload),
     workerToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {

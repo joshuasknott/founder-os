@@ -1,4 +1,4 @@
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
@@ -268,6 +268,24 @@ export const markOffline = mutation({
     const now = Date.now();
     await ctx.db.patch(runner._id, localRunnerOfflinePatch(now, args.message));
     return runner._id;
+  },
+});
+
+export const expireStale = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const expired = await ctx.db
+      .query("localRunners")
+      .withIndex("by_heartbeat", (q) => q.lt("heartbeatExpiresAt", now))
+      .take(100);
+
+    for (const runner of expired) {
+      if (runner.status === "online") {
+        await ctx.db.patch(runner._id, localRunnerOfflinePatch(now));
+      }
+    }
+    return expired.length;
   },
 });
 

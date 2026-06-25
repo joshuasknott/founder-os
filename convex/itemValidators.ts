@@ -1,5 +1,27 @@
 import { v } from "convex/values";
 
+export const flexiblePrimitive = v.union(
+  v.string(),
+  v.number(),
+  v.boolean(),
+  v.null(),
+);
+
+export const flexibleRecord = v.record(
+  v.string(),
+  v.union(flexiblePrimitive, v.array(flexiblePrimitive)),
+);
+
+export const flexiblePayload = v.record(
+  v.string(),
+  v.union(
+    flexiblePrimitive,
+    v.array(flexiblePrimitive),
+    flexibleRecord,
+    v.array(flexibleRecord),
+  ),
+);
+
 export const itemKind = v.union(
   v.literal("created_output"),
   v.literal("upload"),

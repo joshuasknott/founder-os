@@ -382,7 +382,10 @@ export const deleteDetail = mutation({
       deletedAt: now,
       updatedAt: now,
     });
-    const facts = await ctx.db.query("facts").collect();
+    const facts = await ctx.db
+      .query("facts")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", current.workspaceId))
+      .take(500);
     for (const fact of facts) {
       if (metadataObject(fact.metadata).memoryEntryId === args.memoryId) {
         await ctx.db.patch(fact._id, {
@@ -411,13 +414,13 @@ export const rescanWorkspace = mutation({
     const items = (await ctx.db
       .query("items")
       .withIndex("by_workspace", (q) => q.eq("workspaceId", current.workspaceId))
-      .collect())
+      .take(limit))
       .filter((item) => item.status !== "archived" && item.status !== "deprecated")
       .slice(0, limit);
     const runs = (await ctx.db
       .query("workRuns")
       .withIndex("by_workspace", (q) => q.eq("workspaceId", current.workspaceId))
-      .collect())
+      .take(limit))
       .filter((run) => run.status === "completed")
       .slice(0, limit);
 

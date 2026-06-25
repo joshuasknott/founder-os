@@ -51,7 +51,7 @@ import { internalQuery } from "./_generated/server";
 export const getUnindexedVersions = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const allVersions = await ctx.db.query("documentVersions").collect();
+    const allVersions = await ctx.db.query("documentVersions").take(500);
     return allVersions
       .filter((v) => !v.embedding || v.embedding.length === 0)
       .map((v) => v._id);
@@ -78,6 +78,13 @@ crons.interval(
   { minutes: 5 },
   internalApi.automations.runDueSchedulesFromCron,
   { limit: 20 },
+);
+
+crons.interval(
+  "expire-stale-local-runners",
+  { minutes: 1 },
+  anyApi.localRunner.expireStale,
+  {},
 );
 
 export default crons;

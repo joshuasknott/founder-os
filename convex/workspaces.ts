@@ -2,6 +2,7 @@ import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import { actorFromIdentity, ensureUserWorkspace, requireCurrentUser, requireOwnedWorkspace } from "./authz";
 import { recordAuditEvent } from "./audit";
+import { getWorkspaceReadiness } from "./readiness";
 
 export const get = query({
   args: {},
@@ -58,20 +59,32 @@ export const updateDetails = mutation({
 
 export const completeOnboarding = mutation({
   args: {
-    workspaceId: v.id("workspaces"),
-    name: v.string(),
-    connectorIds: v.optional(v.array(v.string())),
     reviewExternalActions: v.boolean(),
+    externalActionApprovalConfirmed: v.optional(v.boolean()),
   },
-  handler: async (ctx, { workspaceId, name, connectorIds, reviewExternalActions }) => {
-    const current = await requireOwnedWorkspace(ctx, workspaceId);
-    const cleanName = name.trim();
-    if (!cleanName) throw new Error("Business name is required.");
+  handler: async (ctx, args) => {
+    const current = await requireCurrentUser(ctx);
+    if (current.user.role !== "Owner") throw new Error("Only a workspace owner can complete setup.");
+    const workspaceId = current.workspaceId;
+    const workspace = await ctx.db.get(workspaceId);
+    if (!workspace) throw new Error("Workspace not found.");
+    if (!args.reviewExternalActions && !args.externalActionApprovalConfirmed) {
+      throw new Error("Enable external-action approval or confirm your external-action policy.");
+    }
+
+    const now = Date.now();
     await ctx.db.patch(workspaceId, {
-      name: cleanName,
-      onboardingConnectorIds: connectorIds ?? [],
-      onboardingCompletedAt: Date.now(),
-      reviewExternalActions,
+      reviewExternalActions: args.reviewExternalActions,
+      externalActionApprovalConfirmedAt: args.reviewExternalActions
+        ? workspace.externalActionApprovalConfirmedAt
+        : now,
+    });
+    const readiness = await getWorkspaceReadiness(ctx, { workspaceId, founder: current.user });
+    if (!readiness.ready) throw new Error(readiness.blockingReason ?? "Finish workspace setup before opening FounderOS.");
+
+    await ctx.db.patch(workspaceId, {
+      onboardingConnectorIds: ["gmail", "google_calendar", "google_drive", "google_docs", "google_sheets", "github"],
+      onboardingCompletedAt: now,
     });
     await recordAuditEvent(ctx, {
       ...actorFromIdentity(current.identity, current.user),
@@ -80,7 +93,7 @@ export const completeOnboarding = mutation({
       resourceType: "workspace",
       resourceId: String(workspaceId),
       summary: "Onboarding completed.",
-      metadata: { connectorIds: connectorIds ?? [], reviewExternalActions },
+      metadata: { reviewExternalActions: args.reviewExternalActions, readinessGates: readiness.gates },
     });
     return workspaceId;
   },
